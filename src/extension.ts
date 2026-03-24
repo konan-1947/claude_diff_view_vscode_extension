@@ -71,8 +71,20 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(() => {
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
       updateDiffButtons();
+
+      if (!editor) { return; }
+      const uri = editor.document.uri;
+      if (uri.scheme !== 'file') { return; }
+
+      // If this file has a pending diff but the current tab is NOT a diff tab,
+      // reopen the diff view automatically.
+      const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+      const isAlreadyDiffTab = activeTab?.input instanceof vscode.TabInputTextDiff;
+      if (!isAlreadyDiffTab && diffManager.hasPendingDiff(uri.fsPath)) {
+        diffManager.openDiff(uri.fsPath).catch(() => {/* ignore */});
+      }
     })
   );
 

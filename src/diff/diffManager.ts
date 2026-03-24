@@ -88,7 +88,8 @@ export class DiffManager {
       'vscode.diff',
       originalUri,
       modifiedUri,
-      title
+      title,
+      { preview: false }
     );
   }
 
