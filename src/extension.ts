@@ -8,7 +8,7 @@ import { HookWatcher } from './watcher/hookWatcher';
 import { SessionTreeProvider } from './views/sessionTreeProvider';
 
 export function activate(context: vscode.ExtensionContext): void {
-  const diffManager = new DiffManager();
+  const diffManager = new DiffManager(context);
   const claudeRunner = new ClaudeRunner(diffManager);
   const hookWatcher = new HookWatcher(diffManager);
   const treeProvider = new SessionTreeProvider(diffManager);
@@ -75,6 +75,9 @@ export function activate(context: vscode.ExtensionContext): void {
       updateDiffButtons();
     })
   );
+
+  // Run once on activation in case a diff tab is already focused
+  updateDiffButtons();
 
   function setStatus(
     state: 'idle' | 'running' | 'error',

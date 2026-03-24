@@ -3,11 +3,41 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+const STATE_KEY = 'claude-diff.tempFiles';
+
+/** Normalize to the same format vscode.Uri.fsPath uses (lowercase drive on Windows). */
+function normalizePath(filePath: string): string {
+  return vscode.Uri.file(path.resolve(filePath)).fsPath;
+}
+
 export class DiffManager {
   // Maps absolute filePath -> original content before Claude edited it
   private snapshots = new Map<string, string>();
   // Maps absolute filePath -> temp file path in os.tmpdir()
   private tempFiles = new Map<string, string>();
+
+  constructor(private readonly context: vscode.ExtensionContext) {
+    this.restoreState();
+  }
+
+  private restoreState(): void {
+    const saved = this.context.workspaceState.get<Record<string, string>>(STATE_KEY, {});
+    for (const [absPath, tempFilePath] of Object.entries(saved)) {
+      if (!fs.existsSync(tempFilePath)) { continue; }
+      if (!fs.existsSync(absPath))      { continue; }
+      const content = fs.readFileSync(tempFilePath, 'utf8');
+      this.snapshots.set(absPath, content);
+      this.tempFiles.set(absPath, tempFilePath);
+    }
+  }
+
+  private persistState(): void {
+    const obj: Record<string, string> = {};
+    for (const [absPath, tempFilePath] of this.tempFiles.entries()) {
+      obj[absPath] = tempFilePath;
+    }
+    this.context.workspaceState.update(STATE_KEY, obj);
+  }
 
   /**
    * Called BEFORE Claude modifies a file.
@@ -15,7 +45,7 @@ export class DiffManager {
    * If the file does not exist yet (new file creation), stores empty string.
    */
   async snapshotBefore(filePath: string): Promise<void> {
-    const absPath = path.resolve(filePath);
+    const absPath = normalizePath(filePath);
     try {
       const content = fs.readFileSync(absPath, 'utf8');
       this.snapshots.set(absPath, content);
@@ -30,7 +60,7 @@ export class DiffManager {
    * Writes the snapshot to a temp file and opens the VSCode diff editor.
    */
   async openDiff(filePath: string): Promise<void> {
-    const absPath = path.resolve(filePath);
+    const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (snapshot === undefined) {
       // No snapshot found — snapshotBefore was not called for this file.
@@ -46,6 +76,7 @@ export class DiffManager {
 
     fs.writeFileSync(tempFilePath, snapshot, 'utf8');
     this.tempFiles.set(absPath, tempFilePath);
+    this.persistState();
 
     // Left (originalUri) = temp file (before state)
     // Right (modifiedUri) = actual file on disk (after Claude edited it)
@@ -65,7 +96,7 @@ export class DiffManager {
    * Reverts the file to its pre-Claude state and cleans up.
    */
   async revert(filePath: string): Promise<void> {
-    const absPath = path.resolve(filePath);
+    const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (snapshot === undefined) {
       vscode.window.showWarningMessage(
@@ -96,7 +127,7 @@ export class DiffManager {
    * The file content (as modified by Claude) is kept as-is.
    */
   async accept(filePath: string): Promise<void> {
-    const absPath = path.resolve(filePath);
+    const absPath = normalizePath(filePath);
     this.cleanup(absPath);
     vscode.window.showInformationMessage(
       `Accepted: ${path.basename(absPath)}`
@@ -107,14 +138,14 @@ export class DiffManager {
    * Injects a snapshot directly (used by HookWatcher when hooks provide the snapshot).
    */
   loadSnapshot(filePath: string, content: string): void {
-    this.snapshots.set(path.resolve(filePath), content);
+    this.snapshots.set(normalizePath(filePath), content);
   }
 
   /**
    * Returns whether there is a pending diff for the given file path.
    */
   hasPendingDiff(filePath: string): boolean {
-    return this.snapshots.has(path.resolve(filePath));
+    return this.snapshots.has(normalizePath(filePath));
   }
 
   /**
@@ -150,5 +181,6 @@ export class DiffManager {
       this.tempFiles.delete(absPath);
     }
     this.snapshots.delete(absPath);
+    this.persistState();
   }
 }
