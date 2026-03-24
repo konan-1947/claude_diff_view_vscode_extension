@@ -57,13 +57,14 @@ export class InlineDiffRenderer {
     originalContent: string,
     modifiedContent: string
   ): void {
+    const normalizedPath = this.normalizePath(filePath);
     const hunks = calculateHunks(originalContent, modifiedContent);
-    this.fileStates.set(filePath, {
+    this.fileStates.set(normalizedPath, {
       originalContent,
       hunks,
       decorations: [],
     });
-    this.applyDecorations(filePath);
+    this.applyDecorations(normalizedPath);
   }
 
   /**
@@ -71,15 +72,16 @@ export class InlineDiffRenderer {
    * Trả về true nếu đây là hunk cuối cùng (không còn pending diff).
    */
   acceptHunk(filePath: string, hunkId: string): boolean {
-    const state = this.fileStates.get(filePath);
+    const normalizedPath = this.normalizePath(filePath);
+    const state = this.fileStates.get(normalizedPath);
     if (!state) { return true; }
 
     state.hunks = state.hunks.filter(h => h.id !== hunkId);
     if (state.hunks.length === 0) {
-      this.clear(filePath);
+      this.clear(normalizedPath);
       return true;
     }
-    this.applyDecorations(filePath);
+    this.applyDecorations(normalizedPath);
     return false;
   }
 
@@ -88,7 +90,8 @@ export class InlineDiffRenderer {
    * Trả về true nếu không còn pending diff.
    */
   async revertHunk(filePath: string, hunkId: string): Promise<boolean> {
-    const state = this.fileStates.get(filePath);
+    const normalizedPath = this.normalizePath(filePath);
+    const state = this.fileStates.get(normalizedPath);
     if (!state) { return true; }
 
     const hunk = state.hunks.find(h => h.id === hunkId);
@@ -98,41 +101,40 @@ export class InlineDiffRenderer {
     const document = this.findDocument(filePath);
     if (!document) { return false; }
 
-    const editor = await this.openEditor(document);
-    if (!editor) { return false; }
+    const wsEdit = new vscode.WorkspaceEdit();
 
-    await editor.edit(editBuilder => {
-      // Xóa các dòng được thêm mới (addedLines), thay bằng dòng bị xóa (removedLines)
-      if (hunk.addedLines.length > 0) {
-        const firstAdded = hunk.addedLines[0]!;
-        const lastAdded = hunk.addedLines[hunk.addedLines.length - 1]!;
+    // Xóa các dòng được thêm mới (addedLines), thay bằng dòng bị xóa (removedLines)
+    if (hunk.addedLines.length > 0) {
+      const firstAdded = hunk.addedLines[0]!;
+      const lastAdded = hunk.addedLines[hunk.addedLines.length - 1]!;
 
-        const startPos = new vscode.Position(firstAdded.modifiedLineIndex, 0);
-        const endLine = lastAdded.modifiedLineIndex;
-        const endPos = new vscode.Position(
-          endLine,
-          document.lineAt(Math.min(endLine, document.lineCount - 1)).text.length
+      const startPos = new vscode.Position(firstAdded.modifiedLineIndex, 0);
+      const endLine = lastAdded.modifiedLineIndex;
+      const endPos = new vscode.Position(
+        endLine,
+        document.lineAt(Math.min(endLine, document.lineCount - 1)).text.length
+      );
+
+      const replacementText = hunk.removedLines.map(r => r.text).join('\n');
+
+      if (hunk.removedLines.length === 0) {
+        // Thuần insert: xóa các dòng được thêm
+        const deleteRange = new vscode.Range(
+          new vscode.Position(firstAdded.modifiedLineIndex, 0),
+          new vscode.Position(lastAdded.modifiedLineIndex + 1, 0)
         );
-
-        const replacementText = hunk.removedLines.map(r => r.text).join('\n');
-
-        if (hunk.removedLines.length === 0) {
-          // Thuần insert: xóa các dòng được thêm
-          const deleteRange = new vscode.Range(
-            new vscode.Position(firstAdded.modifiedLineIndex, 0),
-            new vscode.Position(lastAdded.modifiedLineIndex + 1, 0)
-          );
-          editBuilder.delete(deleteRange);
-        } else {
-          editBuilder.replace(new vscode.Range(startPos, endPos), replacementText);
-        }
-      } else if (hunk.removedLines.length > 0) {
-        // Thuần delete: chèn lại các dòng bị xóa
-        const insertPos = new vscode.Position(hunk.modifiedStart, 0);
-        const insertText = hunk.removedLines.map(r => r.text).join('\n') + '\n';
-        editBuilder.insert(insertPos, insertText);
+        wsEdit.delete(document.uri, deleteRange);
+      } else {
+        wsEdit.replace(document.uri, new vscode.Range(startPos, endPos), replacementText);
       }
-    });
+    } else if (hunk.removedLines.length > 0) {
+      // Thuần delete: chèn lại các dòng bị xóa
+      const insertPos = new vscode.Position(hunk.modifiedStart, 0);
+      const insertText = hunk.removedLines.map(r => r.text).join('\n') + '\n';
+      wsEdit.insert(document.uri, insertPos, insertText);
+    }
+    
+    await vscode.workspace.applyEdit(wsEdit);
 
     // Cập nhật hunks: xóa hunk vừa revert và tính lại modifiedStart các hunk sau
     const delta = hunk.removedLines.length - hunk.addedLines.length;
@@ -149,10 +151,10 @@ export class InlineDiffRenderer {
     }
 
     if (state.hunks.length === 0) {
-      this.clear(filePath);
+      this.clear(normalizedPath);
       return true;
     }
-    this.applyDecorations(filePath);
+    this.applyDecorations(normalizedPath);
     return false;
   }
 
@@ -160,45 +162,43 @@ export class InlineDiffRenderer {
    * Chấp nhận toàn bộ thay đổi trong file.
    */
   acceptAll(filePath: string): void {
-    this.clear(filePath);
+    this.clear(this.normalizePath(filePath));
   }
 
   /**
    * Revert toàn bộ về nội dung gốc.
    */
   async revertAll(filePath: string): Promise<void> {
-    const state = this.fileStates.get(filePath);
+    const normalizedPath = this.normalizePath(filePath);
+    const state = this.fileStates.get(normalizedPath);
     if (!state) { return; }
 
     const document = this.findDocument(filePath);
     if (!document) { return; }
 
-    const editor = await this.openEditor(document);
-    if (!editor) { return; }
-
     const fullRange = new vscode.Range(
       new vscode.Position(0, 0),
       document.lineAt(document.lineCount - 1).range.end
     );
-    await editor.edit(editBuilder => {
-      editBuilder.replace(fullRange, state.originalContent);
-    });
+    const wsEdit = new vscode.WorkspaceEdit();
+    wsEdit.replace(document.uri, fullRange, state.originalContent);
+    await vscode.workspace.applyEdit(wsEdit);
 
-    this.clear(filePath);
+    this.clear(normalizedPath);
   }
 
   /**
    * Lấy danh sách hunk IDs cho một file.
    */
   getHunks(filePath: string): Hunk[] {
-    return this.fileStates.get(filePath)?.hunks ?? [];
+    return this.fileStates.get(this.normalizePath(filePath))?.hunks ?? [];
   }
 
   /**
    * Kiểm tra xem file có đang có pending diff không.
    */
   hasPending(filePath: string): boolean {
-    const state = this.fileStates.get(filePath);
+    const state = this.fileStates.get(this.normalizePath(filePath));
     return (state?.hunks.length ?? 0) > 0;
   }
 
@@ -206,13 +206,14 @@ export class InlineDiffRenderer {
    * Xóa tất cả decoration của file và xóa khỏi state.
    */
   clear(filePath: string): void {
-    const state = this.fileStates.get(filePath);
+    const normalizedPath = this.normalizePath(filePath);
+    const state = this.fileStates.get(normalizedPath);
     if (!state) { return; }
 
     // Xóa tất cả decoration đang gắn trên các editor hiển thị file này
     for (const editor of vscode.window.visibleTextEditors) {
       const editorPath = editor.document.uri.fsPath;
-      if (this.normalizePath(editorPath) === this.normalizePath(filePath) && !this.isEditorInDiffView(editor)) {
+      if (this.normalizePath(editorPath) === normalizedPath && !this.isEditorInDiffView(editor)) {
         editor.setDecorations(this.addedLineDecor, []);
         editor.setDecorations(this.removedLineDecor, []);
         editor.setDecorations(this.acceptGutterDecor, []);
@@ -220,7 +221,7 @@ export class InlineDiffRenderer {
       }
     }
 
-    this.fileStates.delete(filePath);
+    this.fileStates.delete(normalizedPath);
   }
 
   /** Xóa tất cả (khi deactivate). */
@@ -238,7 +239,8 @@ export class InlineDiffRenderer {
    * Áp dụng lại decoration lên tất cả editor đang hiển thị file.
    */
   applyDecorations(filePath: string): void {
-    const state = this.fileStates.get(filePath);
+    const normalizedPath = this.normalizePath(filePath);
+    const state = this.fileStates.get(normalizedPath);
     if (!state) { return; }
 
     const addedRanges: vscode.Range[] = [];
@@ -299,7 +301,7 @@ export class InlineDiffRenderer {
     // Gắn decoration lên tất cả editor đang mở file này (bỏ qua diff editor)
     for (const editor of vscode.window.visibleTextEditors) {
       const editorPath = editor.document.uri.fsPath;
-      if (this.normalizePath(editorPath) === this.normalizePath(filePath) && !this.isEditorInDiffView(editor)) {
+      if (this.normalizePath(editorPath) === normalizedPath && !this.isEditorInDiffView(editor)) {
         editor.setDecorations(this.addedLineDecor, addedRanges);
         editor.setDecorations(this.removedLineDecor, removedRanges);
         editor.setDecorations(this.acceptGutterDecor, acceptGutterRanges);
@@ -315,6 +317,12 @@ export class InlineDiffRenderer {
    * Dùng Tab API (VSCode 1.71+).
    */
   private isEditorInDiffView(editor: vscode.TextEditor): boolean {
+    // Nếu viewColumn là undefined, đây là một editor nhúng (embedded editor),
+    // thường chính là nửa trái/phải nằm bên trong màn hình Diff Editor hoặc Peek view.
+    if (editor.viewColumn === undefined) {
+      return true;
+    }
+
     for (const group of vscode.window.tabGroups.all) {
       if (group.viewColumn !== editor.viewColumn) { continue; }
       const activeTab = group.activeTab;

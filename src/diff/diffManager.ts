@@ -31,6 +31,17 @@ export class DiffManager {
   constructor(private readonly context: vscode.ExtensionContext) {
     this.renderer = new InlineDiffRenderer(context.extensionUri);
     this.restoreState();
+
+    context.subscriptions.push(
+      vscode.workspace.registerTextDocumentContentProvider('claude-diff', {
+        provideTextDocumentContent: (uri: vscode.Uri) => {
+          // Xóa query (timestamp) đi để trả về đường dẫn file thật chính xác
+          const realFileUri = uri.with({ scheme: 'file', query: '' });
+          const originalPath = normalizePath(realFileUri.fsPath);
+          return this.getSnapshot(originalPath) || '';
+        }
+      })
+    );
   }
 
   // ---- State persistence (chỉ lưu đường dẫn để mở lại sau khi restart VS Code) ----
@@ -90,23 +101,15 @@ export class DiffManager {
       return;
     }
 
-    // Đóng bất kỳ diff tab nào đang mở cho file này (tránh CodeLens/decoration bị nhân đôi)
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input instanceof vscode.TabInputTextDiff) {
-          const { original, modified } = tab.input;
-          if (normalizePath(original.fsPath) === absPath || normalizePath(modified.fsPath) === absPath) {
-            await vscode.window.tabGroups.close(tab);
-          }
-        }
-      }
-    }
+    // Chuyển sang dùng UI chuẩn của VS Code: Diff Editor. 
+    // Gắn thêm query Date.now() để ép VS Code không cache nội dung cũ của tab ảo này
+    const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: Date.now().toString() });
+    const modifiedUri = vscode.Uri.file(absPath);
+    const title = `Claude Diff: ${path.basename(absPath)}`;
+    
+    await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, title, { preview: false });
 
-    // Mở file trong editor thường
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
-    await vscode.window.showTextDocument(doc, { preview: false });
-
-    // Render inline diff
+    // Vẫn cần gọi renderer để tính toán danh sách hunks (giúp render CodeLens)
     this.renderer.show(absPath, snapshot, modifiedContent);
     this._onDidChangeDiffs.fire();
   }
@@ -127,8 +130,7 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     const isDone = this.renderer.acceptHunk(absPath, hunkId);
     if (isDone) {
-      this.snapshots.delete(absPath);
-      this.persistState();
+      await this.cleanup(absPath);
     }
     this._onDidChangeDiffs.fire();
   }
@@ -137,8 +139,7 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     const isDone = await this.renderer.revertHunk(absPath, hunkId);
     if (isDone) {
-      this.snapshots.delete(absPath);
-      this.persistState();
+      await this.cleanup(absPath);
     }
     this._onDidChangeDiffs.fire();
   }
@@ -149,8 +150,7 @@ export class DiffManager {
   async accept(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
     this.renderer.acceptAll(absPath);
-    this.snapshots.delete(absPath);
-    this.persistState();
+    await this.cleanup(absPath);
     vscode.window.showInformationMessage(`Accepted: ${path.basename(absPath)}`);
     this._onDidChangeDiffs.fire();
   }
@@ -167,8 +167,7 @@ export class DiffManager {
     }
 
     await this.renderer.revertAll(absPath);
-    this.snapshots.delete(absPath);
-    this.persistState();
+    await this.cleanup(absPath);
     vscode.window.showInformationMessage(`Reverted: ${path.basename(absPath)}`);
     this._onDidChangeDiffs.fire();
   }
@@ -178,7 +177,7 @@ export class DiffManager {
    * Dùng khi tất cả hunks đã được xử lý thủ công.
    */
   forgetFile(filePath: string): void {
-    this.cleanup(normalizePath(filePath));
+    this.cleanup(normalizePath(filePath)).catch((err) => console.error(err));
   }
 
   /**
@@ -203,8 +202,49 @@ export class DiffManager {
     this.snapshots.clear();
   }
 
-  private cleanup(absPath: string): void {
+  private async cleanup(absPath: string): Promise<void> {
     this.snapshots.delete(absPath);
     this.persistState();
+    
+    // Lưu lại vị trí con trỏ và scroll hiện tại trước khi đóng tab
+    let targetSelection: vscode.Selection | undefined;
+    let targetVisibleRange: vscode.Range | undefined;
+    
+    for (const editor of vscode.window.visibleTextEditors) {
+      if (normalizePath(editor.document.uri.fsPath) === absPath) {
+        targetSelection = editor.selection;
+        if (editor.visibleRanges.length > 0) {
+          targetVisibleRange = editor.visibleRanges[0];
+        }
+        if (editor === vscode.window.activeTextEditor) {
+          break; // Ưu tiên editor đang có focus nhất
+        }
+      }
+    }
+
+    // Tự động đóng tab Diff View sau khi xong hết hunks
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode.TabInputTextDiff) {
+          const { modified } = tab.input;
+          if (normalizePath(modified.fsPath) === absPath) {
+            await vscode.window.tabGroups.close(tab);
+          }
+        }
+      }
+    }
+
+    // Mở lại file ở tab thường và đặt con trỏ/scroll về đúng chỗ cũ
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
+      const editor = await vscode.window.showTextDocument(doc, { preview: false });
+
+      if (targetSelection) {
+        editor.selection = targetSelection;
+      }
+      if (targetVisibleRange) {
+        editor.revealRange(targetVisibleRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+      }
+    } catch {}
   }
 }

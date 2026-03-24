@@ -59,11 +59,11 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
       return [];
     }
 
-    // Không hiện CodeLens nếu document chỉ được mở trong diff editor
-    // (CodeLens apply cho mọi editor hiện document, nên chỉ render khi có regular editor)
-    if (!this.hasRegularEditor(document)) {
-      return [];
-    }
+    // Bỏ điều kiện này để cho phép nút nguồn hiện chữ Accept/Revert Hunk ngay bên trong 
+    // màn hình Diff Editor (ở nửa tab bên phải - Modified).
+    // if (!this.hasRegularEditor(document)) {
+    //   return [];
+    // }
 
     const hunks = this.diffManager.renderer.getHunks(filePath);
     const lenses: vscode.CodeLens[] = [];
