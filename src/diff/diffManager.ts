@@ -139,7 +139,11 @@ export class DiffManager {
    * Injects a snapshot directly (used by HookWatcher when hooks provide the snapshot).
    */
   loadSnapshot(filePath: string, content: string): void {
-    this.snapshots.set(normalizePath(filePath), content);
+    const absPath = normalizePath(filePath);
+    // Only store the first snapshot — preserve the original state before any Claude edits.
+    if (!this.snapshots.has(absPath)) {
+      this.snapshots.set(absPath, content);
+    }
   }
 
   /**
