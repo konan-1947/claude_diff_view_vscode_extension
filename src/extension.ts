@@ -1,139 +1,143 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { DiffManager } from './diff/diffManager';
-import { ClaudeRunner } from './claude/claudeRunner';
+import { IAiRunner } from './claude/aiRunner';
+import { createRunner } from './claude/runnerFactory';
 import { HookWatcher } from './watcher/hookWatcher';
+import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { SessionTreeProvider } from './views/sessionTreeProvider';
+import { HunkCodeLensProvider } from './diff/hunkCodeLensProvider';
 
 export function activate(context: vscode.ExtensionContext): void {
   const diffManager = new DiffManager(context);
-  const claudeRunner = new ClaudeRunner(diffManager);
+  // Runner được khởi tạo lazy khi người dùng bấm Start Session (cần async)
+  let activeRunner: IAiRunner | undefined;
   const hookWatcher = new HookWatcher(diffManager);
+  const workspaceWatcher = new WorkspaceWatcher(diffManager);
   const treeProvider = new SessionTreeProvider(diffManager);
 
   context.subscriptions.push({ dispose: () => diffManager.disposeAll() });
   context.subscriptions.push({ dispose: () => hookWatcher.dispose() });
+  context.subscriptions.push({ dispose: () => workspaceWatcher.dispose() });
 
   // Register sidebar tree view
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('claude-diff-view.session', treeProvider)
   );
 
-  // Start watching for signals from Claude CLI hooks immediately
-  hookWatcher.start();
+  // Register CodeLens provider cho nút Accept/Revert Hunk
+  const codeLensProvider = new HunkCodeLensProvider(diffManager);
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, codeLensProvider)
+  );
+  context.subscriptions.push(
+    diffManager.onDidChangeDiffs(() => codeLensProvider.refresh())
+  );
 
-  // ---- Status bar: session state (always visible) ----
+  // Bắt đầu theo dõi hook signals từ Claude CLI
+  hookWatcher.start();
+  // Bắt đầu theo dõi file thay đổi trong workspace (bắt external writes từ terminal)
+  workspaceWatcher.start();
+
+  // ---- Status bar: trạng thái session ----
   const statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     100
   );
   statusBar.text = '$(robot) Claude: Idle';
-  statusBar.tooltip = 'Claude Diff View — click to start session';
+  statusBar.tooltip = 'Claude Diff View — click để bắt đầu session';
   statusBar.command = 'claude-diff-view.startSession';
   statusBar.show();
   context.subscriptions.push(statusBar);
 
-  // ---- Status bar: Accept button (only shown in diff tab) ----
-  const acceptBar = vscode.window.createStatusBarItem(
+  // ---- Status bar: Accept All (hiện khi file đang có pending diff) ----
+  const acceptAllBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     99
   );
-  acceptBar.text = '$(check) Accept file';
-  acceptBar.tooltip = 'Accept Claude\'s changes to this file';
-  acceptBar.command = 'claude-diff-view.acceptFile';
-  acceptBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-  context.subscriptions.push(acceptBar);
+  acceptAllBar.text = '$(check-all) Accept All';
+  acceptAllBar.tooltip = 'Chấp nhận tất cả thay đổi của Claude trong file này';
+  acceptAllBar.command = 'claude-diff-view.acceptAllHunks';
+  acceptAllBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+  context.subscriptions.push(acceptAllBar);
 
-  // ---- Status bar: Reject button (only shown in diff tab) ----
-  const rejectBar = vscode.window.createStatusBarItem(
+  // ---- Status bar: Revert All (hiện khi file đang có pending diff) ----
+  const revertAllBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     98
   );
-  rejectBar.text = '$(discard) Reject file';
-  rejectBar.tooltip = 'Revert Claude\'s changes to this file';
-  rejectBar.command = 'claude-diff-view.revertFile';
-  context.subscriptions.push(rejectBar);
+  revertAllBar.text = '$(discard) Revert All';
+  revertAllBar.tooltip = 'Hoàn tác tất cả thay đổi của Claude trong file này';
+  revertAllBar.command = 'claude-diff-view.revertAllHunks';
+  context.subscriptions.push(revertAllBar);
 
-  function updateDiffButtons(): void {
-    const filePath = resolveActiveDiffFilePath();
-    if (filePath) {
-      const basename = path.basename(filePath);
-      acceptBar.text = `$(check) Accept: ${basename}`;
-      rejectBar.text = `$(discard) Reject: ${basename}`;
-      acceptBar.show();
-      rejectBar.show();
+  /** Cập nhật hiển thị nút Accept/Revert All trên status bar */
+  function updateStatusButtons(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && diffManager.renderer.hasPending(editor.document.uri.fsPath)) {
+      const basename = path.basename(editor.document.uri.fsPath);
+      acceptAllBar.text = `$(check-all) Accept All: ${basename}`;
+      revertAllBar.text  = `$(discard) Revert All: ${basename}`;
+      acceptAllBar.show();
+      revertAllBar.show();
     } else {
-      acceptBar.hide();
-      rejectBar.hide();
+      acceptAllBar.hide();
+      revertAllBar.hide();
     }
   }
 
+  // Khi chuyển tab editor — cập nhật status bar và tái áp dụng decoration
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      updateDiffButtons();
-
+      updateStatusButtons();
       if (!editor) { return; }
-      const uri = editor.document.uri;
-      if (uri.scheme !== 'file') { return; }
-
-      // If this file has a pending diff but the current tab is NOT a diff tab,
-      // reopen the diff view automatically.
-      const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-      const isAlreadyDiffTab = activeTab?.input instanceof vscode.TabInputTextDiff;
-      if (!isAlreadyDiffTab && diffManager.hasPendingDiff(uri.fsPath)) {
-        diffManager.openDiff(uri.fsPath).catch(() => {/* ignore */});
+      const filePath = editor.document.uri.fsPath;
+      if (diffManager.renderer.hasPending(filePath)) {
+        diffManager.renderer.applyDecorations(filePath);
       }
     })
   );
 
-  // Run once on activation in case a diff tab is already focused
-  updateDiffButtons();
+  // Khi document thay đổi — tái áp dụng decoration (vd sau khi undo/redo)
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      const filePath = e.document.uri.fsPath;
+      if (diffManager.renderer.hasPending(filePath)) {
+        diffManager.renderer.applyDecorations(filePath);
+      }
+    })
+  );
+
+  updateStatusButtons();
 
   function setStatus(
     state: 'idle' | 'running' | 'error',
     message?: string
   ): void {
+    const toolLabel = activeRunner ? activeRunner.toolName.charAt(0).toUpperCase() + activeRunner.toolName.slice(1) : 'AI';
     switch (state) {
       case 'running':
-        statusBar.text = '$(sync~spin) Claude: Running\u2026';
+        statusBar.text = `$(sync~spin) ${toolLabel}: Running\u2026`;
         break;
       case 'error':
-        statusBar.text = `$(error) Claude: Error${
+        statusBar.text = `$(error) ${toolLabel}: Error${
           message ? ' \u2014 ' + message.slice(0, 30) : ''
         }`;
         treeProvider.setError(message ?? '');
         break;
       default:
-        statusBar.text = '$(robot) Claude: Idle';
+        statusBar.text = `$(robot) ${toolLabel}: Idle`;
         treeProvider.setIdle();
     }
   }
 
-  // ---- Helper: resolve the actual file path from the active diff tab ----
-  function resolveActiveDiffFilePath(): string | undefined {
+  // ---- Helper: lấy file path từ active editor (nếu đang có pending diff) ----
+  function getActiveDiffFilePath(): string | undefined {
     const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      return undefined;
-    }
-    const uri = editor.document.uri;
-    if (uri.scheme !== 'file') {
-      return undefined;
-    }
-    const fsPath = uri.fsPath;
-
-    if (diffManager.hasPendingDiff(fsPath)) {
-      return fsPath;
-    }
-
-    const tmpDir = os.tmpdir();
-    const basename = path.basename(fsPath);
-    if (fsPath.startsWith(tmpDir) && basename.startsWith('claude-diff-')) {
-      return diffManager.findByTempFile(fsPath);
-    }
-
-    return undefined;
+    if (!editor) { return undefined; }
+    const filePath = editor.document.uri.fsPath;
+    return diffManager.renderer.hasPending(filePath) ? filePath : undefined;
   }
 
   // ---- Command: startSession ----
@@ -142,19 +146,32 @@ export function activate(context: vscode.ExtensionContext): void {
       'claude-diff-view.startSession',
       async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        const workingDir =
-          workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+        const workingDir = workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+
+        // Auto-detect / chọn tool khi chưa có runner
+        if (!activeRunner) {
+          try {
+            const result = await createRunner(diffManager);
+            activeRunner = result.runner;
+            // Cập nhật status bar sau khi biết tool
+            setStatus('idle');
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            vscode.window.showErrorMessage(message);
+            return;
+          }
+        }
+
+        const toolLabel = activeRunner.toolName.charAt(0).toUpperCase() + activeRunner.toolName.slice(1);
 
         const prompt = await vscode.window.showInputBox({
-          title: 'Claude: Start Session',
-          prompt: 'Enter your prompt for Claude',
+          title: `${toolLabel}: Start Session`,
+          prompt: `Nhập yêu cầu cho ${toolLabel}`,
           placeHolder: 'e.g. "Add JSDoc comments to all functions"',
           ignoreFocusOut: true,
         });
 
-        if (!prompt) {
-          return;
-        }
+        if (!prompt) { return; }
 
         setStatus('running');
         treeProvider.setRunning(prompt);
@@ -162,7 +179,7 @@ export function activate(context: vscode.ExtensionContext): void {
         await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
-            title: 'Claude \u2726',
+            title: `${toolLabel} \u2726`,
             cancellable: false,
           },
           async (progress) => {
@@ -170,7 +187,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
             const onProgress = (step: string): void => {
               progress.report({ message: step });
-              // Extract filename from steps like "Write: foo.ts" or "Opening diff: foo.ts"
               const match = step.match(/:\s+(.+)$/);
               if (match?.[1]) {
                 treeProvider.addPendingFile(match[1]);
@@ -178,29 +194,22 @@ export function activate(context: vscode.ExtensionContext): void {
             };
 
             try {
-              await claudeRunner.run(
+              await activeRunner!.run(
                 prompt,
                 workingDir,
                 (status, msg) => {
-                  if (status === 'error') {
-                    setStatus('error', msg);
-                  } else if (status === 'idle') {
-                    setStatus('idle');
-                  }
+                  if (status === 'error') { setStatus('error', msg); }
+                  else if (status === 'idle') { setStatus('idle'); }
                 },
                 onProgress
               );
               setStatus('idle');
-              vscode.window.showInformationMessage(
-                '$(check) Claude session complete.'
-              );
+              updateStatusButtons();
+              vscode.window.showInformationMessage(`$(check) ${toolLabel} session complete.`);
             } catch (err: unknown) {
-              const message =
-                err instanceof Error ? err.message : String(err);
+              const message = err instanceof Error ? err.message : String(err);
               setStatus('error', message);
-              vscode.window.showErrorMessage(
-                `Claude session failed: ${message}`
-              );
+              vscode.window.showErrorMessage(`${toolLabel} session failed: ${message}`);
             }
           }
         );
@@ -208,48 +217,82 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // ---- Command: acceptFile ----
+  // ---- Command: acceptAllHunks ----
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-diff-view.acceptFile',
+      'claude-diff-view.acceptAllHunks',
       async () => {
-        const filePath = resolveActiveDiffFilePath();
+        const filePath = getActiveDiffFilePath();
         if (!filePath) {
-          vscode.window.showWarningMessage(
-            'No active Claude diff. Click on the right pane of a Claude diff tab first.'
-          );
+          vscode.window.showWarningMessage('Không có inline diff nào đang hoạt động.');
           return;
         }
         await diffManager.accept(filePath);
-        await vscode.commands.executeCommand(
-          'workbench.action.closeActiveEditor'
-        );
+        updateStatusButtons();
+        vscode.window.showInformationMessage(`$(check) Accepted all changes: ${path.basename(filePath)}`);
       }
     )
   );
 
-  // ---- Command: revertFile ----
+  // ---- Command: revertAllHunks ----
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      'claude-diff-view.revertFile',
+      'claude-diff-view.revertAllHunks',
       async () => {
-        const filePath = resolveActiveDiffFilePath();
+        const filePath = getActiveDiffFilePath();
         if (!filePath) {
-          vscode.window.showWarningMessage(
-            'No active Claude diff. Click on the right pane of a Claude diff tab first.'
-          );
+          vscode.window.showWarningMessage('Không có inline diff nào đang hoạt động.');
           return;
         }
         await diffManager.revert(filePath);
-        await vscode.commands.executeCommand(
-          'workbench.action.closeActiveEditor'
-        );
+        updateStatusButtons();
+        vscode.window.showInformationMessage(`$(discard) Reverted all changes: ${path.basename(filePath)}`);
       }
     )
   );
+
+  // ---- Command: acceptHunk (theo hunk ID cụ thể) ----
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-diff-view.acceptHunk',
+      async (filePath?: string, hunkId?: string) => {
+        // Nếu không có args, thử lấy từ active editor và hỏi người dùng chọn hunk
+        const targetPath = filePath ?? getActiveDiffFilePath();
+        if (!targetPath) {
+          vscode.window.showWarningMessage('Không có inline diff nào. Đặt con trỏ trong file đang có diff.');
+          return;
+        }
+
+        const resolvedHunkId = hunkId ?? (await pickHunk(targetPath, 'Accept'));
+        if (!resolvedHunkId) { return; }
+
+        await diffManager.acceptHunk(targetPath, resolvedHunkId);
+        updateStatusButtons();
+      }
+    )
+  );
+
+  // ---- Command: revertHunk (theo hunk ID cụ thể) ----
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'claude-diff-view.revertHunk',
+      async (filePath?: string, hunkId?: string) => {
+        const targetPath = filePath ?? getActiveDiffFilePath();
+        if (!targetPath) {
+          vscode.window.showWarningMessage('Không có inline diff nào. Đặt con trỏ trong file đang có diff.');
+          return;
+        }
+
+        const resolvedHunkId = hunkId ?? (await pickHunk(targetPath, 'Revert'));
+        if (!resolvedHunkId) { return; }
+
+        await diffManager.revertHunk(targetPath, resolvedHunkId);
+        updateStatusButtons();
+      }
+    )
+  );
+
   // ---- Command: installHooks ----
-  // Writes PreToolUse / PostToolUse hooks into ~/.claude/settings.json
-  // so the extension works with ANY `claude` CLI invocation.
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'claude-diff-view.installHooks',
@@ -258,18 +301,32 @@ export function activate(context: vscode.ExtensionContext): void {
         const preHook  = path.join(extensionPath, 'hooks', 'pre-tool-hook.js');
         const postHook = path.join(extensionPath, 'hooks', 'post-tool-hook.js');
 
-        const claudeDir   = path.join(os.homedir(), '.claude');
-        const settingsPath = path.join(claudeDir, 'settings.json');
+        // Nếu chưa có activeRunner, detect tool trước
+        if (!activeRunner) {
+          try {
+            const result = await createRunner(diffManager);
+            activeRunner = result.runner;
+            setStatus('idle');
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            vscode.window.showErrorMessage(message);
+            return;
+          }
+        }
 
-        // Read existing settings (don't overwrite unrelated keys)
+        const settingsPath = activeRunner.getSettingsFilePath();
+        const settingsDir  = path.dirname(settingsPath);
+        const toolNames    = activeRunner.getFileEditToolNames();
+        const matcher      = toolNames.join('|');
+        const toolLabel    = activeRunner.toolName.charAt(0).toUpperCase() + activeRunner.toolName.slice(1);
+
         let settings: Record<string, unknown> = {};
         try {
           settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
         } catch {
-          // File doesn't exist yet — start fresh
+          // File chưa tồn tại — bắt đầu mới
         }
 
-        const matcher = 'Write|Edit|MultiEdit';
         settings['hooks'] = {
           PreToolUse: [
             {
@@ -285,23 +342,39 @@ export function activate(context: vscode.ExtensionContext): void {
           ],
         };
 
-        if (!fs.existsSync(claudeDir)) {
-          fs.mkdirSync(claudeDir, { recursive: true });
+        if (!fs.existsSync(settingsDir)) {
+          fs.mkdirSync(settingsDir, { recursive: true });
         }
-        fs.writeFileSync(
-          settingsPath,
-          JSON.stringify(settings, null, 2),
-          'utf8'
-        );
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 
         vscode.window.showInformationMessage(
-          '$(check) Claude hooks installed! Diff view now works with `claude` CLI in any terminal.'
+          `$(check) ${toolLabel} hooks installed! Inline diff now works with \`${activeRunner.toolName}\` CLI in any terminal.`
         );
       }
     )
   );
+
+  // ---- Helper: QuickPick để chọn hunk khi không có hunkId ----
+  async function pickHunk(filePath: string, action: string): Promise<string | undefined> {
+    const hunks = diffManager.renderer.getHunks(filePath);
+    if (hunks.length === 0) { return undefined; }
+    if (hunks.length === 1) { return hunks[0]!.id; }
+
+    const items = hunks.map((h, i) => ({
+      label: `Hunk ${i + 1}`,
+      description: `${h.removedLines.length} removed, ${h.addedLines.length} added`,
+      id: h.id,
+    }));
+
+    const picked = await vscode.window.showQuickPick(items, {
+      title: `${action} which hunk?`,
+      placeHolder: 'Chọn một hunk để thực hiện',
+    });
+
+    return picked?.id;
+  }
 }
 
 export function deactivate(): void {
-  // Cleanup handled via context.subscriptions
+  // Cleanup được xử lý qua context.subscriptions
 }

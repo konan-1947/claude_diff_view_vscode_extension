@@ -1,8 +1,8 @@
 {
   "name": "claude-diff-view",
   "displayName": "Claude Diff View",
-  "description": "Run Claude Code sessions with inline diff review",
-  "version": "0.0.1",
+  "description": "Run Claude Code sessions with inline diff review (accept/revert per hunk)",
+  "version": "0.1.0",
   "publisher": "local-dev",
   "engines": {
     "vscode": "^1.85.0"
@@ -36,14 +36,24 @@
         "title": "Claude: Start Session"
       },
       {
-        "command": "claude-diff-view.acceptFile",
-        "title": "Claude: Accept Changes",
+        "command": "claude-diff-view.acceptAllHunks",
+        "title": "Claude: Accept All Changes",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "claude-diff-view.revertAllHunks",
+        "title": "Claude: Revert All Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "claude-diff-view.acceptHunk",
+        "title": "Claude: Accept Hunk",
         "icon": "$(check)"
       },
       {
-        "command": "claude-diff-view.revertFile",
-        "title": "Claude: Revert Changes",
-        "icon": "$(discard)"
+        "command": "claude-diff-view.revertHunk",
+        "title": "Claude: Revert Hunk",
+        "icon": "$(close)"
       },
       {
         "command": "claude-diff-view.installHooks",
@@ -55,18 +65,28 @@
         "command": "claude-diff-view.startSession",
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a"
+      },
+      {
+        "command": "claude-diff-view.acceptAllHunks",
+        "key": "ctrl+shift+y",
+        "mac": "cmd+shift+y"
+      },
+      {
+        "command": "claude-diff-view.revertAllHunks",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z"
       }
     ],
     "menus": {
       "editor/title": [
         {
-          "command": "claude-diff-view.acceptFile",
-          "when": "isInDiffEditor",
+          "command": "claude-diff-view.acceptAllHunks",
+          "when": "claude-diff-view.hasPendingDiff",
           "group": "navigation@1"
         },
         {
-          "command": "claude-diff-view.revertFile",
-          "when": "isInDiffEditor",
+          "command": "claude-diff-view.revertAllHunks",
+          "when": "claude-diff-view.hasPendingDiff",
           "group": "navigation@2"
         }
       ]

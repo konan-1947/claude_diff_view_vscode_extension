@@ -1,191 +1,250 @@
-import * as vscode from 'vscode';
+/**
+ * diffManager.ts (đã refactor)
+ *
+ * Quản lý snapshot nội dung file trước khi Claude sửa.
+ * Delegate việc render sang InlineDiffRenderer.
+ * Không còn dùng temp file hay vscode.diff.
+ */
+
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
+import * as vscode from 'vscode';
+import { InlineDiffRenderer } from './inlineDiffRenderer';
 
-const STATE_KEY = 'claude-diff.tempFiles';
+const STATE_KEY = 'claude-diff.snapshots';
 
-/** Normalize to the same format vscode.Uri.fsPath uses (lowercase drive on Windows). */
+/** Normalize về cùng định dạng mà vscode.Uri.fsPath sử dụng. */
 function normalizePath(filePath: string): string {
-  return vscode.Uri.file(path.resolve(filePath)).fsPath;
+  const fsPath = vscode.Uri.file(path.resolve(filePath)).fsPath;
+  return process.platform === 'win32' ? fsPath.toLowerCase() : fsPath;
 }
 
 export class DiffManager {
-  // Maps absolute filePath -> original content before Claude edited it
-  private snapshots = new Map<string, string>();
-  // Maps absolute filePath -> temp file path in os.tmpdir()
-  private tempFiles = new Map<string, string>();
+  private _onDidChangeDiffs = new vscode.EventEmitter<void>();
+  public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
+
+  /** Lưu nội dung gốc TRƯỚC khi sửa (để tính diff) */
+  private snapshots: Map<string, string> = new Map();
+
+  public readonly renderer: InlineDiffRenderer;
 
   constructor(private readonly context: vscode.ExtensionContext) {
+    this.renderer = new InlineDiffRenderer(context.extensionUri);
     this.restoreState();
+
+    context.subscriptions.push(
+      vscode.workspace.registerTextDocumentContentProvider('claude-diff', {
+        provideTextDocumentContent: (uri: vscode.Uri) => {
+          // Xóa query (timestamp) đi để trả về đường dẫn file thật chính xác
+          const realFileUri = uri.with({ scheme: 'file', query: '' });
+          const originalPath = normalizePath(realFileUri.fsPath);
+          return this.getSnapshot(originalPath) || '';
+        }
+      })
+    );
   }
+
+  // ---- State persistence (chỉ lưu đường dẫn để mở lại sau khi restart VS Code) ----
 
   private restoreState(): void {
     const saved = this.context.workspaceState.get<Record<string, string>>(STATE_KEY, {});
-    for (const [absPath, tempFilePath] of Object.entries(saved)) {
-      if (!fs.existsSync(tempFilePath)) { continue; }
-      if (!fs.existsSync(absPath))      { continue; }
-      const content = fs.readFileSync(tempFilePath, 'utf8');
-      this.snapshots.set(absPath, content);
-      this.tempFiles.set(absPath, tempFilePath);
+    for (const [absPath, originalContent] of Object.entries(saved)) {
+      if (!fs.existsSync(absPath)) { continue; }
+      this.snapshots.set(absPath, originalContent);
     }
   }
 
   private persistState(): void {
     const obj: Record<string, string> = {};
-    for (const [absPath, tempFilePath] of this.tempFiles.entries()) {
-      obj[absPath] = tempFilePath;
+    for (const [absPath, content] of this.snapshots.entries()) {
+      obj[absPath] = content;
     }
     this.context.workspaceState.update(STATE_KEY, obj);
   }
 
+  // ---- Public API ----
+
   /**
-   * Called BEFORE Claude modifies a file.
-   * Reads the current content and stores it as the "before" snapshot.
-   * If the file does not exist yet (new file creation), stores empty string.
+   * Gọi TRƯỚC khi Claude sửa file.
+   * Đọc nội dung hiện tại và lưu làm snapshot "before".
    */
   async snapshotBefore(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
+    if (this.snapshots.has(absPath)) {
+      // Đã có snapshot — giữ bản gốc nhất, không ghi đè
+      return;
+    }
     try {
       const content = fs.readFileSync(absPath, 'utf8');
       this.snapshots.set(absPath, content);
     } catch {
-      // File does not exist yet (Write to new file)
+      // File chưa tồn tại (Claude tạo file mới)
       this.snapshots.set(absPath, '');
     }
+    this.persistState();
   }
 
   /**
-   * Called AFTER Claude has modified the file.
-   * Writes the snapshot to a temp file and opens the VSCode diff editor.
+   * Gọi SAU khi Claude đã sửa xong file.
+   * Mở editor và render inline diff.
    */
   async openDiff(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
-    if (snapshot === undefined) {
-      // No snapshot found — snapshotBefore was not called for this file.
+    if (snapshot === undefined) { return; }
+
+    // Đọc nội dung mới từ disk
+    let modifiedContent: string;
+    try {
+      modifiedContent = fs.readFileSync(absPath, 'utf8');
+    } catch {
       return;
     }
 
-    const basename = path.basename(absPath);
-    // Encode last 40 chars of sanitized absPath to avoid collisions
-    // when two files share the same basename.
-    const safePrefix = absPath.replace(/[^a-zA-Z0-9]/g, '_').slice(-40);
-    const tempFileName = `claude-diff-${safePrefix}-${basename}`;
-    const tempFilePath = path.join(os.tmpdir(), tempFileName);
-
-    fs.writeFileSync(tempFilePath, snapshot, 'utf8');
-    this.tempFiles.set(absPath, tempFilePath);
-    this.persistState();
-
-    // Left (originalUri) = temp file (before state)
-    // Right (modifiedUri) = actual file on disk (after Claude edited it)
-    const originalUri = vscode.Uri.file(tempFilePath);
+    // Chuyển sang dùng UI chuẩn của VS Code: Diff Editor. 
+    // Gắn thêm query Date.now() để ép VS Code không cache nội dung cũ của tab ảo này
+    const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: Date.now().toString() });
     const modifiedUri = vscode.Uri.file(absPath);
-    const title = `Claude \u2726 ${basename}`;
+    const title = `Claude Diff: ${path.basename(absPath)}`;
+    
+    await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, title, { preview: false });
 
-    await vscode.commands.executeCommand(
-      'vscode.diff',
-      originalUri,
-      modifiedUri,
-      title,
-      { preview: false }
-    );
+    // Vẫn cần gọi renderer để tính toán danh sách hunks (giúp render CodeLens)
+    this.renderer.show(absPath, snapshot, modifiedContent);
+    this._onDidChangeDiffs.fire();
   }
 
   /**
-   * Reverts the file to its pre-Claude state and cleans up.
+   * Inject snapshot từ bên ngoài (dùng bởi HookWatcher hoặc WorkspaceWatcher).
+   */
+  loadSnapshot(filePath: string, content: string): void {
+    const absPath = normalizePath(filePath);
+    if (!this.snapshots.has(absPath)) {
+      this.snapshots.set(absPath, content);
+      this.persistState();
+      this._onDidChangeDiffs.fire();
+    }
+  }
+
+  async acceptHunk(filePath: string, hunkId: string): Promise<void> {
+    const absPath = normalizePath(filePath);
+    const isDone = this.renderer.acceptHunk(absPath, hunkId);
+    if (isDone) {
+      await this.cleanup(absPath);
+    }
+    this._onDidChangeDiffs.fire();
+  }
+
+  async revertHunk(filePath: string, hunkId: string): Promise<void> {
+    const absPath = normalizePath(filePath);
+    const isDone = await this.renderer.revertHunk(absPath, hunkId);
+    if (isDone) {
+      await this.cleanup(absPath);
+    }
+    this._onDidChangeDiffs.fire();
+  }
+
+  /**
+   * Chấp nhận toàn bộ thay đổi trong file — xóa snapshot.
+   */
+  async accept(filePath: string): Promise<void> {
+    const absPath = normalizePath(filePath);
+    this.renderer.acceptAll(absPath);
+    await this.cleanup(absPath);
+    vscode.window.showInformationMessage(`Accepted: ${path.basename(absPath)}`);
+    this._onDidChangeDiffs.fire();
+  }
+
+  /**
+   * Hoàn tác toàn bộ thay đổi trong file về nội dung gốc.
    */
   async revert(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (snapshot === undefined) {
-      vscode.window.showWarningMessage(
-        `No snapshot found for ${path.basename(absPath)}`
-      );
+      vscode.window.showWarningMessage(`No snapshot found for ${path.basename(absPath)}`);
       return;
     }
 
-    if (snapshot === '') {
-      // File was newly created by Claude — revert means delete it
-      try {
-        fs.unlinkSync(absPath);
-      } catch {
-        // Already gone, that's fine
-      }
-    } else {
-      fs.writeFileSync(absPath, snapshot, 'utf8');
-    }
-
-    this.cleanup(absPath);
-    vscode.window.showInformationMessage(
-      `Reverted: ${path.basename(absPath)}`
-    );
+    await this.renderer.revertAll(absPath);
+    await this.cleanup(absPath);
+    vscode.window.showInformationMessage(`Reverted: ${path.basename(absPath)}`);
+    this._onDidChangeDiffs.fire();
   }
 
   /**
-   * Accepts the Claude edit: cleans up temp files and snapshot state.
-   * The file content (as modified by Claude) is kept as-is.
+   * Xóa snapshot của một file (sau khi accept/revert từng hunk xong hết).
+   * Dùng khi tất cả hunks đã được xử lý thủ công.
    */
-  async accept(filePath: string): Promise<void> {
-    const absPath = normalizePath(filePath);
-    this.cleanup(absPath);
-    vscode.window.showInformationMessage(
-      `Accepted: ${path.basename(absPath)}`
-    );
+  forgetFile(filePath: string): void {
+    this.cleanup(normalizePath(filePath)).catch((err) => console.error(err));
   }
 
   /**
-   * Injects a snapshot directly (used by HookWatcher when hooks provide the snapshot).
-   */
-  loadSnapshot(filePath: string, content: string): void {
-    const absPath = normalizePath(filePath);
-    // Only store the first snapshot — preserve the original state before any Claude edits.
-    if (!this.snapshots.has(absPath)) {
-      this.snapshots.set(absPath, content);
-    }
-  }
-
-  /**
-   * Returns whether there is a pending diff for the given file path.
+   * Kiểm tra xem file có đang có pending diff không.
    */
   hasPendingDiff(filePath: string): boolean {
     return this.snapshots.has(normalizePath(filePath));
   }
 
   /**
-   * Given a temp file path, find the original (modified) file path.
-   * Used when the user has focused the LEFT (snapshot) pane of the diff.
+   * Lấy snapshot gốc (dùng để so sánh sau khi edit).
    */
-  findByTempFile(tempFilePath: string): string | undefined {
-    for (const [absPath, tmpPath] of this.tempFiles.entries()) {
-      if (tmpPath === tempFilePath) {
-        return absPath;
-      }
-    }
-    return undefined;
+  getSnapshot(filePath: string): string | undefined {
+    return this.snapshots.get(normalizePath(filePath));
   }
 
   /**
-   * Clean up ALL pending diffs (called on extension deactivate or session end).
+   * Dọn dẹp tất cả pending diffs khi deactivate.
    */
   disposeAll(): void {
-    for (const absPath of Array.from(this.snapshots.keys())) {
-      this.cleanup(absPath);
-    }
+    this.renderer.disposeAll();
+    this.snapshots.clear();
   }
 
-  private cleanup(absPath: string): void {
-    const tempFilePath = this.tempFiles.get(absPath);
-    if (tempFilePath) {
-      try {
-        fs.unlinkSync(tempFilePath);
-      } catch {
-        // Temp file already deleted, fine
-      }
-      this.tempFiles.delete(absPath);
-    }
+  private async cleanup(absPath: string): Promise<void> {
     this.snapshots.delete(absPath);
     this.persistState();
+    
+    // Lưu lại vị trí con trỏ và scroll hiện tại trước khi đóng tab
+    let targetSelection: vscode.Selection | undefined;
+    let targetVisibleRange: vscode.Range | undefined;
+    
+    for (const editor of vscode.window.visibleTextEditors) {
+      if (normalizePath(editor.document.uri.fsPath) === absPath) {
+        targetSelection = editor.selection;
+        if (editor.visibleRanges.length > 0) {
+          targetVisibleRange = editor.visibleRanges[0];
+        }
+        if (editor === vscode.window.activeTextEditor) {
+          break; // Ưu tiên editor đang có focus nhất
+        }
+      }
+    }
+
+    // Tự động đóng tab Diff View sau khi xong hết hunks
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode.TabInputTextDiff) {
+          const { modified } = tab.input;
+          if (normalizePath(modified.fsPath) === absPath) {
+            await vscode.window.tabGroups.close(tab);
+          }
+        }
+      }
+    }
+
+    // Mở lại file ở tab thường và đặt con trỏ/scroll về đúng chỗ cũ
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
+      const editor = await vscode.window.showTextDocument(doc, { preview: false });
+
+      if (targetSelection) {
+        editor.selection = targetSelection;
+      }
+      if (targetVisibleRange) {
+        editor.revealRange(targetVisibleRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+      }
+    } catch {}
   }
 }

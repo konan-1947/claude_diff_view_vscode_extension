@@ -16,7 +16,13 @@ process.stdin.on('data', chunk => { raw += chunk; });
 process.stdin.on('end', () => {
   try {
     const event = JSON.parse(raw);
-    const filePath = event.tool_input && event.tool_input.file_path;
+    const toolInput = event.tool_input || event.input;
+    const filePath = toolInput && toolInput.file_path;
+    
+    // Debug log for Qwen integration
+    const logPath = path.join(os.tmpdir(), "claude-diff-hook-debug.log");
+    fs.appendFileSync(logPath, `[POST] Raw event: ${raw}\n`, 'utf8');
+
     if (!filePath) { process.exit(0); return; }
 
     const absPath = path.resolve(filePath);

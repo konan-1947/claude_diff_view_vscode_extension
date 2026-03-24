@@ -1,3 +1,16 @@
+/**
+ * qwenRunner.ts
+ *
+ * AI Runner cho Qwen CLI (qwen-code).
+ * Dựa trên claudeRunner.ts, điều chỉnh theo output format thực tế của Qwen CLI.
+ *
+ * Các điểm khác biệt với Claude CLI (đã verify bằng test thực tế):
+ *   - Lệnh: `qwen` thay vì `claude`
+ *   - Tool names file-editing: `write_file`, `edit` (không có MultiEdit)
+ *   - Event tool done: type "user" + content[].type "tool_result" (thay vì type "tool")
+ *   - Settings path: ~/.qwen/settings.json
+ */
+
 import * as cp from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -5,7 +18,7 @@ import * as os from 'os';
 import { DiffManager } from '../diff/diffManager';
 import { IAiRunner, StatusCallback, ProgressCallback } from './aiRunner';
 
-// ---- Types matching claude CLI stream-json output ----
+// ---- Types matching qwen CLI stream-json output ----
 
 interface ToolUseContent {
   type: 'tool_use';
@@ -27,10 +40,20 @@ interface AssistantEvent {
   message: AssistantMessage;
 }
 
-interface ToolResultEvent {
-  type: 'tool';
+/** Qwen dùng type "user" cho tool result, không phải type "tool" như Claude */
+interface ToolResultContent {
+  type: 'tool_result';
   tool_use_id: string;
+  is_error: boolean;
   content: string;
+}
+
+interface UserEvent {
+  type: 'user';
+  message: {
+    role: 'user';
+    content: Array<ToolResultContent | { type: string }>;
+  };
 }
 
 interface ResultEvent {
@@ -40,40 +63,36 @@ interface ResultEvent {
   result?: string;
 }
 
-type ClaudeEvent =
+type QwenEvent =
   | AssistantEvent
-  | ToolResultEvent
+  | UserEvent
   | ResultEvent
   | { type: string };
 
-// File-editing tool names to intercept
-const FILE_EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
+// Tên tool file-editing của Qwen CLI (đã xác nhận qua test thực tế)
+const FILE_EDIT_TOOLS = new Set(['write_file', 'edit']);
 
-export type { StatusCallback, ProgressCallback };
-
-export class ClaudeRunner implements IAiRunner {
-  readonly toolName = 'claude';
+export class QwenRunner implements IAiRunner {
+  readonly toolName = 'qwen';
 
   constructor(private readonly diffManager: DiffManager) {}
 
   getSettingsFilePath(): string {
-    const homeDir = process.env['USERPROFILE'] ?? process.env['HOME'] ?? '';
-    return path.join(homeDir, '.claude', 'settings.json');
+    const homeDir = os.homedir();
+    return path.join(homeDir, '.qwen', 'settings.json');
   }
 
   getFileEditToolNames(): string[] {
-    return ['Write', 'Edit', 'MultiEdit'];
+    return ['write_file', 'edit'];
   }
 
   /**
-   * Finds the claude CLI executable on Windows.
-   * Tries PATH lookup first, then falls back to the known install location.
+   * Tìm qwen CLI executable trên PATH.
    */
-  private findClaudeCli(): string {
-    const candidates = ['claude', 'claude.cmd', 'claude.exe'];
-
-    // Try each candidate via `where` (Windows) / `which` (unix)
+  private findQwenCli(): string {
+    const candidates = ['qwen', 'qwen.cmd', 'qwen.exe'];
     const lookupCmd = process.platform === 'win32' ? 'where' : 'which';
+
     for (const candidate of candidates) {
       try {
         const result = cp.spawnSync(
@@ -85,34 +104,19 @@ export class ClaudeRunner implements IAiRunner {
           return candidate;
         }
       } catch {
-        // ignore — try next candidate
-      }
-    }
-
-    // Fallback: check known Windows install path
-    const homeDir =
-      process.env['USERPROFILE'] ?? process.env['HOME'] ?? '';
-    if (homeDir) {
-      const absolutePath = path.join(homeDir, '.local', 'bin', 'claude.exe');
-      if (fs.existsSync(absolutePath)) {
-        return absolutePath;
-      }
-      const absolutePathNoExt = path.join(homeDir, '.local', 'bin', 'claude');
-      if (fs.existsSync(absolutePathNoExt)) {
-        return absolutePathNoExt;
+        // thử candidate tiếp theo
       }
     }
 
     throw new Error(
-      'claude CLI not found.\n' +
-        'Install Claude Code and ensure "claude" is on your PATH.\n' +
-        'Tip: add %USERPROFILE%\\.local\\bin to your PATH environment variable.'
+      'qwen CLI not found.\n' +
+      'Install Qwen Code: npm install -g @qwen-code/cli\n' +
+      'Ensure "qwen" is on your PATH.'
     );
   }
 
   /**
-   * Runs a claude session with the given prompt.
-   * Fires onStatus callbacks to report state changes.
+   * Chạy một session Qwen với prompt cho trước.
    */
   async run(
     prompt: string,
@@ -120,32 +124,29 @@ export class ClaudeRunner implements IAiRunner {
     onStatus: StatusCallback,
     onProgress?: ProgressCallback
   ): Promise<void> {
-    const claudePath = this.findClaudeCli();
+    const qwenPath = this.findQwenCli();
 
     return new Promise<void>((resolve, reject) => {
       const args = [
         '--output-format', 'stream-json',
-        '--verbose',
+        '--approval-mode', 'auto-edit',
         '-p', prompt,
       ];
 
-      const proc = cp.spawn(claudePath, args, {
+      const proc = cp.spawn(qwenPath, args, {
         cwd: workingDir,
         env: { ...process.env },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      // NDJSON line buffer — chunks may split across lines
       let lineBuffer = '';
-
-      // Maps tool_use_id -> file_path for pending tool calls
+      // Maps tool_use_id -> file_path cho các tool call đang pending
       const pendingToolUses = new Map<string, string>();
 
-      onProgress?.('Claude is thinking\u2026');
+      onProgress?.('Qwen is thinking\u2026');
 
       proc.stdout.on('data', (chunk: Buffer) => {
         lineBuffer += chunk.toString('utf8');
-
         const lines = lineBuffer.split('\n');
         for (let i = 0; i < lines.length - 1; i++) {
           const line = (lines[i] ?? '').trim();
@@ -165,7 +166,7 @@ export class ClaudeRunner implements IAiRunner {
       });
 
       proc.stderr.on('data', (chunk: Buffer) => {
-        console.error('[claude stderr]', chunk.toString('utf8').trimEnd());
+        console.error('[claude-diff-view] qwen stderr:', chunk.toString('utf8').trimEnd());
       });
 
       onStatus('running');
@@ -175,7 +176,7 @@ export class ClaudeRunner implements IAiRunner {
         if (code === 0 || code === null) {
           resolve();
         } else {
-          reject(new Error(`claude exited with code ${code}`));
+          reject(new Error(`qwen exited with code ${code}`));
         }
       });
 
@@ -187,58 +188,58 @@ export class ClaudeRunner implements IAiRunner {
   }
 
   /**
-   * Parses one complete NDJSON line and dispatches to diffManager.
+   * Parse một dòng NDJSON và dispatch sang diffManager.
    */
   private handleLine(
     line: string,
     pendingToolUses: Map<string, string>,
     onProgress?: ProgressCallback
   ): void {
-    let event: ClaudeEvent;
+    let event: QwenEvent;
     try {
-      event = JSON.parse(line) as ClaudeEvent;
+      event = JSON.parse(line) as QwenEvent;
     } catch {
-      console.warn(
-        '[claude-diff-view] Skipping non-JSON line:',
-        line.slice(0, 120)
-      );
+      console.warn('[claude-diff-view] qwenRunner: skipping non-JSON line:', line.slice(0, 120));
       return;
     }
 
+    // Qwen: assistant event chứa tool_use — snapshot file trước khi sửa
     if (event.type === 'assistant') {
       const assistantEvent = event as AssistantEvent;
       for (const item of assistantEvent.message.content) {
-        if (item.type !== 'tool_use') {
-          continue;
-        }
+        if (item.type !== 'tool_use') { continue; }
         const toolUse = item as ToolUseContent;
-        if (!FILE_EDIT_TOOLS.has(toolUse.name)) {
-          continue;
-        }
+        if (!FILE_EDIT_TOOLS.has(toolUse.name)) { continue; }
+
         const filePath = toolUse.input.file_path;
-        if (!filePath) {
-          continue;
-        }
-        // Register mapping before snapshotting
+        if (!filePath) { continue; }
+
         pendingToolUses.set(toolUse.id, filePath);
-        const basename = filePath.split(/[\\/]/).pop() ?? filePath;
+        const basename = filePath.split(/[\\\/]/).pop() ?? filePath;
         onProgress?.(`${toolUse.name}: ${basename}`);
+
         this.diffManager.snapshotBefore(filePath).catch((err: unknown) => {
-          console.error('[claude-diff-view] snapshotBefore failed:', err);
+          console.error('[claude-diff-view] qwenRunner: snapshotBefore failed:', err);
         });
       }
       return;
     }
 
-    if (event.type === 'tool') {
-      const toolEvent = event as ToolResultEvent;
-      const filePath = pendingToolUses.get(toolEvent.tool_use_id);
-      if (filePath) {
-        pendingToolUses.delete(toolEvent.tool_use_id);
-        const basename = filePath.split(/[\\/]/).pop() ?? filePath;
+    // Qwen: user event chứa tool_result — mở diff sau khi file đã được sửa
+    if (event.type === 'user') {
+      const userEvent = event as UserEvent;
+      for (const item of userEvent.message.content) {
+        if (item.type !== 'tool_result') { continue; }
+        const toolResult = item as ToolResultContent;
+        const filePath = pendingToolUses.get(toolResult.tool_use_id);
+        if (!filePath) { continue; }
+
+        pendingToolUses.delete(toolResult.tool_use_id);
+        const basename = filePath.split(/[\\\/]/).pop() ?? filePath;
         onProgress?.(`Opening diff: ${basename}`);
+
         this.diffManager.openDiff(filePath).catch((err: unknown) => {
-          console.error('[claude-diff-view] openDiff failed:', err);
+          console.error('[claude-diff-view] qwenRunner: openDiff failed:', err);
         });
       }
       return;
@@ -246,7 +247,7 @@ export class ClaudeRunner implements IAiRunner {
 
     if (event.type === 'result' && (event as ResultEvent).is_error) {
       console.error(
-        '[claude-diff-view] Session error:',
+        '[claude-diff-view] qwenRunner: session error:',
         (event as ResultEvent).result ?? '(no details)'
       );
     }
