@@ -38,27 +38,15 @@ export class InlineDiffRenderer {
     });
 
     this.removedLineDecor = vscode.window.createTextEditorDecorationType({
-      isWholeLine: true,
-      backgroundColor: new vscode.ThemeColor('diffEditor.removedLineBackground'),
-      before: {
-        // Nội dung ghost text được set dynamically per-range (không dùng contentText static)
-        textDecoration: 'none',
-      },
+      // Do not use isWholeLine or backgroundColor here, because it would colour the actual (new) line text red!
+      // The background colour will be applied to the ghost text blocks only.
       overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.deletedForeground'),
       overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
 
-    const acceptIconPath = vscode.Uri.joinPath(extensionUri, 'media', 'accept-hunk.svg');
-    this.acceptGutterDecor = vscode.window.createTextEditorDecorationType({
-      gutterIconPath: acceptIconPath,
-      gutterIconSize: 'contain',
-    });
-
-    const revertIconPath = vscode.Uri.joinPath(extensionUri, 'media', 'revert-hunk.svg');
-    this.revertGutterDecor = vscode.window.createTextEditorDecorationType({
-      gutterIconPath: revertIconPath,
-      gutterIconSize: 'contain',
-    });
+    // Removed the accept/revert gutter decorations as they are redundant with CodeLens
+    this.acceptGutterDecor = vscode.window.createTextEditorDecorationType({});
+    this.revertGutterDecor = vscode.window.createTextEditorDecorationType({});
   }
 
   /**
@@ -270,23 +258,23 @@ export class InlineDiffRenderer {
         );
       }
 
-      // Dòng bị xóa — hiển thị ghost text phía trên dòng đầu tiên của hunk
+      // Dòng bị xóa — hiển thị như một ghost text mờ ở CUỐI dòng (after) để không phá vỡ indentation
       if (hunk.removedLines.length > 0) {
         const anchorLine = Math.max(0, hunk.modifiedStart);
-        const removedText = hunk.removedLines.map(r => `  ${r.text}`).join('\n');
+        // Nối các dòng xóa thành một chuỗi duy nhất với ký hiệu ngắt dòng
+        const removedText = '   ◀ xóa: ' + hunk.removedLines.map(r => r.text.trim()).join(' ↵ ');
         removedRanges.push({
           range: new vscode.Range(
-            new vscode.Position(anchorLine, 0),
-            new vscode.Position(anchorLine, 0)
+            new vscode.Position(anchorLine, Number.MAX_SAFE_INTEGER),
+            new vscode.Position(anchorLine, Number.MAX_SAFE_INTEGER)
           ),
           renderOptions: {
-            before: {
+            after: {
               contentText: removedText,
               color: new vscode.ThemeColor('editorError.foreground'),
-              backgroundColor: 'rgba(255, 80, 80, 0.18)',
-              textDecoration: 'line-through',
+              textDecoration: 'line-through; opacity: 0.7;',
               fontStyle: 'italic',
-              margin: '0 0 2px 0',
+              margin: '0 0 0 20px',
             },
           },
         });
