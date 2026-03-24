@@ -15,6 +15,39 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
     this._onDidChangeCodeLenses.fire();
   }
 
+  /**
+   * Trả về true nếu document đang được mở trong ít nhất một regular editor
+   * (không phải diff editor). Dùng Tab API (VSCode 1.71+).
+   */
+  private hasRegularEditor(document: vscode.TextDocument): boolean {
+    const fsPath = document.uri.fsPath;
+
+    // Tập hợp các tab đang là diff editor
+    const diffModifiedPaths = new Set<string>();
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode.TabInputTextDiff) {
+          diffModifiedPaths.add(tab.input.modified.fsPath);
+          diffModifiedPaths.add(tab.input.original.fsPath);
+        }
+      }
+    }
+
+    // Kiểm tra có tab thường nào mở file này không
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode.TabInputText) {
+          if (tab.input.uri.fsPath === fsPath) {
+            return true;
+          }
+        }
+      }
+    }
+
+    // Không tìm thấy regular tab → chỉ có trong diff editor
+    return !diffModifiedPaths.has(fsPath);
+  }
+
   provideCodeLenses(
     document: vscode.TextDocument,
     token: vscode.CancellationToken
@@ -23,6 +56,12 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
 
     // Chỉ hiện CodeLens nếu file đang có pending diff
     if (!this.diffManager.hasPendingDiff(filePath)) {
+      return [];
+    }
+
+    // Không hiện CodeLens nếu document chỉ được mở trong diff editor
+    // (CodeLens apply cho mọi editor hiện document, nên chỉ render khi có regular editor)
+    if (!this.hasRegularEditor(document)) {
       return [];
     }
 

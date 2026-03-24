@@ -212,7 +212,7 @@ export class InlineDiffRenderer {
     // Xóa tất cả decoration đang gắn trên các editor hiển thị file này
     for (const editor of vscode.window.visibleTextEditors) {
       const editorPath = editor.document.uri.fsPath;
-      if (this.normalizePath(editorPath) === this.normalizePath(filePath)) {
+      if (this.normalizePath(editorPath) === this.normalizePath(filePath) && !this.isEditorInDiffView(editor)) {
         editor.setDecorations(this.addedLineDecor, []);
         editor.setDecorations(this.removedLineDecor, []);
         editor.setDecorations(this.acceptGutterDecor, []);
@@ -296,10 +296,10 @@ export class InlineDiffRenderer {
       });
     }
 
-    // Gắn decoration lên tất cả editor đang mở file này
+    // Gắn decoration lên tất cả editor đang mở file này (bỏ qua diff editor)
     for (const editor of vscode.window.visibleTextEditors) {
       const editorPath = editor.document.uri.fsPath;
-      if (this.normalizePath(editorPath) === this.normalizePath(filePath)) {
+      if (this.normalizePath(editorPath) === this.normalizePath(filePath) && !this.isEditorInDiffView(editor)) {
         editor.setDecorations(this.addedLineDecor, addedRanges);
         editor.setDecorations(this.removedLineDecor, removedRanges);
         editor.setDecorations(this.acceptGutterDecor, acceptGutterRanges);
@@ -310,8 +310,24 @@ export class InlineDiffRenderer {
 
   // ---- Helper methods ----
 
+  /**
+   * Trả về true nếu editor đang là một phần của diff view (không phải regular editor).
+   * Dùng Tab API (VSCode 1.71+).
+   */
+  private isEditorInDiffView(editor: vscode.TextEditor): boolean {
+    for (const group of vscode.window.tabGroups.all) {
+      if (group.viewColumn !== editor.viewColumn) { continue; }
+      const activeTab = group.activeTab;
+      if (activeTab?.input instanceof vscode.TabInputTextDiff) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private normalizePath(p: string): string {
-    return vscode.Uri.file(path.resolve(p)).fsPath;
+    const fsPath = vscode.Uri.file(path.resolve(p)).fsPath;
+    return process.platform === 'win32' ? fsPath.toLowerCase() : fsPath;
   }
 
   private findDocument(filePath: string): vscode.TextDocument | undefined {

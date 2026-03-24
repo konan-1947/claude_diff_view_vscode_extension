@@ -42,6 +42,9 @@ export class WorkspaceWatcher {
     // event onDidSaveTextDocument chỉ để re-apply decorations nếu cần
     const d = vscode.workspace.onDidSaveTextDocument((doc) => {
       const filePath = doc.uri.fsPath;
+      // Sync snapshot ngay khi VS Code save — đảm bảo fs.watch không trigger diff sai
+      // (onDidSaveTextDocument luôn fire trước fs.watch, nên snapshot sẽ đúng khi fs.watch chạy)
+      this.externalSnapshots.set(filePath, doc.getText());
       if (this.diffManager.hasPendingDiff(filePath)) {
         this.diffManager.renderer.applyDecorations(filePath);
       }

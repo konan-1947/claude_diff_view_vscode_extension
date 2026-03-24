@@ -15,7 +15,8 @@ const STATE_KEY = 'claude-diff.snapshots';
 
 /** Normalize về cùng định dạng mà vscode.Uri.fsPath sử dụng. */
 function normalizePath(filePath: string): string {
-  return vscode.Uri.file(path.resolve(filePath)).fsPath;
+  const fsPath = vscode.Uri.file(path.resolve(filePath)).fsPath;
+  return process.platform === 'win32' ? fsPath.toLowerCase() : fsPath;
 }
 
 export class DiffManager {
@@ -87,6 +88,18 @@ export class DiffManager {
       modifiedContent = fs.readFileSync(absPath, 'utf8');
     } catch {
       return;
+    }
+
+    // Đóng bất kỳ diff tab nào đang mở cho file này (tránh CodeLens/decoration bị nhân đôi)
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode.TabInputTextDiff) {
+          const { original, modified } = tab.input;
+          if (normalizePath(original.fsPath) === absPath || normalizePath(modified.fsPath) === absPath) {
+            await vscode.window.tabGroups.close(tab);
+          }
+        }
+      }
     }
 
     // Mở file trong editor thường
