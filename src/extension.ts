@@ -22,6 +22,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // Kết nối Navigation tới Renderer để có thể hiện UI
   diffManager.renderer.setNavigationManager(navigationManager);
 
+  diffManager.renderer.setNavUpdateCallback(navInfo => statusBarManager.updateNavigation(navInfo));
+
   // Runner được khởi tạo lazy khi người dùng bấm Start Session
   let activeRunner: IAiRunner | undefined;
 

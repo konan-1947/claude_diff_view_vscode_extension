@@ -56,7 +56,7 @@ export class DecorationManager {
    * Áp dụng decorations lên một editor cụ thể dựa trên danh sách hunks.
    */
 
-  applyToEditor(editor: vscode.TextEditor, hunks: Hunk[], navInfo?: any): void {
+  applyToEditor(editor: vscode.TextEditor, hunks: Hunk[]): void {
     const addedRanges: vscode.Range[] = [];
     const removedRanges: vscode.DecorationOptions[] = [];
     const acceptGutterRanges: vscode.DecorationOptions[] = [];
@@ -122,12 +122,7 @@ export class DecorationManager {
     editor.setDecorations(this.removedLineDecor, removedRanges);
     editor.setDecorations(this.acceptGutterDecor, acceptGutterRanges);
     editor.setDecorations(this.revertGutterDecor, revertGutterRanges);
-
-    if (navInfo) {
-      this.renderNavigationBar(editor, navInfo, navigationBarRanges);
-    } else {
-      editor.setDecorations(this.navigationBarDecor, []);
-    }
+    editor.setDecorations(this.navigationBarDecor, []);
   }
 
   private renderNavigationBar(editor: vscode.TextEditor, info: any, ranges: vscode.DecorationOptions[]): void {
@@ -151,19 +146,22 @@ export class DecorationManager {
           textDecoration: `
             none;
             position: fixed;
-            bottom: 30px;
+            bottom: 60px;
             left: 50%;
             transform: translateX(-50%);
-            padding: 8px 16px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            padding: 10px 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
             font-size: 13px;
+            font-weight: 500;
             white-space: pre;
             pointer-events: none;
-            z-index: 1000;
+            z-index: 9999;
             display: flex;
             align-items: center;
             letter-spacing: 0.5px;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(128, 128, 128, 0.2);
           `
         }
       }

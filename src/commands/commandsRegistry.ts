@@ -130,7 +130,7 @@ export function registerAllCommands(deps: CommandDeps): void {
                 editor?.document.uri.fsPath,
                 editor ? diffManager.renderer.hasPending(editor.document.uri.fsPath) : false
               );
-              vscode.window.showInformationMessage(`$(check) ${toolLabel} session complete.`);
+              vscode.window.showInformationMessage(`${toolLabel} session complete.`);
             } catch (err: unknown) {
               const message = err instanceof Error ? err.message : String(err);
               statusBarManager.setStatus('error', runner, message);
@@ -158,7 +158,7 @@ export function registerAllCommands(deps: CommandDeps): void {
         await diffManager.accept(filePath);
         statusBarManager.updateButtons(filePath, false);
         vscode.window.showInformationMessage(
-          `$(check) Accepted all changes: ${path.basename(filePath)}`
+          `Accepted all changes: ${path.basename(filePath)}`
         );
       }
     )
@@ -179,7 +179,7 @@ export function registerAllCommands(deps: CommandDeps): void {
         await diffManager.revert(filePath);
         statusBarManager.updateButtons(filePath, false);
         vscode.window.showInformationMessage(
-          `$(discard) Reverted all changes: ${path.basename(filePath)}`
+          `Reverted all changes: ${path.basename(filePath)}`
         );
       }
     )
@@ -290,7 +290,7 @@ export function registerAllCommands(deps: CommandDeps): void {
         fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 
         vscode.window.showInformationMessage(
-          `$(check) ${toolLabel} hooks installed! Inline diff now works with \`${runner.toolName}\` CLI in any terminal.`
+          `${toolLabel} hooks installed! Inline diff now works with \`${runner.toolName}\` CLI in any terminal.`
         );
       }
     )

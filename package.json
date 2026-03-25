@@ -37,23 +37,19 @@
       },
       {
         "command": "claude-diff-view.acceptAllHunks",
-        "title": "Claude: Accept All Changes",
-        "icon": "$(check-all)"
+        "title": "Claude: Accept All Changes"
       },
       {
         "command": "claude-diff-view.revertAllHunks",
-        "title": "Claude: Revert All Changes",
-        "icon": "$(discard)"
+        "title": "Claude: Revert All Changes"
       },
       {
         "command": "claude-diff-view.acceptHunk",
-        "title": "Claude: Accept Hunk",
-        "icon": "$(check)"
+        "title": "Claude: Accept Hunk"
       },
       {
         "command": "claude-diff-view.revertHunk",
-        "title": "Claude: Revert Hunk",
-        "icon": "$(close)"
+        "title": "Claude: Revert Hunk"
       },
       {
         "command": "claude-diff-view.installHooks",

@@ -23,6 +23,7 @@ export class InlineDiffRenderer {
   private fileStates = new Map<string, FileDiffState>();
   private readonly decorations: DecorationManager;
   private navigationManager?: NavigationManager;
+  private onNavUpdate?: (navInfo?: { currentIdx: number; total: number; prevName: string; nextName: string }) => void;
 
   constructor(_extensionUri: vscode.Uri) {
     this.decorations = new DecorationManager();
@@ -30,6 +31,10 @@ export class InlineDiffRenderer {
 
   setNavigationManager(nav: NavigationManager): void {
     this.navigationManager = nav;
+  }
+
+  setNavUpdateCallback(cb: (navInfo?: { currentIdx: number; total: number; prevName: string; nextName: string }) => void): void {
+    this.onNavUpdate = cb;
   }
 
   /**
@@ -161,6 +166,10 @@ export class InlineDiffRenderer {
     }
 
     this.fileStates.delete(normalizedPath);
+
+    if (this.fileStates.size === 0) {
+      this.onNavUpdate?.(undefined);
+    }
   }
 
   /** Xóa tất cả khi deactivate. */
@@ -177,13 +186,13 @@ export class InlineDiffRenderer {
     const state = this.fileStates.get(normalizedPath);
     if (!state) { return; }
 
+    const navInfo = this.navigationManager?.getNavigationInfo(normalizedPath);
+    this.onNavUpdate?.(navInfo);
+
     for (const editor of vscode.window.visibleTextEditors) {
-      if (
-        this.normalizePath(editor.document.uri.fsPath) === normalizedPath &&
-        !this.isEditorInDiffView(editor)
-      ) {
-        const navInfo = this.navigationManager?.getNavigationInfo(normalizedPath);
-        this.decorations.applyToEditor(editor, state.hunks, navInfo);
+      if (this.normalizePath(editor.document.uri.fsPath) === normalizedPath) {
+        const isDiffView = this.isEditorInDiffView(editor);
+        this.decorations.applyToEditor(editor, isDiffView ? [] : state.hunks);
       }
     }
   }
@@ -195,9 +204,15 @@ export class InlineDiffRenderer {
   public isEditorInDiffView(editor: vscode.TextEditor): boolean {
     if (editor.viewColumn === undefined) { return true; }
     for (const group of vscode.window.tabGroups.all) {
-      if (group.viewColumn !== editor.viewColumn) { continue; }
-      if (group.activeTab?.input instanceof vscode.TabInputTextDiff) {
-        return true;
+      for (const tab of group.tabs) {
+        if (tab.isActive && tab.input instanceof vscode.TabInputTextDiff) {
+          if (
+            this.normalizePath(tab.input.original.fsPath) === this.normalizePath(editor.document.uri.fsPath) ||
+            this.normalizePath(tab.input.modified.fsPath) === this.normalizePath(editor.document.uri.fsPath)
+          ) {
+            return true;
+          }
+        }
       }
     }
     return false;

@@ -75,7 +75,7 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
 
       // Nút Accept
       const acceptCmd: vscode.Command = {
-        title: '$(check) Accept Hunk',
+        title: 'Accept Hunk',
         tooltip: 'Chấp nhận các thay đổi này',
         command: 'claude-diff-view.acceptHunk',
         arguments: [filePath, hunk.id],
@@ -84,7 +84,7 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
 
       // Nút Revert
       const revertCmd: vscode.Command = {
-        title: '$(close) Revert Hunk',
+        title: 'Revert Hunk',
         tooltip: 'Hủy bỏ thay đổi, quay về gốc',
         command: 'claude-diff-view.revertHunk',
         arguments: [filePath, hunk.id],

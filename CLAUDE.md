@@ -23,9 +23,9 @@ No lint or test scripts are configured.
 ### Entry Point & Wiring
 
 `src/extension.ts` activates on `onStartupFinished` and wires up all components:
-- Creates `DiffManager`, `InlineDiffRenderer`, `HunkCodeLensProvider`, `HunkWatcher`, `WorkspaceWatcher`, `SessionTreeProvider`
-- Detects Claude CLI via `RunnerFactory` and instantiates the appropriate `IAiRunner`
-- Registers all commands and the status bar item
+- Creates `DiffManager`, `StatusBarManager`, `SessionTreeProvider`, `HookWatcher`, `WorkspaceWatcher`, `NavigationManager`
+- Registers `HunkCodeLensProvider` and delegates all command registration to `commandsRegistry.ts`
+- Runner is initialized **lazily** on first "Start Session" invocation via `RunnerFactory`
 
 ### Diff Flow
 
@@ -64,10 +64,16 @@ Parses `assistant` events (file-edit tool calls) and `tool` events (completion s
 | Module | Role |
 |--------|------|
 | `src/diff/diffManager.ts` | Central state: snapshots map, pending hunks, accept/revert API, VS Code workspace state persistence |
-| `src/diff/inlineDiffRenderer.ts` | Renders decorations (green/red backgrounds, ghost strikethrough text) using `TextEditorDecorationType` |
+| `src/diff/inlineDiffRenderer.ts` | Orchestrates diff rendering per file; delegates decoration painting to `DecorationManager` |
+| `src/diff/decorationManager.ts` | Owns all `TextEditorDecorationType` objects; applies green/red backgrounds, ghost strikethrough text, and navigation bar overlay |
 | `src/diff/hunkCalculator.ts` | LCS-based line diff, groups consecutive changes into `Hunk` objects |
 | `src/diff/hunkCodeLensProvider.ts` | CodeLens provider placing Accept/Revert buttons at hunk start lines |
+| `src/diff/navigationManager.ts` | Navigates between files with pending diffs; feeds nav info to `DecorationManager` for the floating bar |
+| `src/commands/commandsRegistry.ts` | Registers all extension commands (extracted from extension.ts for cleanliness) |
+| `src/ui/statusBarManager.ts` | Status bar state (idle/running/error) and Accept All / Revert All button visibility |
 | `src/views/sessionTreeProvider.ts` | Sidebar tree: running status, current prompt, modified files list |
+| `src/views/diffActionPanel.ts` | WebviewView panel with file-level Accept/Reject buttons (shown in sidebar) |
+| `src/watcher/fileSnapshotStore.ts` | Reads/writes snapshot files under `%TEMP%/claude-diff-snapshots/` used by hook-based flow |
 
 ### State Persistence
 
@@ -82,6 +88,8 @@ Snapshot content is persisted in VS Code workspace state so diffs survive editor
 | `claude-diff-view.revertAllHunks` | Ctrl+Shift+Z | Revert all changes in active file |
 | `claude-diff-view.acceptHunk` | CodeLens | Accept single hunk |
 | `claude-diff-view.revertHunk` | CodeLens | Revert single hunk |
+| `claude-diff-view.nextFile` | Alt+L | Navigate to next file with pending diff |
+| `claude-diff-view.prevFile` | Alt+H | Navigate to previous file with pending diff |
 | `claude-diff-view.installHooks` | Menu | Write hook config to `~/.claude/settings.json` |
 
 Context key `claude-diff-view.hasPendingDiff` controls editor title menu visibility (Accept All / Revert All buttons).

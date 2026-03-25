@@ -3,53 +3,53 @@ export default function Home() {
     <main className="min-h-screen bg-white text-gray-900">
       {/* Navbar */}
       <nav className="flex items-center justify-between px-8 py-5 border-b border-gray-100">
-        <span className="text-xl font-bold tracking-tight">AutoViet</span>
+        <span className="text-xl font-bold tracking-tight">🍜 BữaViet</span>
         <div className="hidden md:flex gap-8 text-sm text-gray-600">
-          <a href="#products" className="hover:text-gray-900 transition-colors">Xe nổi bật</a>
+          <a href="#menu" className="hover:text-gray-900 transition-colors">Thực đơn</a>
           <a href="#why" className="hover:text-gray-900 transition-colors">Tại sao chọn chúng tôi</a>
           <a href="#contact" className="hover:text-gray-900 transition-colors">Liên hệ</a>
         </div>
-        <button className="bg-black text-white text-sm px-5 py-2 rounded-full hover:bg-gray-800 transition-colors">
-          Đặt lịch lái thử
+        <button className="bg-orange-500 text-white text-sm px-5 py-2 rounded-full hover:bg-orange-600 transition-colors">
+          Đặt ngay
         </button>
       </nav>
 
       {/* Hero */}
       <section className="flex flex-col items-center text-center px-6 pt-24 pb-20">
-        <span className="text-xs font-semibold uppercase tracking-widest text-indigo-600 mb-4">
-          Ưu đãi tháng 3 — Giảm đến 50 triệu đồng
+        <span className="text-xs font-semibold uppercase tracking-widest text-orange-500 mb-4">
+          Ưu đãi hôm nay — Miễn phí giao hàng đơn từ 99k
         </span>
         <h1 className="text-5xl md:text-6xl font-extrabold leading-tight max-w-3xl">
-          Xe ô tô chính hãng.<br />Giá tốt nhất thị trường.
+          Đồ ăn ngon.<br />Giao tận cửa.
         </h1>
         <p className="mt-6 text-lg text-gray-500 max-w-xl">
-          Sedan, SUV, bán tải — đầy đủ dòng xe từ các thương hiệu hàng đầu.
-          Bảo hành chính hãng, hỗ trợ vay trả góp toàn quốc.
+          Hàng trăm món từ cơm, bún, phở đến pizza, burger — tất cả từ các nhà hàng uy tín gần bạn.
+          Đặt dễ, giao nhanh, ngon đảm bảo.
         </p>
         <div className="mt-10 flex gap-4 flex-wrap justify-center">
-          <button className="bg-black text-white px-7 py-3 rounded-full text-sm font-medium hover:bg-gray-800 transition-colors">
-            Xem xe ngay
+          <button className="bg-orange-500 text-white px-7 py-3 rounded-full text-sm font-medium hover:bg-orange-600 transition-colors">
+            Đặt món ngay
           </button>
           <button className="border border-gray-200 px-7 py-3 rounded-full text-sm font-medium hover:border-gray-400 transition-colors">
-            Tư vấn miễn phí
+            Xem thực đơn
           </button>
         </div>
       </section>
 
-      {/* Products */}
-      <section id="products" className="bg-gray-50 px-8 py-20">
+      {/* Menu */}
+      <section id="menu" className="bg-gray-50 px-8 py-20">
         <div className="max-w-5xl mx-auto">
-          <h2 className="text-3xl font-bold text-center mb-14">Xe nổi bật</h2>
+          <h2 className="text-3xl font-bold text-center mb-14">Món nổi bật hôm nay</h2>
           <div className="grid md:grid-cols-3 gap-8">
-            {products.map((p) => (
-              <div key={p.name} className="bg-white rounded-2xl p-7 shadow-sm border border-gray-100 flex flex-col">
-                <div className="text-5xl mb-5 text-center">{p.icon}</div>
-                <h3 className="font-semibold text-lg mb-1">{p.name}</h3>
-                <p className="text-gray-500 text-sm leading-relaxed flex-1">{p.desc}</p>
+            {dishes.map((d) => (
+              <div key={d.name} className="bg-white rounded-2xl p-7 shadow-sm border border-gray-100 flex flex-col">
+                <div className="text-5xl mb-5 text-center">{d.icon}</div>
+                <h3 className="font-semibold text-lg mb-1">{d.name}</h3>
+                <p className="text-gray-500 text-sm leading-relaxed flex-1">{d.desc}</p>
                 <div className="mt-4 flex items-center justify-between">
-                  <span className="text-indigo-600 font-bold text-lg">{p.price}</span>
-                  <button className="bg-black text-white text-xs px-4 py-2 rounded-full hover:bg-gray-800 transition-colors">
-                    Đặt cọc
+                  <span className="text-orange-500 font-bold text-lg">{d.price}</span>
+                  <button className="bg-orange-500 text-white text-xs px-4 py-2 rounded-full hover:bg-orange-600 transition-colors">
+                    Đặt ngay
                   </button>
                 </div>
               </div>
@@ -61,7 +61,7 @@ export default function Home() {
       {/* Why us */}
       <section id="why" className="px-8 py-20">
         <div className="max-w-5xl mx-auto">
-          <h2 className="text-3xl font-bold text-center mb-14">Tại sao chọn AutoViet?</h2>
+          <h2 className="text-3xl font-bold text-center mb-14">Tại sao chọn BữaViet?</h2>
           <div className="grid md:grid-cols-4 gap-6 text-center">
             {reasons.map((r) => (
               <div key={r.title} className="flex flex-col items-center gap-3">
@@ -75,50 +75,50 @@ export default function Home() {
       </section>
 
       {/* CTA */}
-      <section id="contact" className="flex flex-col items-center text-center px-6 py-24 bg-indigo-50">
+      <section id="contact" className="flex flex-col items-center text-center px-6 py-24 bg-orange-50">
         <h2 className="text-4xl font-extrabold max-w-xl">
-          Chưa biết chọn xe nào?
+          Đói rồi? Đặt ngay thôi!
         </h2>
         <p className="mt-4 text-gray-500 max-w-md">
-          Đội ngũ tư vấn của chúng tôi sẵn sàng giúp bạn chọn đúng dòng xe theo nhu cầu và ngân sách.
+          Chỉ vài cú click, món ăn yêu thích sẽ có mặt tại nhà bạn trong vòng 30 phút.
         </p>
-        <button className="mt-8 bg-indigo-600 text-white px-8 py-4 rounded-full text-sm font-medium hover:bg-indigo-700 transition-colors">
-          Nhận tư vấn miễn phí
+        <button className="mt-8 bg-orange-500 text-white px-8 py-4 rounded-full text-sm font-medium hover:bg-orange-600 transition-colors">
+          Đặt món miễn phí ship
         </button>
       </section>
 
       {/* Footer */}
       <footer className="border-t border-gray-100 px-8 py-6 text-center text-xs text-gray-400">
-        © {new Date().getFullYear()} AutoViet. Xe chính hãng — Hỗ trợ vay trả góp toàn quốc.
+        © {new Date().getFullYear()} BữaViet. Đồ ăn ngon — Giao nhanh 30 phút.
       </footer>
     </main>
   );
 }
 
-const products = [
+const dishes = [
   {
-    icon: "🚗",
-    name: "Sedan hạng C",
-    desc: "Thiết kế thanh lịch, tiết kiệm nhiên liệu, nội thất cao cấp. Lý tưởng cho gia đình và công sở.",
-    price: "Từ 650.000.000đ",
+    icon: "🍜",
+    name: "Phở bò tái",
+    desc: "Nước dùng hầm xương 12 tiếng, thịt bò mềm, bánh phở dai. Kèm rau thơm và tương ớt.",
+    price: "65.000đ",
   },
   {
-    icon: "🚙",
-    name: "SUV 7 chỗ",
-    desc: "Gầm cao, không gian rộng, động cơ mạnh mẽ. Chinh phục mọi địa hình từ đô thị đến off-road.",
-    price: "Từ 950.000.000đ",
+    icon: "🍱",
+    name: "Cơm tấm sườn bì",
+    desc: "Sườn nướng than hoa, bì trộn, chả trứng. Cơm tấm đúng vị Sài Gòn với nước mắm đặc trưng.",
+    price: "55.000đ",
   },
   {
-    icon: "🛻",
-    name: "Bán tải",
-    desc: "Thùng xe rộng, tải trọng lớn, khung gầm cứng cáp. Phù hợp kinh doanh và vùng nông thôn.",
-    price: "Từ 750.000.000đ",
+    icon: "🍔",
+    name: "Burger bò Wagyu",
+    desc: "Bò Wagyu tươi xay tay, phô mai Cheddar chảy, rau sống giòn. Bánh mì mềm nướng bơ.",
+    price: "89.000đ",
   },
 ];
 
 const reasons = [
-  { icon: "✅", title: "Xe chính hãng", desc: "100% xe nhập khẩu và lắp ráp có giấy tờ đầy đủ" },
-  { icon: "🚗", title: "Lái thử miễn phí", desc: "Đặt lịch lái thử tại nhà hoặc showroom tiện lợi" },
-  { icon: "🛠️", title: "Bảo hành 5 năm", desc: "Bảo hành chính hãng, bảo dưỡng định kỳ tại xưởng" },
-  { icon: "💰", title: "Hỗ trợ trả góp", desc: "Lãi suất 0% trong 12 tháng, thủ tục đơn giản" },
+  { icon: "⚡", title: "Giao trong 30 phút", desc: "Tài xế gần nhất nhận đơn, giao siêu tốc" },
+  { icon: "🍽️", title: "Hơn 500 món", desc: "Đa dạng ẩm thực từ Bắc vào Nam và quốc tế" },
+  { icon: "💳", title: "Thanh toán dễ", desc: "Tiền mặt, chuyển khoản, ví điện tử đều được" },
+  { icon: "⭐", title: "Đánh giá thực", desc: "Hàng nghìn đánh giá thật từ khách hàng đã dùng" },
 ];

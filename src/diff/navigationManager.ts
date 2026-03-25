@@ -55,7 +55,7 @@ export class NavigationManager {
    */
   getNavigationInfo(currentFilePath: string) {
     const pendingFiles = this.diffManager.getPendingFiles();
-    if (pendingFiles.length <= 1) { return undefined; }
+    if (pendingFiles.length === 0) { return undefined; }
 
     const currentPath = normalizePath(currentFilePath);
     const currentIndex = pendingFiles.indexOf(currentPath);

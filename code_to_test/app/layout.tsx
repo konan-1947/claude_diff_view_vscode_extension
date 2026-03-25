@@ -18,8 +18,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AutoViet — Mua xe ô tô chính hãng",
-  description: "Showroom ô tô chính hãng — Sedan, SUV, bán tải. Bảo hành 5 năm, hỗ trợ trả góp toàn quốc.",
+  title: "BữaViet — Đặt đồ ăn trực tuyến",
+  description: "Đặt đồ ăn online nhanh chóng — Cơm, phở, bún, burger từ các nhà hàng uy tín. Giao hàng trong 30 phút.",
 };
 
 export default function RootLayout({
