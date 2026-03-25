@@ -1,14 +1,3 @@
-body {
-    margin: 0;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    background-color: #ff0000;
-    font-family: sans-serif;
-}
-
-h1 {
-    color: #00ff00;
-    font-size: 3rem;
-}
+body { }
+h1 { }
+/* done */

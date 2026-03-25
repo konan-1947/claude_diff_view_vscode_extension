@@ -23,9 +23,9 @@ No lint or test scripts are configured.
 ### Entry Point & Wiring
 
 `src/extension.ts` activates on `onStartupFinished` and wires up all components:
-- Creates `DiffManager`, `InlineDiffRenderer`, `HunkCodeLensProvider`, `HunkWatcher`, `WorkspaceWatcher`, `SessionTreeProvider`
-- Detects Claude/Qwen CLI via `RunnerFactory` and instantiates the appropriate `IAiRunner`
-- Registers all commands and the status bar item
+- Creates `DiffManager`, `HunkCodeLensProvider`, `HookWatcher`, `WorkspaceWatcher`, `SessionTreeProvider`
+- `IAiRunner` is **lazy-initialized** on first "Start Session" via `RunnerFactory`; auto-detects Claude or Qwen CLI
+- Registers all commands and status bar items (Idle/Running/Accept All/Revert All/Install Hooks)
 
 ### Diff Flow
 
@@ -64,11 +64,15 @@ Both parse `assistant` events (file-edit tool calls) and `tool` events (completi
 
 | Module | Role |
 |--------|------|
-| `src/diff/diffManager.ts` | Central state: snapshots map, pending hunks, accept/revert API, VS Code workspace state persistence |
-| `src/diff/inlineDiffRenderer.ts` | Renders decorations (green/red backgrounds, ghost strikethrough text) using `TextEditorDecorationType` |
+| `src/diff/diffManager.ts` | Central state: snapshots map, pending hunks, accept/revert API, VS Code workspace state persistence; owns `InlineDiffRenderer` as `.renderer` |
+| `src/diff/inlineDiffRenderer.ts` | Renders decorations (green/red backgrounds, ghost strikethrough text) using `TextEditorDecorationType`; opened via VSCode diff editor |
 | `src/diff/hunkCalculator.ts` | LCS-based line diff, groups consecutive changes into `Hunk` objects |
 | `src/diff/hunkCodeLensProvider.ts` | CodeLens provider placing Accept/Revert buttons at hunk start lines |
 | `src/views/sessionTreeProvider.ts` | Sidebar tree: running status, current prompt, modified files list |
+| `src/views/diffActionPanel.ts` | Webview panel showing Accept/Reject file buttons with file counter; sends messages back to extension |
+| `src/claude/claudeRunner.ts` | Parses NDJSON from `claude --output-format stream-json` |
+| `src/claude/qwenRunner.ts` | Parses NDJSON from `qwen --output-format stream-json` |
+| `src/claude/runnerFactory.ts` | Auto-detects installed CLIs; prompts user if both are present |
 
 ### State Persistence
 

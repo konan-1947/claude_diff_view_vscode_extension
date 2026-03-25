@@ -4,6 +4,8 @@ import * as path from 'path';
 import { DiffManager } from './diff/diffManager';
 import { IAiRunner } from './claude/aiRunner';
 import { createRunner } from './claude/runnerFactory';
+import { ClaudeRunner } from './claude/claudeRunner';
+import { QwenRunner } from './claude/qwenRunner';
 import { HookWatcher } from './watcher/hookWatcher';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { SessionTreeProvider } from './views/sessionTreeProvider';
@@ -71,6 +73,17 @@ export function activate(context: vscode.ExtensionContext): void {
   revertAllBar.tooltip = 'Hoàn tác tất cả thay đổi của Claude trong file này';
   revertAllBar.command = 'claude-diff-view.revertAllHunks';
   context.subscriptions.push(revertAllBar);
+
+  // ---- Status bar: Install Hooks (luôn hiện để dễ bấm) ----
+  const installHooksBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    97
+  );
+  installHooksBar.text = '$(plug) Install CLI Hooks';
+  installHooksBar.tooltip = 'Cài đặt bẫy bắt tín hiệu (Hooks) cho Claude và Qwen terminal';
+  installHooksBar.command = 'claude-diff-view.installHooks';
+  installHooksBar.show();
+  context.subscriptions.push(installHooksBar);
 
   /** Cập nhật hiển thị nút Accept/Revert All trên status bar */
   function updateStatusButtons(): void {
@@ -319,55 +332,60 @@ export function activate(context: vscode.ExtensionContext): void {
         const preHook  = path.join(extensionPath, 'hooks', 'pre-tool-hook.js');
         const postHook = path.join(extensionPath, 'hooks', 'post-tool-hook.js');
 
-        // Nếu chưa có activeRunner, detect tool trước
-        if (!activeRunner) {
+        const runners = [
+          new ClaudeRunner(diffManager),
+          new QwenRunner(diffManager)
+        ];
+
+        let installedCount = 0;
+        const labels: string[] = [];
+
+        for (const runner of runners) {
           try {
-            const result = await createRunner(diffManager);
-            activeRunner = result.runner;
-            setStatus('idle');
-          } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            vscode.window.showErrorMessage(message);
-            return;
+            const settingsPath = runner.getSettingsFilePath();
+            const settingsDir  = path.dirname(settingsPath);
+            const toolNames    = runner.getFileEditToolNames();
+            const matcher      = toolNames.join('|');
+            const toolLabel    = runner.toolName.charAt(0).toUpperCase() + runner.toolName.slice(1);
+
+            let settings: Record<string, unknown> = {};
+            try {
+              settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+            } catch {
+              // File chưa tồn tại — bắt đầu mới
+            }
+
+            settings['hooks'] = {
+              PreToolUse: [
+                {
+                  matcher,
+                  hooks: [{ type: 'command', command: `node "${preHook}"` }],
+                },
+              ],
+              PostToolUse: [
+                {
+                  matcher,
+                  hooks: [{ type: 'command', command: `node "${postHook}"` }],
+                },
+              ],
+            };
+
+            if (!fs.existsSync(settingsDir)) {
+              fs.mkdirSync(settingsDir, { recursive: true });
+            }
+            fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+            installedCount++;
+            labels.push(toolLabel);
+          } catch (err) {
+            console.error(`Failed to install hook for ${runner.toolName}:`, err);
           }
         }
 
-        const settingsPath = activeRunner.getSettingsFilePath();
-        const settingsDir  = path.dirname(settingsPath);
-        const toolNames    = activeRunner.getFileEditToolNames();
-        const matcher      = toolNames.join('|');
-        const toolLabel    = activeRunner.toolName.charAt(0).toUpperCase() + activeRunner.toolName.slice(1);
-
-        let settings: Record<string, unknown> = {};
-        try {
-          settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        } catch {
-          // File chưa tồn tại — bắt đầu mới
+        if (installedCount > 0) {
+          vscode.window.showInformationMessage(
+            `$(check) Đã cài Hooks thành công cho: ${labels.join(' và ')}! Inline Diff giờ đây hoạt động chuẩn xác với cả 2 công cụ.`
+          );
         }
-
-        settings['hooks'] = {
-          PreToolUse: [
-            {
-              matcher,
-              hooks: [{ type: 'command', command: `node "${preHook}"` }],
-            },
-          ],
-          PostToolUse: [
-            {
-              matcher,
-              hooks: [{ type: 'command', command: `node "${postHook}"` }],
-            },
-          ],
-        };
-
-        if (!fs.existsSync(settingsDir)) {
-          fs.mkdirSync(settingsDir, { recursive: true });
-        }
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-
-        vscode.window.showInformationMessage(
-          `$(check) ${toolLabel} hooks installed! Inline diff now works with \`${activeRunner.toolName}\` CLI in any terminal.`
-        );
       }
     )
   );
