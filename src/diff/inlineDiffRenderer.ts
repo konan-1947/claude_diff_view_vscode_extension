@@ -316,7 +316,7 @@ export class InlineDiffRenderer {
    * Trả về true nếu editor đang là một phần của diff view (không phải regular editor).
    * Dùng Tab API (VSCode 1.71+).
    */
-  private isEditorInDiffView(editor: vscode.TextEditor): boolean {
+  public isEditorInDiffView(editor: vscode.TextEditor): boolean {
     // Nếu viewColumn là undefined, đây là một editor nhúng (embedded editor),
     // thường chính là nửa trái/phải nằm bên trong màn hình Diff Editor hoặc Peek view.
     if (editor.viewColumn === undefined) {
