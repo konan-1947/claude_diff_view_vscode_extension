@@ -19,7 +19,7 @@ process.stdin.on('end', () => {
     const toolInput = event.tool_input || event.input;
     const filePath = toolInput && toolInput.file_path;
     
-    // Debug log for Qwen integration
+    // Debug log for Claude integration
     const logPath = path.join(os.tmpdir(), "claude-diff-hook-debug.log");
     fs.appendFileSync(logPath, `[POST] Raw event: ${raw}\n`, 'utf8');
 

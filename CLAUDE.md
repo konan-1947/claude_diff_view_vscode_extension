@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Extension Does
 
-A VSCode extension that integrates with Claude CLI and Qwen CLI to display **inline diffs** of AI-made file changes, with per-hunk Accept/Revert actions via CodeLens buttons — no diff editor tab, all rendered directly in the editor.
+A VSCode extension that integrates with Claude CLI to display **inline diffs** of AI-made file changes, with per-hunk Accept/Revert actions via CodeLens buttons — no diff editor tab, all rendered directly in the editor.
 
 ## Build & Development Commands
 
@@ -24,7 +24,7 @@ No lint or test scripts are configured.
 
 `src/extension.ts` activates on `onStartupFinished` and wires up all components:
 - Creates `DiffManager`, `InlineDiffRenderer`, `HunkCodeLensProvider`, `HunkWatcher`, `WorkspaceWatcher`, `SessionTreeProvider`
-- Detects Claude/Qwen CLI via `RunnerFactory` and instantiates the appropriate `IAiRunner`
+- Detects Claude CLI via `RunnerFactory` and instantiates the appropriate `IAiRunner`
 - Registers all commands and the status bar item
 
 ### Diff Flow
@@ -43,11 +43,10 @@ No lint or test scripts are configured.
 
 ```
 IAiRunner (interface)
-  ├── ClaudeRunner  — parses NDJSON from `claude --output-format stream-json`
-  └── QwenRunner    — parses NDJSON from `qwen --output-format stream-json`
+  └── ClaudeRunner  — parses NDJSON from `claude --output-format stream-json`
 ```
 
-Both parse `assistant` events (file-edit tool calls) and `tool` events (completion signal). `RunnerFactory` auto-detects which CLIs are installed.
+Parses `assistant` events (file-edit tool calls) and `tool` events (completion signal). `RunnerFactory` auto-detects the CLI.
 
 ### Two-Channel File Monitoring
 
@@ -83,6 +82,6 @@ Snapshot content is persisted in VS Code workspace state so diffs survive editor
 | `claude-diff-view.revertAllHunks` | Ctrl+Shift+Z | Revert all changes in active file |
 | `claude-diff-view.acceptHunk` | CodeLens | Accept single hunk |
 | `claude-diff-view.revertHunk` | CodeLens | Revert single hunk |
-| `claude-diff-view.installHooks` | Menu | Write hook config to `~/.claude/settings.json` or `~/.qwen/settings.json` |
+| `claude-diff-view.installHooks` | Menu | Write hook config to `~/.claude/settings.json` |
 
 Context key `claude-diff-view.hasPendingDiff` controls editor title menu visibility (Accept All / Revert All buttons).

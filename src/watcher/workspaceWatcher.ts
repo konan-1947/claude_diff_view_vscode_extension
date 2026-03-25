@@ -2,7 +2,7 @@
  * workspaceWatcher.ts
  *
  * Theo dõi file thay đổi trong workspace qua VS Code API và fs.watch.
- * Khi bất kỳ file nào được ghi (bởi Qwen, Claude, hay bất kỳ tool nào),
+ * Khi bất kỳ file nào được ghi (bởi Claude, hay bất kỳ tool nào),
  * extension sẽ tự động snapshot và hiện inline diff.
  *
  * Flow:
@@ -62,7 +62,7 @@ export class WorkspaceWatcher {
 
   /**
    * Theo dõi file hệ thống của tất cả workspace folders.
-   * Bắt được EXTERNAL writes (Qwen terminal, Claude terminal, bất kỳ process nào).
+   * Bắt được EXTERNAL writes (Claude terminal, bất kỳ process nào).
    */
   private watchWorkspaceFolders(): void {
     const folders = vscode.workspace.workspaceFolders;

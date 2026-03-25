@@ -1,7 +1,7 @@
 /**
  * aiRunner.ts
  *
- * Interface chung cho tất cả AI CLI runner (Claude, Qwen, ...).
+ * Interface chung cho tất cả AI CLI runner (Claude, ...).
  * Cho phép extension hoạt động với nhiều tool mà không thay đổi logic core.
  */
 
@@ -15,7 +15,7 @@ export type StatusCallback = (
 export type ProgressCallback = (step: string) => void;
 
 export interface IAiRunner {
-  /** Tên tool để hiển thị trên UI ("claude" | "qwen") */
+  /** Tên tool để hiển thị trên UI ("claude") */
   readonly toolName: string;
 
   /**
