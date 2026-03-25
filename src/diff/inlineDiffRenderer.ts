@@ -9,6 +9,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { calculateHunks, Hunk } from './hunkCalculator';
 import { DecorationManager } from './decorationManager';
+import { NavigationManager } from './navigationManager';
+import { DiffManager } from './diffManager';
 
 /** State của một file đang có inline diff */
 interface FileDiffState {
@@ -20,9 +22,14 @@ export class InlineDiffRenderer {
   /** Map filePath -> trạng thái diff hiện tại */
   private fileStates = new Map<string, FileDiffState>();
   private readonly decorations: DecorationManager;
+  private navigationManager?: NavigationManager;
 
   constructor(_extensionUri: vscode.Uri) {
     this.decorations = new DecorationManager();
+  }
+
+  setNavigationManager(nav: NavigationManager): void {
+    this.navigationManager = nav;
   }
 
   /**
@@ -175,7 +182,8 @@ export class InlineDiffRenderer {
         this.normalizePath(editor.document.uri.fsPath) === normalizedPath &&
         !this.isEditorInDiffView(editor)
       ) {
-        this.decorations.applyToEditor(editor, state.hunks);
+        const navInfo = this.navigationManager?.getNavigationInfo(normalizedPath);
+        this.decorations.applyToEditor(editor, state.hunks, navInfo);
       }
     }
   }

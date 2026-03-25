@@ -14,11 +14,12 @@ export class DecorationManager {
   /** Giữ lại để tương thích — không dùng icon thật vì đã có CodeLens */
   private readonly acceptGutterDecor: vscode.TextEditorDecorationType;
   private readonly revertGutterDecor: vscode.TextEditorDecorationType;
+  private readonly navigationBarDecor: vscode.TextEditorDecorationType;
 
   constructor() {
     this.addedLineDecor = vscode.window.createTextEditorDecorationType({
       isWholeLine: true,
-      backgroundColor: 'rgba(30, 100, 255, 0.25)',
+      backgroundColor: 'rgba(46, 160, 67, 0.15)', // màu xanh lá pastel mờ thay vì xanh dương đậm
       overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.addedForeground'),
       overviewRulerLane: vscode.OverviewRulerLane.Right,
     });
@@ -33,16 +34,34 @@ export class DecorationManager {
     // Gutter decorations — giữ trống vì CodeLens đã cover
     this.acceptGutterDecor = vscode.window.createTextEditorDecorationType({});
     this.revertGutterDecor = vscode.window.createTextEditorDecorationType({});
+
+    // Thanh điều hướng nổi ở cuối editor. 
+    // Dùng CSS position: fixed cực đoan để đẩy nó dính xuống dưới cùng của view.
+    this.navigationBarDecor = vscode.window.createTextEditorDecorationType({
+      after: {
+        margin: '0 0 0 0',
+        textDecoration: `
+          none; 
+          position: fixed;
+          bottom: 20px;
+          right: 50%;
+          transform: translateX(50%);
+          z-index: 1000;
+        `
+      }
+    });
   }
 
   /**
    * Áp dụng decorations lên một editor cụ thể dựa trên danh sách hunks.
    */
-  applyToEditor(editor: vscode.TextEditor, hunks: Hunk[]): void {
+
+  applyToEditor(editor: vscode.TextEditor, hunks: Hunk[], navInfo?: any): void {
     const addedRanges: vscode.Range[] = [];
     const removedRanges: vscode.DecorationOptions[] = [];
     const acceptGutterRanges: vscode.DecorationOptions[] = [];
     const revertGutterRanges: vscode.DecorationOptions[] = [];
+    const navigationBarRanges: vscode.DecorationOptions[] = [];
 
     for (const hunk of hunks) {
       // Dòng được thêm — tô nền xanh
@@ -70,8 +89,8 @@ export class DecorationManager {
           renderOptions: {
             after: {
               contentText: removedText,
-              color: new vscode.ThemeColor('editorError.foreground'),
-              textDecoration: 'line-through; opacity: 0.7;',
+              color: 'rgba(248, 81, 73, 0.6)', // đỏ nhạt, dễ chịu hơn thay vì editorError.foreground
+              textDecoration: 'line-through; opacity: 0.5;', // giảm opacity mờ thêm 1 chút
               fontStyle: 'italic',
               margin: '0 0 0 20px',
             },
@@ -103,6 +122,54 @@ export class DecorationManager {
     editor.setDecorations(this.removedLineDecor, removedRanges);
     editor.setDecorations(this.acceptGutterDecor, acceptGutterRanges);
     editor.setDecorations(this.revertGutterDecor, revertGutterRanges);
+
+    if (navInfo) {
+      this.renderNavigationBar(editor, navInfo, navigationBarRanges);
+    } else {
+      editor.setDecorations(this.navigationBarDecor, []);
+    }
+  }
+
+  private renderNavigationBar(editor: vscode.TextEditor, info: any, ranges: vscode.DecorationOptions[]): void {
+    const { currentIdx, total, prevName, nextName } = info;
+    
+    // Tạo HTML-like string sử dụng CSS cực đoan trong textDecoration
+    const navContent = ` < Alt+H ${prevName}  |  View ${total} edited files (${currentIdx}/${total})  |  ${nextName} Alt+L > `;
+    
+    // Dùng dòng cuối cùng có thể nhìn thấy để gắn decoration
+    const lastLine = editor.document.lineCount - 1;
+    const range = new vscode.Range(lastLine, 0, lastLine, 0);
+
+    ranges.push({
+      range,
+      renderOptions: {
+        after: {
+          contentText: navContent,
+          color: new vscode.ThemeColor('editor.foreground'),
+          backgroundColor: new vscode.ThemeColor('editor.background'),
+          border: '1px solid rgba(128, 128, 128, 0.4)',
+          textDecoration: `
+            none;
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            font-size: 13px;
+            white-space: pre;
+            pointer-events: none;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            letter-spacing: 0.5px;
+          `
+        }
+      }
+    });
+
+    editor.setDecorations(this.navigationBarDecor, ranges);
   }
 
   /**
@@ -113,6 +180,7 @@ export class DecorationManager {
     editor.setDecorations(this.removedLineDecor, []);
     editor.setDecorations(this.acceptGutterDecor, []);
     editor.setDecorations(this.revertGutterDecor, []);
+    editor.setDecorations(this.navigationBarDecor, []);
   }
 
   /** Dispose tất cả decoration types khi deactivate. */
@@ -121,5 +189,6 @@ export class DecorationManager {
     this.removedLineDecor.dispose();
     this.acceptGutterDecor.dispose();
     this.revertGutterDecor.dispose();
+    this.navigationBarDecor.dispose();
   }
 }

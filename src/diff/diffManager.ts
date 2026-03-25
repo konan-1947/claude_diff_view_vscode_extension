@@ -230,6 +230,13 @@ export class DiffManager {
   }
 
   /**
+   * Lấy danh sách tất cả các file đang có pending diff.
+   */
+  getPendingFiles(): string[] {
+    return Array.from(this.snapshots.keys());
+  }
+
+  /**
    * Lấy snapshot gốc (dùng để so sánh sau khi edit).
    */
   getSnapshot(filePath: string): string | undefined {

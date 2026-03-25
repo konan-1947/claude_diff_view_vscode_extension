@@ -17,7 +17,6 @@ import { DiffManager } from '../diff/diffManager';
 import { FileSnapshotStore, isTextFile } from './fileSnapshotStore';
 
 export class WorkspaceWatcher {
-  private fsWatchers: fs.FSWatcher[] = [];
   private disposables: vscode.Disposable[] = [];
   /** Debounce: thời điểm lần cuối xử lý mỗi file */
   private lastProcessed = new Map<string, number>();
@@ -60,10 +59,6 @@ export class WorkspaceWatcher {
     this.disposables.push(d);
   }
 
-  /**
-   * Theo dõi file hệ thống của tất cả workspace folders.
-   * Bắt được EXTERNAL writes (Claude terminal, bất kỳ process nào).
-   */
   private watchWorkspaceFolders(): void {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders) { return; }
@@ -78,34 +73,36 @@ export class WorkspaceWatcher {
       }
     });
     this.disposables.push(d);
+
+    // Sử dụng FileSystemWatcher native của VS Code thay vì fs.watch để tránh kẹt event loop
+    // khi tạo mới project có hàng ngàn file (VD: node_modules trong Next.js)
+    const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*');
+    const handleUri = (uri: vscode.Uri) => {
+      this.handleExternalWrite(uri.fsPath);
+    };
+    
+    fileWatcher.onDidChange(handleUri);
+    fileWatcher.onDidCreate(handleUri);
+    
+    this.disposables.push(fileWatcher);
   }
 
   private watchFolder(folderPath: string): void {
     try {
       this.snapshots.buildInitialSnapshots(folderPath);
-
-      const watcher = fs.watch(
-        folderPath,
-        { recursive: true },
-        (_event, filename) => {
-          if (!filename) { return; }
-          const filePath = path.join(folderPath, filename);
-          this.handleExternalWrite(filePath);
-        }
-      );
-
-      watcher.on('error', (err) => {
-        console.error('[claude-diff-view] workspaceWatcher fs.watch error:', err);
-      });
-
-      this.fsWatchers.push(watcher);
     } catch (err) {
-      console.error('[claude-diff-view] workspaceWatcher watchFolder error:', err);
+      console.error('[claude-diff-view] workspaceWatcher buildInitialSnapshots error:', err);
     }
   }
 
   private handleExternalWrite(filePath: string): void {
     const absPath = this.normalizePath(filePath);
+
+    // Bỏ qua các thư mục tải nặng và thư mục ảo để tránh Crash VSCode
+    const parts = absPath.split(path.sep);
+    if (parts.some(p => ['node_modules', '.git', '.next', 'out', 'dist', 'build', '.vscode', '.idea'].includes(p))) {
+      return;
+    }
 
     // 1. Kiểm tra xem file này vừa được VS Code Save hay không
     const lastVsCodeSave = this.savedFilesByVsCode.get(absPath) ?? 0;
@@ -183,8 +180,6 @@ export class WorkspaceWatcher {
   }
 
   dispose(): void {
-    for (const w of this.fsWatchers) { w.close(); }
-    this.fsWatchers = [];
     for (const d of this.disposables) { d.dispose(); }
     this.disposables = [];
   }

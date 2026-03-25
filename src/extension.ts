@@ -8,6 +8,7 @@ import { SessionTreeProvider } from './views/sessionTreeProvider';
 import { HunkCodeLensProvider } from './diff/hunkCodeLensProvider';
 import { StatusBarManager } from './ui/statusBarManager';
 import { registerAllCommands } from './commands/commandsRegistry';
+import { NavigationManager } from './diff/navigationManager';
 
 export function activate(context: vscode.ExtensionContext): void {
   // ---- Khởi tạo các thành phần chính ----
@@ -16,6 +17,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const treeProvider     = new SessionTreeProvider(diffManager);
   const workspaceWatcher = new WorkspaceWatcher(diffManager);
   const fsHookWatcher    = new HookWatcher(diffManager);
+  const navigationManager = new NavigationManager(diffManager);
+
+  // Kết nối Navigation tới Renderer để có thể hiện UI
+  diffManager.renderer.setNavigationManager(navigationManager);
 
   // Runner được khởi tạo lazy khi người dùng bấm Start Session
   let activeRunner: IAiRunner | undefined;
@@ -55,6 +60,12 @@ export function activate(context: vscode.ExtensionContext): void {
       statusBarManager.setStatus('idle', activeRunner);
     },
   });
+
+  // ---- Đăng ký thêm Navigation Commands ----
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claude-diff-view.nextFile', () => navigationManager.nextFile()),
+    vscode.commands.registerCommand('claude-diff-view.prevFile', () => navigationManager.prevFile())
+  );
 
   // ---- Event: chuyển tab editor ----
   let isOpeningDiff = false;
