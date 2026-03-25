@@ -28,6 +28,13 @@
           "id": "claude-diff-view.session",
           "name": "Session"
         }
+      ],
+      "explorer": [
+        {
+          "id": "claude-diff-view.navBar",
+          "name": "Claude Diff",
+          "type": "webview"
+        }
       ]
     },
     "commands": [
