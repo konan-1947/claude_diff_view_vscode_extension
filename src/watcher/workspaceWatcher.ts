@@ -21,6 +21,8 @@ export class WorkspaceWatcher {
   private disposables: vscode.Disposable[] = [];
   /** Debounce: thời điểm lần cuối xử lý mỗi file */
   private lastProcessed = new Map<string, number>();
+  /** Lưu thời điểm VS Code vừa Save file (để bỏ qua fs.watch trigger từ chính VS Code) */
+  private savedFilesByVsCode = new Map<string, number>();
   private readonly snapshots: FileSnapshotStore;
 
   constructor(private readonly diffManager: DiffManager) {
@@ -32,14 +34,25 @@ export class WorkspaceWatcher {
     this.watchWorkspaceFolders();
   }
 
+  private normalizePath(p: string): string {
+    const fsPath = vscode.Uri.file(path.resolve(p)).fsPath;
+    return process.platform === 'win32' ? fsPath.toLowerCase() : fsPath;
+  }
+
+  private normalizeContent(content: string): string {
+    return content.trim().replace(/\r\n/g, '\n');
+  }
+
   /**
    * Sync snapshot khi VS Code save — đảm bảo fs.watch không trigger diff sai.
    * (onDidSaveTextDocument luôn fire trước fs.watch)
    */
   private watchVscodeEvents(): void {
     const d = vscode.workspace.onDidSaveTextDocument((doc) => {
-      const filePath = doc.uri.fsPath;
+      const filePath = this.normalizePath(doc.uri.fsPath);
       this.snapshots.set(filePath, doc.getText());
+      this.savedFilesByVsCode.set(filePath, Date.now());
+
       if (this.diffManager.hasPendingDiff(filePath)) {
         this.diffManager.renderer.applyDecorations(filePath);
       }
@@ -92,37 +105,57 @@ export class WorkspaceWatcher {
   }
 
   private handleExternalWrite(filePath: string): void {
-    // Debounce: bỏ qua nếu vừa xử lý file này trong 500ms
-    const now = Date.now();
-    const lastTime = this.lastProcessed.get(filePath) ?? 0;
-    if (now - lastTime < 500) { return; }
-    this.lastProcessed.set(filePath, now);
+    const absPath = this.normalizePath(filePath);
 
-    if (!isTextFile(path.basename(filePath))) { return; }
-    if (!this.isInWorkspace(filePath)) { return; }
+    // 1. Kiểm tra xem file này vừa được VS Code Save hay không
+    const lastVsCodeSave = this.savedFilesByVsCode.get(absPath) ?? 0;
+    const now = Date.now();
+    if (now - lastVsCodeSave < 2000) {
+      // Bỏ qua vì đây là viết từ chính VS Code editor
+      return;
+    }
+
+    // 2. Debounce: bỏ qua nếu vừa xử lý file này trong 500ms
+    const lastTime = this.lastProcessed.get(absPath) ?? 0;
+    if (now - lastTime < 500) { return; }
+    this.lastProcessed.set(absPath, now);
+
+    if (!isTextFile(path.basename(absPath))) { return; }
+    if (!this.isInWorkspace(absPath)) { return; }
 
     // Đọc nội dung mới từ disk sau một chút để đảm bảo write xong
     setTimeout(() => {
-      try {
-        if (!fs.existsSync(filePath)) { return; }
+      // Re-check after timeout in case VS Code onDidSaveTextDocument fired during the 200ms delay
+      const lastVsCodeSaveAfterTimeout = this.savedFilesByVsCode.get(absPath) ?? 0;
+      if (Date.now() - lastVsCodeSaveAfterTimeout < 2000) {
+        return;
+      }
 
-        const newContent = fs.readFileSync(filePath, 'utf8');
-        const oldContent = this.snapshots.get(filePath);
+      try {
+        if (!fs.existsSync(absPath)) { return; }
+
+        const newContentRaw = fs.readFileSync(absPath, 'utf8');
+        const oldContentRaw = this.snapshots.get(absPath);
+
+        const newContent = this.normalizeContent(newContentRaw);
+        const oldContent = oldContentRaw !== undefined ? this.normalizeContent(oldContentRaw) : undefined;
 
         if (oldContent === undefined) {
-          this.snapshots.set(filePath, '');
+          this.snapshots.set(absPath, newContentRaw);
           if (newContent.trim()) {
-            this.triggerDiff(filePath, '', newContent);
+            this.triggerDiff(absPath, '', newContentRaw);
           }
           return;
         }
 
         if (oldContent === newContent) { return; }
 
-        this.snapshots.set(filePath, newContent);
+        // Trước khi trigger diff mới, cập nhật baseline vào snapshot store của watcher
+        // để lần save kế tiếp không bị trigger lại.
+        this.snapshots.set(absPath, newContentRaw);
 
-        if (!this.diffManager.hasPendingDiff(filePath)) {
-          this.triggerDiff(filePath, oldContent, newContent);
+        if (!this.diffManager.hasPendingDiff(absPath)) {
+          this.triggerDiff(absPath, oldContentRaw!, newContentRaw);
         }
       } catch {
         // file đang bị lock hoặc xóa — bỏ qua
@@ -140,12 +173,13 @@ export class WorkspaceWatcher {
   private isInWorkspace(filePath: string): boolean {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders) { return false; }
-    return folders.some(f => filePath.startsWith(f.uri.fsPath));
+    const normalizedPath = this.normalizePath(filePath);
+    return folders.some(f => normalizedPath.startsWith(this.normalizePath(f.uri.fsPath)));
   }
 
   /** Cập nhật snapshot khi người dùng tự sửa file (để baseline luôn đúng) */
   updateSnapshot(filePath: string, content: string): void {
-    this.snapshots.set(filePath, content);
+    this.snapshots.set(this.normalizePath(filePath), content);
   }
 
   dispose(): void {
@@ -155,3 +189,4 @@ export class WorkspaceWatcher {
     this.disposables = [];
   }
 }
+

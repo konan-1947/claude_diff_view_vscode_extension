@@ -4,11 +4,15 @@ body {
     justify-content: center;
     align-items: center;
     min-height: 100vh;
-    background-color: #0000ff;
+    background-color: #ff0000;
     font-family: sans-serif;
 }
 
 h1 {
     color: #00ff00;
     font-size: 3rem;
+}
+
+h2 {
+    color: red;
 }

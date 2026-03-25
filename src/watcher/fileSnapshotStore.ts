@@ -7,21 +7,27 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as vscode from 'vscode';
 
 export class FileSnapshotStore {
   /** filePath -> nội dung baseline trước khi external process ghi đè */
   private snapshots = new Map<string, string>();
 
+  private normalizePath(p: string): string {
+    const fsPath = vscode.Uri.file(path.resolve(p)).fsPath;
+    return process.platform === 'win32' ? fsPath.toLowerCase() : fsPath;
+  }
+
   get(filePath: string): string | undefined {
-    return this.snapshots.get(filePath);
+    return this.snapshots.get(this.normalizePath(filePath));
   }
 
   set(filePath: string, content: string): void {
-    this.snapshots.set(filePath, content);
+    this.snapshots.set(this.normalizePath(filePath), content);
   }
 
   has(filePath: string): boolean {
-    return this.snapshots.has(filePath);
+    return this.snapshots.has(this.normalizePath(filePath));
   }
 
   /**
@@ -53,7 +59,7 @@ export class FileSnapshotStore {
       } else if (entry.isFile() && isTextFile(entry.name)) {
         try {
           const content = fs.readFileSync(fullPath, 'utf8');
-          this.snapshots.set(fullPath, content);
+          this.snapshots.set(this.normalizePath(fullPath), content);
         } catch {
           // binary hoặc file đang bị lock — bỏ qua
         }
@@ -61,6 +67,7 @@ export class FileSnapshotStore {
     }
   }
 }
+
 
 /**
  * Kiểm tra xem file có phải là text file không dựa trên extension.
