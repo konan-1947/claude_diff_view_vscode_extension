@@ -10,6 +10,8 @@ export interface Hunk {
   id: string;
   /** Dòng bắt đầu trong nội dung SỬA ĐỔI (0-indexed), nơi gắn gutter icon */
   modifiedStart: number;
+  /** Dòng bắt đầu trong nội dung GỐC (0-indexed), nơi bắt đầu patch */
+  originalStart: number;
   /** Các dòng bị XÓA (nội dung gốc) */
   removedLines: RemovedLine[];
   /** Các dòng được THÊM (nội dung mới) */
@@ -33,7 +35,7 @@ export interface AddedLine {
 type DiffOp =
   | { type: 'equal'; text: string; origIdx: number; modIdx: number }
   | { type: 'delete'; text: string; origIdx: number }
-  | { type: 'insert'; text: string; modIdx: number };
+  | { type: 'insert'; text: string; modIdx: number; origIdx: number };
 
 /**
  * Tính LCS-based diff giữa 2 mảng dòng.
@@ -69,7 +71,7 @@ function computeLineDiff(origLines: string[], modLines: string[]): DiffOp[] {
       i--;
       j--;
     } else if (j > 0 && (i === 0 || (dp[i][j - 1] ?? 0) >= (dp[i - 1][j] ?? 0))) {
-      ops.push({ type: 'insert', text: modLines[j - 1]!, modIdx: j - 1 });
+      ops.push({ type: 'insert', text: modLines[j - 1]!, modIdx: j - 1, origIdx: i });
       j--;
     } else {
       ops.push({ type: 'delete', text: origLines[i - 1]!, origIdx: i - 1 });
@@ -114,14 +116,16 @@ export function calculateHunks(
       }
     } else if (op.type === 'delete') {
       if (!currentHunk) {
-        // Xác định modifiedStart: dùng modIdx của dòng delete tiếp theo
-        // Sẽ cập nhật khi gặp insert, hoặc dùng origIdx nếu chỉ có delete
         currentHunk = {
           id: makeHunkId(),
           modifiedStart: 0,
+          originalStart: op.origIdx,
           removedLines: [],
           addedLines: [],
         };
+      }
+      if (currentHunk.removedLines.length === 0) {
+        currentHunk.originalStart = op.origIdx;
       }
       currentHunk.removedLines.push({
         text: op.text,
@@ -132,6 +136,7 @@ export function calculateHunks(
         currentHunk = {
           id: makeHunkId(),
           modifiedStart: op.modIdx,
+          originalStart: op.origIdx,
           removedLines: [],
           addedLines: [],
         };
@@ -152,8 +157,7 @@ export function calculateHunks(
     hunks.push(currentHunk);
   }
 
-  // Với các hunk chỉ có removedLines (xóa thuần), tính modifiedStart
-  // từ vị trí của dòng remove đầu tiên trong file modified (offset bù trừ)
+  // Với các hunk thuần insert/delete, cập nhật bù trừ offset
   let origOffset = 0;
   for (const hunk of hunks) {
     if (hunk.addedLines.length === 0 && hunk.removedLines.length > 0) {
@@ -163,5 +167,15 @@ export function calculateHunks(
     origOffset += hunk.addedLines.length - hunk.removedLines.length;
   }
 
+  let modOffset = 0;
+  for (const hunk of hunks) {
+    if (hunk.removedLines.length === 0 && hunk.addedLines.length > 0) {
+      const firstModIdx = hunk.addedLines[0]!.modifiedLineIndex;
+      hunk.originalStart = Math.max(0, firstModIdx + modOffset);
+    }
+    modOffset += hunk.removedLines.length - hunk.addedLines.length;
+  }
+
   return hunks;
 }
+

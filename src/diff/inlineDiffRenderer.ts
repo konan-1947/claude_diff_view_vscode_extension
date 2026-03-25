@@ -35,23 +35,6 @@ export class InlineDiffRenderer {
     this.applyDecorations(normalizedPath);
   }
 
-  /**
-   * Chấp nhận một hunk cụ thể (giữ nội dung mới, xóa decoration của hunk đó).
-   * Trả về true nếu đây là hunk cuối cùng.
-   */
-  acceptHunk(filePath: string, hunkId: string): boolean {
-    const normalizedPath = this.normalizePath(filePath);
-    const state = this.fileStates.get(normalizedPath);
-    if (!state) { return true; }
-
-    state.hunks = state.hunks.filter(h => h.id !== hunkId);
-    if (state.hunks.length === 0) {
-      this.clear(normalizedPath);
-      return true;
-    }
-    this.applyDecorations(normalizedPath);
-    return false;
-  }
 
   /**
    * Revert một hunk cụ thể (khôi phục về nội dung gốc của hunk đó).

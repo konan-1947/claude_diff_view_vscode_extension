@@ -23,6 +23,8 @@ export class DiffManager {
   private _onDidChangeDiffs = new vscode.EventEmitter<void>();
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
 
+  public readonly contentProviderEventEmitter = new vscode.EventEmitter<vscode.Uri>();
+
   /** Lưu nội dung gốc TRƯỚC khi sửa (để tính diff) */
   private snapshots: Map<string, string> = new Map();
   private snapshotQueries: Map<string, string> = new Map();
@@ -35,6 +37,7 @@ export class DiffManager {
 
     context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider('claude-diff', {
+        onDidChange: this.contentProviderEventEmitter.event,
         provideTextDocumentContent: (uri: vscode.Uri) => {
           // Xóa query (timestamp) đi để trả về đường dẫn file thật chính xác
           const realFileUri = uri.with({ scheme: 'file', query: '' });
@@ -134,10 +137,43 @@ export class DiffManager {
 
   async acceptHunk(filePath: string, hunkId: string): Promise<void> {
     const absPath = normalizePath(filePath);
-    const isDone = this.renderer.acceptHunk(absPath, hunkId);
-    if (isDone) {
+    
+    const hunks = this.renderer.getHunks(absPath);
+    const hunk = hunks.find(h => h.id === hunkId);
+    let oldSnapshot = this.snapshots.get(absPath);
+
+    if (hunk && oldSnapshot !== undefined) {
+      // Patch bản snapshot nguyên thủy với nội dung của Hunk đã Accept
+      const lines = oldSnapshot.split('\n');
+      const deleteCount = hunk.removedLines.length;
+      const addedTexts = hunk.addedLines.map(l => l.text);
+      lines.splice(hunk.originalStart, deleteCount, ...addedTexts);
+      
+      const newSnapshot = lines.join('\n');
+      this.snapshots.set(absPath, newSnapshot);
+      this.persistState();
+
+      // Thông báo cho VS Code nạp lại nội dung bên trái (Original) của màn hình Diff
+      const queryId = this.snapshotQueries.get(absPath) || '';
+      const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: queryId });
+      this.contentProviderEventEmitter.fire(originalUri);
+
+      // Cập nhật lại Inline Renderer và tính lại CodeLens
+      let modifiedContent: string;
+      try {
+        modifiedContent = fs.readFileSync(absPath, 'utf8');
+      } catch {
+        modifiedContent = newSnapshot;
+      }
+      this.renderer.show(absPath, newSnapshot, modifiedContent);
+    }
+    
+    // Nếu không còn hunk nào khác, tự động cleanup và đóng Diff Editor
+    const remainingHunks = this.renderer.getHunks(absPath);
+    if (remainingHunks.length === 0) {
       await this.cleanup(absPath);
     }
+
     this._onDidChangeDiffs.fire();
   }
 
