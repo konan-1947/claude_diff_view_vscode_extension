@@ -88,12 +88,30 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   // Khi chuyển tab editor — cập nhật status bar và tái áp dụng decoration
+  let isOpeningDiff = false;
   context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
+    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
       updateStatusButtons();
       if (!editor) { return; }
-      const filePath = editor.document.uri.fsPath;
+      
+      const document = editor.document;
+      // Bỏ qua các editor ảo
+      if (document.uri.scheme !== 'file') { return; }
+
+      const filePath = document.uri.fsPath;
       if (diffManager.renderer.hasPending(filePath)) {
+        // Tự động bẻ lái mở màn hình Diff nếu người dùng bấm vào File Explorer tab thường
+        if (!diffManager.renderer.isEditorInDiffView(editor) && !isOpeningDiff) {
+          isOpeningDiff = true;
+          try {
+            await diffManager.openDiff(filePath);
+          } finally {
+            // Khóa chốt khoảng nửa giây để tránh loop liên tọi khi click lung tung
+            setTimeout(() => isOpeningDiff = false, 500);
+          }
+          return;
+        }
+
         diffManager.renderer.applyDecorations(filePath);
       }
     })

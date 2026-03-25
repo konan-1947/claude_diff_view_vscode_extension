@@ -25,6 +25,7 @@ export class DiffManager {
 
   /** Lưu nội dung gốc TRƯỚC khi sửa (để tính diff) */
   private snapshots: Map<string, string> = new Map();
+  private snapshotQueries: Map<string, string> = new Map();
 
   public readonly renderer: InlineDiffRenderer;
 
@@ -51,6 +52,7 @@ export class DiffManager {
     for (const [absPath, originalContent] of Object.entries(saved)) {
       if (!fs.existsSync(absPath)) { continue; }
       this.snapshots.set(absPath, originalContent);
+      this.snapshotQueries.set(absPath, Date.now().toString());
     }
   }
 
@@ -77,9 +79,11 @@ export class DiffManager {
     try {
       const content = fs.readFileSync(absPath, 'utf8');
       this.snapshots.set(absPath, content);
+      this.snapshotQueries.set(absPath, Date.now().toString());
     } catch {
       // File chưa tồn tại (Claude tạo file mới)
       this.snapshots.set(absPath, '');
+      this.snapshotQueries.set(absPath, Date.now().toString());
     }
     this.persistState();
   }
@@ -102,8 +106,9 @@ export class DiffManager {
     }
 
     // Chuyển sang dùng UI chuẩn của VS Code: Diff Editor. 
-    // Gắn thêm query Date.now() để ép VS Code không cache nội dung cũ của tab ảo này
-    const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: Date.now().toString() });
+    // Dùng chung 1 query ID cho suốt quá trình Diff để khỏi bị mở đúp thành 2 tab
+    const queryId = this.snapshotQueries.get(absPath) || Date.now().toString();
+    const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: queryId });
     const modifiedUri = vscode.Uri.file(absPath);
     const title = `Claude Diff: ${path.basename(absPath)}`;
     
@@ -121,6 +126,7 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) {
       this.snapshots.set(absPath, content);
+      this.snapshotQueries.set(absPath, Date.now().toString());
       this.persistState();
       this._onDidChangeDiffs.fire();
     }
@@ -200,10 +206,12 @@ export class DiffManager {
   disposeAll(): void {
     this.renderer.disposeAll();
     this.snapshots.clear();
+    this.snapshotQueries.clear();
   }
 
   private async cleanup(absPath: string): Promise<void> {
     this.snapshots.delete(absPath);
+    this.snapshotQueries.delete(absPath);
     this.persistState();
     
     // Lưu lại vị trí con trỏ và scroll hiện tại trước khi đóng tab
