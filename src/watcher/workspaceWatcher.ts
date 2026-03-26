@@ -48,13 +48,38 @@ export class WorkspaceWatcher {
    */
   private watchVscodeEvents(): void {
     const d = vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.uri.scheme !== 'file') { return; }
       const filePath = this.normalizePath(doc.uri.fsPath);
-      this.snapshots.set(filePath, doc.getText());
+      if (!isTextFile(path.basename(filePath))) { return; }
+      if (!this.isInWorkspace(filePath)) { return; }
+
+      const newContentRaw = doc.getText();
+      const oldContentRaw = this.snapshots.get(filePath);
+      const newContent = this.normalizeContent(newContentRaw);
+      const oldContent = oldContentRaw !== undefined ? this.normalizeContent(oldContentRaw) : undefined;
+
       this.savedFilesByVsCode.set(filePath, Date.now());
 
       if (this.diffManager.hasPendingDiff(filePath)) {
         this.diffManager.renderer.applyDecorations(filePath);
+        return;
       }
+
+      if (oldContent === undefined) {
+        this.snapshots.set(filePath, newContentRaw);
+        if (newContent.trim()) {
+          this.triggerDiff(filePath, '', newContentRaw);
+        }
+        return;
+      }
+
+      if (oldContent !== newContent) {
+        this.triggerDiff(filePath, oldContentRaw!, newContentRaw);
+        this.snapshots.set(filePath, newContentRaw);
+        return;
+      }
+
+      this.snapshots.set(filePath, newContentRaw);
     });
     this.disposables.push(d);
   }

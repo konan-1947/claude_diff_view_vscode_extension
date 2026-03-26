@@ -126,16 +126,15 @@ export class DiffManager {
       return;
     }
 
-    // Chuyển sang dùng UI chuẩn của VS Code: Diff Editor. 
-    // Dùng chung 1 query ID cho suốt quá trình Diff để khỏi bị mở đúp thành 2 tab
-    const queryId = this.snapshotQueries.get(absPath) || Date.now().toString();
-    const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: queryId });
-    const modifiedUri = vscode.Uri.file(absPath);
-    const title = `Claude Diff: ${path.basename(absPath)}`;
-    
-    await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, title, { preview: false });
+    // Không mở tab Diff riêng. Chỉ hiển thị file thường + inline decorations.
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
+      await vscode.window.showTextDocument(doc, { preview: false });
+    } catch {
+      // Nếu mở editor lỗi vẫn tiếp tục giữ state để user có thể mở file sau đó.
+    }
 
-    // Vẫn cần gọi renderer để tính toán danh sách hunks (giúp render CodeLens)
+    // Tính toán hunks và render inline trực tiếp trên file gốc.
     this.renderer.show(absPath, snapshot, modifiedContent);
     this._onDidChangeDiffs.fire();
   }
@@ -170,11 +169,6 @@ export class DiffManager {
       const newSnapshot = lines.join('\n');
       this.snapshots.set(absPath, newSnapshot);
       this.persistState();
-
-      // Thông báo cho VS Code nạp lại nội dung bên trái (Original) của màn hình Diff
-      const queryId = this.snapshotQueries.get(absPath) || '';
-      const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: queryId });
-      this.contentProviderEventEmitter.fire(originalUri);
 
       // Cập nhật lại Inline Renderer và tính lại CodeLens
       let modifiedContent: string;
