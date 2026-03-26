@@ -6,6 +6,8 @@ export interface NavInfo {
   total: number;
   prevName: string;
   nextName: string;
+  canPrev: boolean;
+  canNext: boolean;
 }
 
 export class NavBarPanel implements vscode.WebviewViewProvider {
@@ -23,6 +25,7 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
         case 'prev':   vscode.commands.executeCommand('claude-diff-view.prevFile'); break;
         case 'next':   vscode.commands.executeCommand('claude-diff-view.nextFile'); break;
         case 'accept': vscode.commands.executeCommand('claude-diff-view.acceptAllHunks'); break;
+        case 'acceptAllChanges': vscode.commands.executeCommand('claude-diff-view.acceptAllChanges'); break;
         case 'revert': vscode.commands.executeCommand('claude-diff-view.revertAllHunks'); break;
       }
     });
@@ -48,30 +51,26 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     const info = this.navInfo;
     const fileName = this.activeFilePath ? path.basename(this.activeFilePath) : undefined;
 
-    const actionSection = fileName ? `
-      <div class="card">
-        <div class="file-label">${escapeHtml(fileName)}</div>
-        <div class="action-row">
-          <button class="btn btn-accept" onclick="send('accept')">Accept All</button>
-          <button class="btn btn-revert" onclick="send('revert')">Revert All</button>
+    const controls = fileName ? `
+      <div class="controls">
+        <div class="line line-actions">
+          <button class="btn btn-accept" onclick="send('accept')">Accept File</button>
+          <button class="btn btn-revert" onclick="send('revert')">Reject File</button>
         </div>
-      </div>` : '';
-
-    const divider = fileName && info ? `<div class="divider"></div>` : '';
-
-    const navSection = info ? `
-      <div class="card">
-        <div class="nav-row">
-          <button class="btn btn-nav btn-prev" onclick="send('prev')">&#8249; ${escapeHtml(info.prevName)}</button>
-          <button class="btn btn-nav btn-next" onclick="send('next')">${escapeHtml(info.nextName)} &#8250;</button>
+        <div class="line line-all-changes">
+          <button class="btn btn-accept-all" onclick="send('acceptAllChanges')">Accept All Changes</button>
         </div>
-        <div class="counter-row">
-          <span class="counter">${info.currentIdx} / ${info.total} files</span>
+        <div class="line line-file">
+          <div class="file-label">${escapeHtml(fileName)}</div>
+          <span class="counter">${info ? `${info.currentIdx} / ${info.total} files` : '1 / 1 files'}</span>
         </div>
-      </div>` : '';
-
-    const empty = !fileName && !info
-      ? `<div class="empty">No pending diffs</div>` : '';
+        <div class="line line-nav line-prev">
+          <button class="btn btn-nav btn-prev" onclick="send('prev')" ${info?.canPrev ? '' : 'disabled'}>${info?.canPrev ? `&#8249; ${escapeHtml(info.prevName)}` : '&#8249; Start'}</button>
+        </div>
+        <div class="line line-nav line-next">
+          <button class="btn btn-nav btn-next" onclick="send('next')" ${info?.canNext ? '' : 'disabled'}>${info?.canNext ? `${escapeHtml(info.nextName)} &#8250;` : 'End &#8250;'}</button>
+        </div>
+      </div>` : `<div class="empty">No pending diffs</div>`;
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -90,43 +89,45 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     background: transparent;
     user-select: none;
     padding: 10px 12px;
-    gap: 0;
   }
 
-  .card {
+  .controls {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    padding: 10px 0;
+    gap: 8px;
   }
 
-  .divider {
-    height: 1px;
-    background: var(--vscode-widget-border, rgba(128,128,128,0.18));
+  .line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
   }
 
   .file-label {
-    font-size: 11px;
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    font-size: 14px;
     font-weight: 600;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    opacity: 0.45;
+    letter-spacing: 0.01em;
+    text-transform: none;
+    opacity: 0.85;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    padding-bottom: 2px;
   }
 
   .btn {
     background: transparent;
     border: 1px solid var(--vscode-button-secondaryBorder, rgba(128,128,128,0.35));
     color: var(--vscode-foreground);
-    border-radius: 4px;
-    padding: 5px 10px;
+    border-radius: 6px;
+    padding: 8px 12px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 13px;
     font-family: inherit;
-    text-align: left;
+    text-align: center;
     transition: background 0.1s;
   }
   .btn:hover {
@@ -135,13 +136,16 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   .btn:active {
     opacity: 0.7;
   }
-
-  .action-row {
-    display: flex;
-    gap: 5px;
-    flex-wrap: wrap;
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
-  .action-row .btn { flex: 1 1 120px; }
+  .btn:disabled:hover {
+    background: transparent;
+  }
+
+  .line-actions .btn { flex: 1 1 0; }
+  .line-all-changes .btn { flex: 1 1 100%; }
 
   .btn-accept {
     color: var(--vscode-gitDecoration-addedResourceForeground, #4caf6e);
@@ -149,6 +153,15 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   }
   .btn-accept:hover {
     background: rgba(76, 175, 80, 0.08);
+  }
+
+  .btn-accept-all {
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+    border-color: transparent;
+  }
+  .btn-accept-all:hover {
+    background: var(--vscode-button-hoverBackground, rgba(76,175,80,0.2));
   }
 
   .btn-revert {
@@ -159,36 +172,24 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     background: rgba(241, 76, 76, 0.08);
   }
 
-  .nav-row {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    flex-wrap: wrap;
-  }
   .btn-nav {
-    flex: 1 1 140px;
-    min-width: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    line-height: 1.25;
-    font-size: 11px;
-    padding: 4px 8px;
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+    font-size: 12px;
+    padding: 7px 10px;
     color: var(--vscode-foreground);
     opacity: 0.8;
   }
-  .btn-next { text-align: right; }
-
-  .counter-row {
-    display: flex;
-    justify-content: center;
-    padding-top: 2px;
-  }
   .counter {
     flex-shrink: 0;
-    font-size: 10px;
-    opacity: 0.4;
+    font-size: 13px;
+    opacity: 0.7;
+    font-weight: 500;
     white-space: nowrap;
-    padding: 0 2px;
+    padding: 0 4px;
   }
 
   .empty {
@@ -200,10 +201,7 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
 </style>
 </head>
 <body>
-  ${actionSection}
-  ${divider}
-  ${navSection}
-  ${empty}
+  ${controls}
   <script>
     const vscode = acquireVsCodeApi();
     function send(cmd) { vscode.postMessage({ command: cmd }); }

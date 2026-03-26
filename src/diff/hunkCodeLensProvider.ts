@@ -68,14 +68,17 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
     const hunks = this.diffManager.renderer.getHunks(filePath);
     const lenses: vscode.CodeLens[] = [];
 
-    for (const hunk of hunks) {
+    const totalHunks = hunks.length;
+    for (let index = 0; index < hunks.length; index++) {
+      const hunk = hunks[index]!;
+      const hunkLabel = `Hunk ${index + 1}/${totalHunks}`;
       // Đặt CodeLens ở dòng bắt đầu của hunk
       const lineIdx = Math.max(0, hunk.modifiedStart);
       const range = new vscode.Range(lineIdx, 0, lineIdx, 0);
 
       // Nút Accept
       const acceptCmd: vscode.Command = {
-        title: 'Accept Hunk',
+        title: `$(check) Accept ${hunkLabel}`,
         tooltip: 'Chấp nhận các thay đổi này',
         command: 'claude-diff-view.acceptHunk',
         arguments: [filePath, hunk.id],
@@ -84,7 +87,7 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
 
       // Nút Revert
       const revertCmd: vscode.Command = {
-        title: 'Revert Hunk',
+        title: `$(discard) Revert ${hunkLabel}`,
         tooltip: 'Hủy bỏ thay đổi, quay về gốc',
         command: 'claude-diff-view.revertHunk',
         arguments: [filePath, hunk.id],
