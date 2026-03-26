@@ -250,6 +250,20 @@ export class DiffManager {
   }
 
   /**
+   * Chấp nhận toàn bộ thay đổi của tất cả file đang pending.
+   */
+  async acceptAllPending(): Promise<number> {
+    const pendingFiles = this.getPendingFiles();
+    for (const filePath of pendingFiles) {
+      const absPath = normalizePath(filePath);
+      this.renderer.acceptAll(absPath);
+      await this.cleanup(absPath, { openNormalTextDocument: false });
+    }
+    this._onDidChangeDiffs.fire();
+    return pendingFiles.length;
+  }
+
+  /**
    * Xóa snapshot của một file (sau khi accept/revert từng hunk xong hết).
    * Dùng khi tất cả hunks đã được xử lý thủ công.
    */

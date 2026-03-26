@@ -23,7 +23,14 @@ export class InlineDiffRenderer {
   private fileStates = new Map<string, FileDiffState>();
   private readonly decorations: DecorationManager;
   private navigationManager?: NavigationManager;
-  private onNavUpdate?: (navInfo?: { currentIdx: number; total: number; prevName: string; nextName: string }) => void;
+  private onNavUpdate?: (navInfo?: {
+    currentIdx: number;
+    total: number;
+    prevName: string;
+    nextName: string;
+    canPrev: boolean;
+    canNext: boolean;
+  }) => void;
 
   constructor(_extensionUri: vscode.Uri) {
     this.decorations = new DecorationManager();
@@ -33,7 +40,14 @@ export class InlineDiffRenderer {
     this.navigationManager = nav;
   }
 
-  setNavUpdateCallback(cb: (navInfo?: { currentIdx: number; total: number; prevName: string; nextName: string }) => void): void {
+  setNavUpdateCallback(cb: (navInfo?: {
+    currentIdx: number;
+    total: number;
+    prevName: string;
+    nextName: string;
+    canPrev: boolean;
+    canNext: boolean;
+  }) => void): void {
     this.onNavUpdate = cb;
   }
 

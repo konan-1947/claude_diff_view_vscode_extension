@@ -97,6 +97,18 @@ export function registerAllCommands(deps: CommandDeps): void {
     })
   );
 
+  // acceptAllChanges
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claude-diff-view.acceptAllChanges', async () => {
+      const total = await diffManager.acceptAllPending();
+      if (total === 0) {
+        vscode.window.showWarningMessage('Không có thay đổi pending để accept.');
+        return;
+      }
+      vscode.window.showInformationMessage(`Accepted all changes in ${total} file(s).`);
+    })
+  );
+
   // revertAllHunks
   context.subscriptions.push(
     vscode.commands.registerCommand('claude-diff-view.revertAllHunks', async () => {

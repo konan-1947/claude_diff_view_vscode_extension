@@ -39,11 +39,16 @@ export class NavigationManager {
     
     let currentIndex = pendingFiles.indexOf(currentPath);
     
-    // Nếu không tìm thấy file hiện tại (đang ở file khác ko có diff), mặc định nhảy vào file đầu tiên
+    // Nếu không tìm thấy file hiện tại (đang ở file khác không có diff),
+    // chọn biên phù hợp theo hướng để điều hướng không bị wrap.
     if (currentIndex === -1) {
-      currentIndex = 0;
+      currentIndex = direction > 0 ? 0 : pendingFiles.length - 1;
     } else {
-      currentIndex = (currentIndex + direction + pendingFiles.length) % pendingFiles.length;
+      const targetIndex = currentIndex + direction;
+      if (targetIndex < 0 || targetIndex >= pendingFiles.length) {
+        return;
+      }
+      currentIndex = targetIndex;
     }
 
     const targetPath = pendingFiles[currentIndex];
@@ -64,14 +69,18 @@ export class NavigationManager {
     // vẫn hiển thị prev/next dựa trên file pending đầu tiên để nút điều hướng hoạt động liên tục.
     if (currentIndex === -1) { currentIndex = 0; }
 
-    const prevIndex = (currentIndex - 1 + pendingFiles.length) % pendingFiles.length;
-    const nextIndex = (currentIndex + 1) % pendingFiles.length;
+    const canPrev = currentIndex > 0;
+    const canNext = currentIndex < pendingFiles.length - 1;
+    const prevName = canPrev ? path.basename(pendingFiles[currentIndex - 1]) : '';
+    const nextName = canNext ? path.basename(pendingFiles[currentIndex + 1]) : '';
 
     return {
       currentIdx: currentIndex + 1,
       total: pendingFiles.length,
-      prevName: path.basename(pendingFiles[prevIndex]),
-      nextName: path.basename(pendingFiles[nextIndex]),
+      prevName,
+      nextName,
+      canPrev,
+      canNext,
     };
   }
 }
