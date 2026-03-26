@@ -72,11 +72,10 @@ export function registerAllCommands(deps: CommandDeps): void {
           progress.report({ message: 'Starting session\u2026' });
           const onProgress = (step: string): void => {
             progress.report({ message: step });
-            const match = step.match(/:\s+(.+)$/);
-            if (match?.[1]) { treeProvider.addPendingFile(match[1]); }
           };
           try {
             await runner.run(prompt, workingDir, () => {}, onProgress);
+            treeProvider.setIdle();
             vscode.window.showInformationMessage(`${toolLabel} session complete.`);
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);

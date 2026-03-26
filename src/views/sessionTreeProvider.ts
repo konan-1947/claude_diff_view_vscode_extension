@@ -12,17 +12,21 @@ export class SessionTreeProvider
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private state: SessionState = 'idle';
-  private pendingFiles: string[] = [];
   private lastPrompt = '';
   private errorMessage = '';
 
   constructor(private readonly diffManager: DiffManager) {}
 
+  // Refresh UI whenever diff state changes (pending files / hunks accepted/reverted).
+  // TreeDataProvider has no explicit dispose hook here, so we rely on extension lifetime.
+  private readonly _diffListener = this.diffManager.onDidChangeDiffs(() => {
+    this.refresh();
+  });
+
   // Called by extension.ts when session state changes
   setRunning(prompt: string): void {
     this.state = 'running';
     this.lastPrompt = prompt;
-    this.pendingFiles = [];
     this.errorMessage = '';
     this.refresh();
   }
@@ -35,14 +39,6 @@ export class SessionTreeProvider
   setError(message: string): void {
     this.state = 'error';
     this.errorMessage = message;
-    this.refresh();
-  }
-
-  addPendingFile(filePath: string): void {
-    const basename = path.basename(filePath);
-    if (!this.pendingFiles.includes(basename)) {
-      this.pendingFiles.push(basename);
-    }
     this.refresh();
   }
 
@@ -92,19 +88,21 @@ export class SessionTreeProvider
     }
 
     // Pending diff files
-    if (this.pendingFiles.length > 0) {
+    const pendingFiles = this.diffManager.getPendingFiles();
+    if (pendingFiles.length > 0) {
       const header = new TreeNode(
-        `Pending diffs (${this.pendingFiles.length})`,
+        `Pending diffs (${pendingFiles.length})`,
         '',
         vscode.TreeItemCollapsibleState.None,
         new vscode.ThemeIcon('diff', new vscode.ThemeColor('charts.blue'))
       );
       nodes.push(header);
 
-      for (const file of this.pendingFiles) {
+      for (const file of pendingFiles) {
+        const label = path.basename(file);
         const fileNode = new TreeNode(
+          label,
           file,
-          'Click Accept ✓ or Reject ✗ in the diff tab',
           vscode.TreeItemCollapsibleState.None,
           new vscode.ThemeIcon('file-code')
         );

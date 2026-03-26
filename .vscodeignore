@@ -1,0 +1,9 @@
+src/**
+code_to_test/**
+.claude/**
+.vscode/**
+ts_error.txt
+*.vsix
+node_modules/**
+**/*.ts
+**/*.map

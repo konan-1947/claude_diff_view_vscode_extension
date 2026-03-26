@@ -154,7 +154,20 @@ export class InlineDiffRenderer {
   /** Xóa tất cả decoration của file và xóa khỏi state. */
   clear(filePath: string): void {
     const normalizedPath = this.normalizePath(filePath);
-    if (!this.fileStates.has(normalizedPath)) { return; }
+    const activeFsPath = vscode.window.activeTextEditor?.document.uri.fsPath;
+    const isActiveEditor = activeFsPath
+      ? this.normalizePath(activeFsPath) === normalizedPath
+      : false;
+
+    // Nếu state đã bị xóa trước đó (ví dụ DiffManager gọi acceptAll -> clear rồi mới cleanup),
+    // vẫn cần cập nhật nav UI khi file vừa active đã hết pending.
+    if (!this.fileStates.has(normalizedPath)) {
+      if (isActiveEditor) {
+        const navInfo = this.navigationManager?.getNavigationInfo(normalizedPath);
+        this.onNavUpdate?.(navInfo);
+      }
+      return;
+    }
 
     for (const editor of vscode.window.visibleTextEditors) {
       if (
@@ -166,6 +179,14 @@ export class InlineDiffRenderer {
     }
 
     this.fileStates.delete(normalizedPath);
+
+    // Khi file đang active bị xóa khỏi state, cần cập nhật nav UI ngay,
+    // kể cả khi vẫn còn các file pending khác khác đang mở.
+    if (isActiveEditor) {
+      const navInfo = this.navigationManager?.getNavigationInfo(normalizedPath);
+      this.onNavUpdate?.(navInfo);
+      return;
+    }
 
     if (this.fileStates.size === 0) {
       this.onNavUpdate?.(undefined);
