@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { InlineDiffRenderer } from './inlineDiffRenderer';
+import { calculateHunks } from './hunkCalculator';
 
 const STATE_KEY = 'claude-diff.snapshots';
 
@@ -108,6 +109,23 @@ export class DiffManager {
       return;
     }
 
+    // Nếu không có khác biệt thực sự (hunks = 0), tránh tạo/giữ trạng thái pending sai.
+    // Trường hợp này thường xảy ra khi Claude "sửa" nhưng kết quả cuối cùng y hệt bản gốc,
+    // hoặc do lỗi resolve path khiến snapshot không khớp.
+    const hunks = calculateHunks(snapshot, modifiedContent);
+    if (hunks.length === 0) {
+      this.snapshots.delete(absPath);
+      this.snapshotQueries.delete(absPath);
+      this.persistState();
+
+      // Vẫn gọi renderer để nó dọn decorations/nav cho editor hiện tại.
+      this.renderer.show(absPath, snapshot, modifiedContent);
+      // Không còn pending diff nên cũng xóa state inline diff để tránh giữ dư trạng thái.
+      this.renderer.clear(absPath);
+      this._onDidChangeDiffs.fire();
+      return;
+    }
+
     // Chuyển sang dùng UI chuẩn của VS Code: Diff Editor. 
     // Dùng chung 1 query ID cho suốt quá trình Diff để khỏi bị mở đúp thành 2 tab
     const queryId = this.snapshotQueries.get(absPath) || Date.now().toString();
@@ -191,8 +209,25 @@ export class DiffManager {
    */
   async accept(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
+
+    // Lưu lại thứ tự pending trước khi cleanup để biết "file tiếp theo" là gì.
+    const pendingBefore = this.getPendingFiles();
+    const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
+    const hasNext = pendingBefore.length > 1 && currentIdx !== -1;
+    const nextTarget = hasNext
+      ? pendingBefore[(currentIdx + 1) % pendingBefore.length]!
+      : undefined;
+
     this.renderer.acceptAll(absPath);
-    await this.cleanup(absPath);
+
+    // Nếu còn file pending khác, tránh "nhảy về file thường" sau khi đóng diff;
+    // thay vào đó chuyển sang diff của file tiếp theo để user tiếp tục review.
+    await this.cleanup(absPath, { openNormalTextDocument: !nextTarget });
+
+    if (nextTarget) {
+      await this.openDiff(nextTarget);
+    }
+
     vscode.window.showInformationMessage(`Accepted: ${path.basename(absPath)}`);
     this._onDidChangeDiffs.fire();
   }
@@ -252,10 +287,18 @@ export class DiffManager {
     this.snapshotQueries.clear();
   }
 
-  private async cleanup(absPath: string): Promise<void> {
+  private async cleanup(
+    absPath: string,
+    opts?: { openNormalTextDocument?: boolean }
+  ): Promise<void> {
+    const openNormalTextDocument = opts?.openNormalTextDocument ?? true;
+
     this.snapshots.delete(absPath);
     this.snapshotQueries.delete(absPath);
     this.persistState();
+
+    // Xóa inline diff state/decorations và cập nhật nav UI ngay.
+    this.renderer.clear(absPath);
     
     // Lưu lại vị trí con trỏ và scroll hiện tại trước khi đóng tab
     let targetSelection: vscode.Selection | undefined;
@@ -286,16 +329,19 @@ export class DiffManager {
     }
 
     // Mở lại file ở tab thường và đặt con trỏ/scroll về đúng chỗ cũ
-    try {
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
-      const editor = await vscode.window.showTextDocument(doc, { preview: false });
+    // (chỉ làm khi không chuyển sang diff file pending khác)
+    if (openNormalTextDocument) {
+      try {
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
+        const editor = await vscode.window.showTextDocument(doc, { preview: false });
 
-      if (targetSelection) {
-        editor.selection = targetSelection;
-      }
-      if (targetVisibleRange) {
-        editor.revealRange(targetVisibleRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-      }
-    } catch {}
+        if (targetSelection) {
+          editor.selection = targetSelection;
+        }
+        if (targetVisibleRange) {
+          editor.revealRange(targetVisibleRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        }
+      } catch {}
+    }
   }
 }

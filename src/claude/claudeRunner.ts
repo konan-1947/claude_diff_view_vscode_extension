@@ -56,6 +56,16 @@ export class ClaudeRunner implements IAiRunner {
 
   constructor(private readonly diffManager: DiffManager) {}
 
+  /**
+   * Claude CLI có thể trả về path tương đối so với workingDir.
+   * Nếu extension host resolve sai base dir thì sẽ snapshot/openDiff nhầm file.
+   */
+  private resolveToolFilePath(filePath: string, workingDir: string): string {
+    // path.isAbsolute trên win32 xử lý tốt cả "C:\\..." và "D:/..."
+    if (path.isAbsolute(filePath)) { return filePath; }
+    return path.resolve(workingDir, filePath);
+  }
+
   getSettingsFilePath(): string {
     const homeDir = process.env['USERPROFILE'] ?? process.env['HOME'] ?? '';
     return path.join(homeDir, '.claude', 'settings.json');
@@ -150,7 +160,7 @@ export class ClaudeRunner implements IAiRunner {
         for (let i = 0; i < lines.length - 1; i++) {
           const line = (lines[i] ?? '').trim();
           if (line.length > 0) {
-            this.handleLine(line, pendingToolUses, onProgress);
+            this.handleLine(line, pendingToolUses, workingDir, onProgress);
           }
         }
         lineBuffer = lines[lines.length - 1] ?? '';
@@ -159,7 +169,7 @@ export class ClaudeRunner implements IAiRunner {
       proc.stdout.on('end', () => {
         const remaining = lineBuffer.trim();
         if (remaining.length > 0) {
-          this.handleLine(remaining, pendingToolUses, onProgress);
+          this.handleLine(remaining, pendingToolUses, workingDir, onProgress);
         }
         lineBuffer = '';
       });
@@ -192,6 +202,7 @@ export class ClaudeRunner implements IAiRunner {
   private handleLine(
     line: string,
     pendingToolUses: Map<string, string>,
+    workingDir: string,
     onProgress?: ProgressCallback
   ): void {
     let event: ClaudeEvent;
@@ -215,10 +226,11 @@ export class ClaudeRunner implements IAiRunner {
         if (!FILE_EDIT_TOOLS.has(toolUse.name)) {
           continue;
         }
-        const filePath = toolUse.input.file_path;
-        if (!filePath) {
+        const filePathRaw = toolUse.input.file_path;
+        if (!filePathRaw) {
           continue;
         }
+        const filePath = this.resolveToolFilePath(filePathRaw, workingDir);
         // Register mapping before snapshotting
         pendingToolUses.set(toolUse.id, filePath);
         const basename = filePath.split(/[\\/]/).pop() ?? filePath;

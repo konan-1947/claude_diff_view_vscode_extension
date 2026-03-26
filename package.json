@@ -2,12 +2,24 @@
   "name": "claude-diff-view",
   "displayName": "Claude Diff View",
   "description": "Run Claude Code sessions with inline diff review (accept/revert per hunk)",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "local-dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/konan-1947/claude_diff_view_vscode_extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/konan-1947/claude_diff_view_vscode_extension/issues"
+  },
+  "homepage": "https://github.com/konan-1947/claude_diff_view_vscode_extension#readme",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -121,6 +133,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
     "typescript": "^5.4.0"
   }
 }

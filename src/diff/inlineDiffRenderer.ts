@@ -156,6 +156,11 @@ export class InlineDiffRenderer {
     const normalizedPath = this.normalizePath(filePath);
     if (!this.fileStates.has(normalizedPath)) { return; }
 
+    const activeFsPath = vscode.window.activeTextEditor?.document.uri.fsPath;
+    const isActiveEditor = activeFsPath
+      ? this.normalizePath(activeFsPath) === normalizedPath
+      : false;
+
     for (const editor of vscode.window.visibleTextEditors) {
       if (
         this.normalizePath(editor.document.uri.fsPath) === normalizedPath &&
@@ -166,6 +171,14 @@ export class InlineDiffRenderer {
     }
 
     this.fileStates.delete(normalizedPath);
+
+    // Khi file đang active bị xóa khỏi state, cần cập nhật nav UI ngay,
+    // kể cả khi vẫn còn các file pending khác khác đang mở.
+    if (isActiveEditor) {
+      const navInfo = this.navigationManager?.getNavigationInfo(normalizedPath);
+      this.onNavUpdate?.(navInfo);
+      return;
+    }
 
     if (this.fileStates.size === 0) {
       this.onNavUpdate?.(undefined);

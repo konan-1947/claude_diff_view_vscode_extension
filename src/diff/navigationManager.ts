@@ -58,9 +58,11 @@ export class NavigationManager {
     if (pendingFiles.length === 0) { return undefined; }
 
     const currentPath = normalizePath(currentFilePath);
-    const currentIndex = pendingFiles.indexOf(currentPath);
+    let currentIndex = pendingFiles.indexOf(currentPath);
     
-    if (currentIndex === -1) { return undefined; }
+    // Nếu current file không còn pending (ví dụ vừa Accept/Revert xong),
+    // vẫn hiển thị prev/next dựa trên file pending đầu tiên để nút điều hướng hoạt động liên tục.
+    if (currentIndex === -1) { currentIndex = 0; }
 
     const prevIndex = (currentIndex - 1 + pendingFiles.length) % pendingFiles.length;
     const nextIndex = (currentIndex + 1) % pendingFiles.length;
