@@ -51,25 +51,34 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     const info = this.navInfo;
     const fileName = this.activeFilePath ? path.basename(this.activeFilePath) : undefined;
 
-    const controls = fileName ? `
+    const controls = info ? `
       <div class="controls">
+        ${fileName ? `
         <div class="line line-actions">
           <button class="btn btn-accept" onclick="send('accept')">Accept File</button>
           <button class="btn btn-revert" onclick="send('revert')">Reject File</button>
-        </div>
+        </div>` : ''}
         <div class="line line-all-changes">
           <button class="btn btn-accept-all" onclick="send('acceptAllChanges')">Accept All Changes</button>
         </div>
         <div class="line line-file">
-          <div class="file-label">${escapeHtml(fileName)}</div>
-          <span class="counter">${info ? `${info.currentIdx} / ${info.total} files` : '1 / 1 files'}</span>
+          <div class="file-label">${fileName ? escapeHtml(fileName) : 'Open a pending diff file to accept/reject'}</div>
+          <span class="counter">${info.currentIdx} / ${info.total} files</span>
         </div>
-        <div class="line line-nav line-prev">
-          <button class="btn btn-nav btn-prev" onclick="send('prev')" ${info?.canPrev ? '' : 'disabled'}>${info?.canPrev ? `&#8249; ${escapeHtml(info.prevName)}` : '&#8249; Start'}</button>
+        ${
+          info.total === 1
+            ? `<div class="line line-nav">
+          <button class="btn btn-nav" onclick="send('next')">
+            ${escapeHtml(info.nextName || info.prevName || 'Open pending diff')}
+          </button>
+        </div>`
+            : `<div class="line line-nav line-prev">
+          <button class="btn btn-nav btn-prev" onclick="send('prev')" ${info.canPrev ? '' : 'disabled'}>${info.canPrev ? `&#8249; ${escapeHtml(info.prevName)}` : '&#8249; Start'}</button>
         </div>
         <div class="line line-nav line-next">
-          <button class="btn btn-nav btn-next" onclick="send('next')" ${info?.canNext ? '' : 'disabled'}>${info?.canNext ? `${escapeHtml(info.nextName)} &#8250;` : 'End &#8250;'}</button>
-        </div>
+          <button class="btn btn-nav btn-next" onclick="send('next')" ${info.canNext ? '' : 'disabled'}>${info.canNext ? `${escapeHtml(info.nextName)} &#8250;` : 'End &#8250;'}</button>
+        </div>`
+        }
       </div>` : `<div class="empty">No pending diffs</div>`;
 
     return `<!DOCTYPE html>

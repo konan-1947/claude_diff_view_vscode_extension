@@ -19,9 +19,13 @@ export function registerAllCommands(deps: CommandDeps): void {
 
   function getActiveDiffFilePath(): string | undefined {
     const editor = vscode.window.activeTextEditor;
-    if (!editor) { return undefined; }
-    const filePath = editor.document.uri.fsPath;
-    return diffManager.renderer.hasPending(filePath) ? filePath : undefined;
+    if (editor) {
+      const filePath = editor.document.uri.fsPath;
+      if (diffManager.renderer.hasPending(filePath)) {
+        return filePath;
+      }
+    }
+    return diffManager.getPendingFiles()[0];
   }
 
   async function ensureRunner(): Promise<IAiRunner | undefined> {

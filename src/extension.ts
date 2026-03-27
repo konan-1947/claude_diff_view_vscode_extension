@@ -22,9 +22,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(NavBarPanel.viewType, navBarPanel)
   );
-  diffManager.renderer.setNavUpdateCallback(navInfo => {
-    navBarPanel.update(navInfo);
-    updateNavBarActiveFile();
+  diffManager.renderer.setNavUpdateCallback(() => {
+    updateNavBarState();
   });
 
   let activeRunner: IAiRunner | undefined;
@@ -61,16 +60,31 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('claude-diff-view.prevFile', () => navigationManager.prevFile())
   );
 
-  function updateNavBarActiveFile(): void {
+  function updateNavBarState(): void {
     const editor = vscode.window.activeTextEditor;
     const filePath = editor?.document.uri.fsPath;
-    navBarPanel.setActiveFile(filePath && diffManager.renderer.hasPending(filePath) ? filePath : undefined);
+    const pendingFiles = diffManager.getPendingFiles();
+
+    if (pendingFiles.length === 0) {
+      navBarPanel.setActiveFile(undefined);
+      navBarPanel.update(undefined);
+      return;
+    }
+
+    if (filePath && diffManager.renderer.hasPending(filePath)) {
+      navBarPanel.setActiveFile(filePath);
+    } else {
+      navBarPanel.setActiveFile(undefined);
+    }
+
+    const navAnchor = filePath ?? pendingFiles[0];
+    navBarPanel.update(navigationManager.getNavigationInfo(navAnchor));
   }
 
   let isOpeningDiff = false;
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(async (editor) => {
-      updateNavBarActiveFile();
+      updateNavBarState();
       if (!editor || editor.document.uri.scheme !== 'file') { return; }
       const filePath = editor.document.uri.fsPath;
       if (diffManager.renderer.hasPending(filePath)) {
@@ -85,6 +99,12 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         diffManager.renderer.applyDecorations(filePath);
       }
+    })
+  );
+
+  context.subscriptions.push(
+    diffManager.onDidChangeDiffs(() => {
+      updateNavBarState();
     })
   );
 

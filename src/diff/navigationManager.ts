@@ -27,18 +27,23 @@ export class NavigationManager {
 
   private async navigate(direction: number): Promise<void> {
     const pendingFiles = this.diffManager.getPendingFiles();
-    if (pendingFiles.length <= 1) {
-      if (pendingFiles.length === 0) {
-        vscode.window.showInformationMessage('No files with pending diffs.');
-      }
+    if (pendingFiles.length === 0) {
+      vscode.window.showInformationMessage('No files with pending diffs.');
       return;
     }
 
     const currentEditor = vscode.window.activeTextEditor;
     const currentPath = currentEditor ? normalizePath(currentEditor.document.uri.fsPath) : '';
     
+    // Nếu chỉ còn 1 file pending: nếu user đang đứng ở file khác thì mở diff đó ngay.
+    if (pendingFiles.length === 1) {
+      if (normalizePath(pendingFiles[0]) !== currentPath) {
+        await this.diffManager.openDiff(pendingFiles[0]);
+      }
+      return;
+    }
+
     let currentIndex = pendingFiles.indexOf(currentPath);
-    
     // Nếu không tìm thấy file hiện tại (đang ở file khác không có diff),
     // chọn biên phù hợp theo hướng để điều hướng không bị wrap.
     if (currentIndex === -1) {
@@ -62,13 +67,39 @@ export class NavigationManager {
     const pendingFiles = this.diffManager.getPendingFiles();
     if (pendingFiles.length === 0) { return undefined; }
 
-    const currentPath = normalizePath(currentFilePath);
-    let currentIndex = pendingFiles.indexOf(currentPath);
-    
-    // Nếu current file không còn pending (ví dụ vừa Accept/Revert xong),
-    // vẫn hiển thị prev/next dựa trên file pending đầu tiên để nút điều hướng hoạt động liên tục.
-    if (currentIndex === -1) { currentIndex = 0; }
+    if (pendingFiles.length === 1) {
+      const onlyFile = pendingFiles[0]!;
+      const onlyName = path.basename(onlyFile);
+      return {
+        currentIdx: 1,
+        total: 1,
+        prevName: onlyName,
+        nextName: onlyName,
+        canPrev: true,
+        canNext: true,
+      };
+    }
 
+    const currentPath = normalizePath(currentFilePath);
+    const rawIndex = pendingFiles.indexOf(currentPath);
+
+    // Nếu user đang đứng ở file không pending, nút Next/Prev sẽ "mở" một file biên:
+    // - Next: mở pending đầu tiên
+    // - Prev: mở pending cuối cùng
+    if (rawIndex === -1) {
+      const first = pendingFiles[0]!;
+      const last = pendingFiles[pendingFiles.length - 1]!;
+      return {
+        currentIdx: 1,
+        total: pendingFiles.length,
+        prevName: path.basename(last),
+        nextName: path.basename(first),
+        canPrev: true,
+        canNext: true,
+      };
+    }
+
+    const currentIndex = rawIndex;
     const canPrev = currentIndex > 0;
     const canNext = currentIndex < pendingFiles.length - 1;
     const prevName = canPrev ? path.basename(pendingFiles[currentIndex - 1]) : '';
