@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { isExcludedPathSegment } from './pathExclusions';
 
 export class FileSnapshotStore {
   /** filePath -> nội dung baseline trước khi external process ghi đè */
@@ -46,14 +47,13 @@ export class FileSnapshotStore {
     if (depth > 5) { return; } // giới hạn độ sâu để tránh tràn stack
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     for (const entry of entries) {
-      if (
-        entry.name.startsWith('.') ||
-        entry.name === 'node_modules' ||
-        entry.name === 'out'
-      ) {
+      if (entry.name.startsWith('.')) {
         continue;
       }
-      const fullPath = path.join(dirPath, entry.name);
+      const fullPath = path.resolve(dirPath, entry.name);
+      if (isExcludedPathSegment(fullPath)) {
+        continue;
+      }
       if (entry.isDirectory()) {
         this.snapshotDir(fullPath, depth + 1);
       } else if (entry.isFile() && isTextFile(entry.name)) {

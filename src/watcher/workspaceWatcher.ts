@@ -15,6 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
 import { FileSnapshotStore, isTextFile } from './fileSnapshotStore';
+import { isExcludedPathSegment } from './pathExclusions';
 
 export class WorkspaceWatcher {
   private disposables: vscode.Disposable[] = [];
@@ -98,9 +99,8 @@ export class WorkspaceWatcher {
   private handleExternalWrite(filePath: string): void {
     const absPath = this.normalizePath(filePath);
 
-    // Bỏ qua các thư mục tải nặng và thư mục ảo để tránh Crash VSCode
-    const parts = absPath.split(path.sep);
-    if (parts.some(p => ['node_modules', '.git', '.next', 'out', 'dist', 'build', '.vscode', '.idea'].includes(p))) {
+    // Bỏ qua dependency / build output / tooling (dotnet bin/obj, node_modules, …)
+    if (isExcludedPathSegment(absPath)) {
       return;
     }
 
