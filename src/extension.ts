@@ -3,7 +3,7 @@ import { DiffManager } from './diff/diffManager';
 import { IAiRunner } from './claude/aiRunner';
 import { HookWatcher } from './watcher/hookWatcher';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
-import { SessionTreeProvider } from './views/sessionTreeProvider';
+import { SessionPanelProvider } from './views/sessionPanel';
 import { HunkCodeLensProvider } from './diff/hunkCodeLensProvider';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
@@ -11,7 +11,7 @@ import { NavBarPanel } from './views/navBarPanel';
 
 export function activate(context: vscode.ExtensionContext): void {
   const diffManager       = new DiffManager(context);
-  const treeProvider      = new SessionTreeProvider(diffManager);
+  const sessionPanel      = new SessionPanelProvider(diffManager, context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);
   const fsHookWatcher     = new HookWatcher(diffManager);
   const navigationManager = new NavigationManager(diffManager);
@@ -31,11 +31,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     { dispose: () => diffManager.disposeAll() },
     { dispose: () => fsHookWatcher.dispose() },
-    { dispose: () => workspaceWatcher.dispose() }
+    { dispose: () => workspaceWatcher.dispose() },
+    { dispose: () => sessionPanel.dispose() }
   );
 
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('claude-diff-view.session', treeProvider)
+    vscode.window.registerWebviewViewProvider(SessionPanelProvider.viewType, sessionPanel)
   );
 
   const codeLensProvider = new HunkCodeLensProvider(diffManager);
@@ -49,7 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerAllCommands({
     diffManager,
-    treeProvider,
+    sessionPanel,
     context,
     getRunner: () => activeRunner,
     setRunner: (r) => { activeRunner = r; },

@@ -5,5 +5,6 @@ code_to_test/**
 ts_error.txt
 *.vsix
 node_modules/**
+!node_modules/@vscode/codicons/dist/**
 **/*.ts
 **/*.map

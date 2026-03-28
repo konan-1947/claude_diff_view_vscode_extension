@@ -2,7 +2,7 @@
   "name": "claude-diff-view",
   "displayName": "Claude Diff View",
   "description": "Run Claude Code sessions with inline diff review (accept/revert per hunk)",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "publisher": "local-dev",
   "license": "MIT",
   "repository": {
@@ -38,7 +38,8 @@
       "claude-diff-view": [
         {
           "id": "claude-diff-view.session",
-          "name": "Session"
+          "name": "Session",
+          "type": "webview"
         }
       ],
       "explorer": [
@@ -120,13 +121,6 @@
       }
     ],
     "menus": {
-      "view/title": [
-        {
-          "command": "claude-diff-view.installHooks",
-          "when": "view == claude-diff-view.session",
-          "group": "navigation@1"
-        }
-      ],
       "editor/title": [
         {
           "command": "claude-diff-view.acceptAllHunks",
@@ -151,5 +145,8 @@
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.7.1",
     "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.45"
   }
 }

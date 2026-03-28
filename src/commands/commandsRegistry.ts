@@ -2,20 +2,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
-import { SessionTreeProvider } from '../views/sessionTreeProvider';
+import { SessionPanelProvider } from '../views/sessionPanel';
 import { IAiRunner } from '../claude/aiRunner';
 import { createRunner } from '../claude/runnerFactory';
 
 export interface CommandDeps {
   diffManager: DiffManager;
-  treeProvider: SessionTreeProvider;
+  sessionPanel: SessionPanelProvider;
   context: vscode.ExtensionContext;
   getRunner(): IAiRunner | undefined;
   setRunner(runner: IAiRunner): void;
 }
 
 export function registerAllCommands(deps: CommandDeps): void {
-  const { diffManager, treeProvider, context } = deps;
+  const { diffManager, sessionPanel, context } = deps;
 
   function getActiveDiffFilePath(): string | undefined {
     const editor = vscode.window.activeTextEditor;
@@ -69,7 +69,7 @@ export function registerAllCommands(deps: CommandDeps): void {
       });
       if (!prompt) { return; }
 
-      treeProvider.setRunning(prompt);
+      sessionPanel.setRunning(prompt);
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `${toolLabel}`, cancellable: false },
         async (progress) => {
@@ -79,11 +79,11 @@ export function registerAllCommands(deps: CommandDeps): void {
           };
           try {
             await runner.run(prompt, workingDir, () => {}, onProgress);
-            treeProvider.setIdle();
+            sessionPanel.setIdle();
             vscode.window.showInformationMessage(`${toolLabel} session complete.`);
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            treeProvider.setError(message);
+            sessionPanel.setError(message);
             vscode.window.showErrorMessage(`${toolLabel} session failed: ${message}`);
           }
         }
@@ -184,6 +184,7 @@ export function registerAllCommands(deps: CommandDeps): void {
 
       if (!fs.existsSync(settingsDir)) { fs.mkdirSync(settingsDir, { recursive: true }); }
       fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+      sessionPanel.refresh();
       vscode.window.showInformationMessage(
         `${toolLabel} hooks installed! Inline diff now works with \`${runner.toolName}\` CLI in any terminal.`
       );
