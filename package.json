@@ -76,7 +76,12 @@
       },
       {
         "command": "claude-diff-view.installHooks",
-        "title": "Claude: Install CLI Hooks (enable diff for terminal claude)"
+        "title": "Claude: Install CLI Hooks (enable diff for terminal claude)",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "claude-diff-view.openPendingFile",
+        "title": "Claude: Open Pending File"
       },
       {
         "command": "claude-diff-view.nextFile",
@@ -115,6 +120,13 @@
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "claude-diff-view.installHooks",
+          "when": "view == claude-diff-view.session",
+          "group": "navigation@1"
+        }
+      ],
       "editor/title": [
         {
           "command": "claude-diff-view.acceptAllHunks",

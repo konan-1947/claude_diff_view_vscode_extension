@@ -91,6 +91,21 @@ export function registerAllCommands(deps: CommandDeps): void {
     })
   );
 
+  // openPendingFile (Session tree — opens diff for one pending path)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claude-diff-view.openPendingFile', async (filePath?: string) => {
+      if (!filePath || typeof filePath !== 'string') {
+        return;
+      }
+      try {
+        await diffManager.openDiff(filePath);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        vscode.window.showErrorMessage(`Claude Diff: could not open file — ${message}`);
+      }
+    })
+  );
+
   // acceptAllHunks
   context.subscriptions.push(
     vscode.commands.registerCommand('claude-diff-view.acceptAllHunks', async () => {

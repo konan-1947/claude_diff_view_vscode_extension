@@ -4,6 +4,8 @@ import { DiffManager } from '../diff/diffManager';
 
 type SessionState = 'idle' | 'running' | 'error';
 
+const PENDING_FILES_GROUP_CONTEXT = 'pendingFilesGroup';
+
 export class SessionTreeProvider
   implements vscode.TreeDataProvider<TreeNode>
 {
@@ -17,13 +19,10 @@ export class SessionTreeProvider
 
   constructor(private readonly diffManager: DiffManager) {}
 
-  // Refresh UI whenever diff state changes (pending files / hunks accepted/reverted).
-  // TreeDataProvider has no explicit dispose hook here, so we rely on extension lifetime.
   private readonly _diffListener = this.diffManager.onDidChangeDiffs(() => {
     this.refresh();
   });
 
-  // Called by extension.ts when session state changes
   setRunning(prompt: string): void {
     this.state = 'running';
     this.lastPrompt = prompt;
@@ -51,91 +50,121 @@ export class SessionTreeProvider
   }
 
   getChildren(element?: TreeNode): TreeNode[] {
-    if (element) {
-      return [];
+    if (element?.contextValue === PENDING_FILES_GROUP_CONTEXT) {
+      return this.pendingFileNodes(this.diffManager.getPendingFiles());
     }
 
     const nodes: TreeNode[] = [];
 
-    // Status node
     if (this.state === 'running') {
       nodes.push(
-        new TreeNode(
-          `Running…`,
-          `Prompt: ${this.lastPrompt.slice(0, 50)}`,
-          vscode.TreeItemCollapsibleState.None,
-          new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.yellow'))
-        )
+        new TreeNode('Running…', vscode.TreeItemCollapsibleState.None, {
+          tooltip: this.lastPrompt
+            ? `Prompt:\n${this.lastPrompt}`
+            : 'Session running',
+          iconPath: new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.yellow')),
+        })
       );
     } else if (this.state === 'error') {
       nodes.push(
-        new TreeNode(
-          'Session failed',
-          this.errorMessage.slice(0, 80),
-          vscode.TreeItemCollapsibleState.None,
-          new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'))
-        )
-      );
-    } else {
-      nodes.push(
-        new TreeNode(
-          'Idle — press Ctrl+Shift+A to start',
-          '',
-          vscode.TreeItemCollapsibleState.None,
-          new vscode.ThemeIcon('robot')
-        )
+        new TreeNode('Session failed', vscode.TreeItemCollapsibleState.None, {
+          tooltip: this.errorMessage || 'Unknown error',
+          iconPath: new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground')),
+        })
       );
     }
 
-    // Pending diff files
     const pendingFiles = this.diffManager.getPendingFiles();
     if (pendingFiles.length > 0) {
-      const header = new TreeNode(
-        `Pending diffs (${pendingFiles.length})`,
-        '',
-        vscode.TreeItemCollapsibleState.None,
-        new vscode.ThemeIcon('diff', new vscode.ThemeColor('charts.blue'))
+      nodes.push(
+        new TreeNode('Pending changes', vscode.TreeItemCollapsibleState.Expanded, {
+          description: String(pendingFiles.length),
+          iconPath: new vscode.ThemeIcon('diff', new vscode.ThemeColor('charts.blue')),
+          contextValue: PENDING_FILES_GROUP_CONTEXT,
+        })
       );
-      nodes.push(header);
-
-      for (const file of pendingFiles) {
-        const label = path.basename(file);
-        const fileNode = new TreeNode(
-          label,
-          file,
-          vscode.TreeItemCollapsibleState.None,
-          new vscode.ThemeIcon('file-code')
-        );
-        nodes.push(fileNode);
-      }
     }
 
-    // Shortcut hints
     nodes.push(
-      new TreeNode(
-        'Install CLI Hooks',
-        'Enable diff view for `claude` in any terminal',
-        vscode.TreeItemCollapsibleState.None,
-        new vscode.ThemeIcon('plug'),
-        { command: 'claude-diff-view.installHooks', title: 'Install Hooks' }
-      )
+      new TreeNode('Install CLI Hooks', vscode.TreeItemCollapsibleState.None, {
+        tooltip:
+          'Also in the Session title bar (plug icon). Writes hooks to Claude settings for terminal runs.',
+        description: 'Click or use toolbar',
+        iconPath: new vscode.ThemeIcon('plug'),
+        command: { command: 'claude-diff-view.installHooks', title: 'Install Hooks' },
+      })
     );
 
     return nodes;
   }
+
+  private pendingFileNodes(absPaths: string[]): TreeNode[] {
+    return absPaths.map((absPath) => {
+      const base = path.basename(absPath);
+      const rel = workspaceRelativePath(absPath);
+      const desc = rel === base ? undefined : rel;
+      return new TreeNode(base, vscode.TreeItemCollapsibleState.None, {
+        tooltip: absPath,
+        description: desc,
+        resourceUri: vscode.Uri.file(absPath),
+        contextValue: 'pendingDiffFile',
+        command: {
+          command: 'claude-diff-view.openPendingFile',
+          title: 'Open',
+          arguments: [absPath],
+        },
+      });
+    });
+  }
+}
+
+function workspaceRelativePath(absPath: string): string {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders?.length) {
+    return path.dirname(absPath);
+  }
+  for (const folder of folders) {
+    const root = folder.uri.fsPath;
+    const rel = path.relative(root, absPath);
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+      return rel;
+    }
+  }
+  return absPath;
 }
 
 class TreeNode extends vscode.TreeItem {
   constructor(
     label: string,
-    tooltip: string,
     collapsibleState: vscode.TreeItemCollapsibleState,
-    iconPath?: vscode.ThemeIcon,
-    command?: vscode.Command
+    opts?: {
+      tooltip?: string;
+      iconPath?: vscode.ThemeIcon;
+      command?: vscode.Command;
+      description?: string;
+      resourceUri?: vscode.Uri;
+      contextValue?: string;
+    }
   ) {
     super(label, collapsibleState);
-    this.tooltip = tooltip;
-    this.iconPath = iconPath;
-    this.command = command;
+    const o = opts ?? {};
+    if (o.tooltip !== undefined) {
+      this.tooltip = o.tooltip;
+    }
+    if (o.iconPath) {
+      this.iconPath = o.iconPath;
+    }
+    if (o.command) {
+      this.command = o.command;
+    }
+    if (o.description !== undefined) {
+      this.description = o.description;
+    }
+    if (o.resourceUri) {
+      this.resourceUri = o.resourceUri;
+    }
+    if (o.contextValue) {
+      this.contextValue = o.contextValue;
+    }
   }
 }
