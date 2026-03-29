@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Enable at workspace scope so they appear in the right (modified) pane.
   const editorConfig = vscode.workspace.getConfiguration();
   if (editorConfig.get<boolean>('diffEditor.codeLens') !== true) {
-    void editorConfig.update('diffEditor.codeLens', true, vscode.ConfigurationTarget.Workspace);
+    void editorConfig.update('diffEditor.codeLens', true, vscode.ConfigurationTarget.Global);
   }
 
   const diffManager       = new DiffManager(context);
