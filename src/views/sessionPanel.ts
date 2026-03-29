@@ -53,7 +53,10 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
-    webviewView.webview.options = { enableScripts: true };
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this.context.extensionUri],
+    };
     webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
         this.render();
@@ -73,25 +76,19 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     if (!this.view) {
       return;
     }
-    const codiconsCss = vscode.Uri.joinPath(
+    const iconsDir = vscode.Uri.joinPath(
       this.context.extensionUri,
-      'node_modules',
-      '@vscode',
-      'codicons',
-      'dist',
-      'codicon.css'
+      'node_modules', 'material-icon-theme', 'icons'
     );
-    const codiconsHref = fs.existsSync(codiconsCss.fsPath)
-      ? this.view.webview.asWebviewUri(codiconsCss).toString()
-      : '';
-    this.view.webview.html = this.buildHtml(codiconsHref);
+    const iconBase = this.view.webview.asWebviewUri(iconsDir).toString() + '/';
+    this.view.webview.html = this.buildHtml(iconBase);
   }
 
-  private buildHtml(codiconsHref: string): string {
+  private buildHtml(iconBase: string): string {
     const pending = this.diffManager.getPendingFiles();
     const treeModel = buildPendingTreeModel(pending);
     const pendingTreeHtml =
-      pending.length === 0 ? '' : renderPendingTreeHtml(treeModel, 0);
+      pending.length === 0 ? '' : renderPendingTreeHtml(treeModel, 0, iconBase);
 
     let statusHtml = '';
     if (this.state === 'running') {
@@ -155,15 +152,10 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
 
     const installLabel = hooksOk ? 'Reinstall / update CLI hooks' : 'Install CLI hooks';
 
-    const codiconLink = codiconsHref
-      ? `<link rel="stylesheet" href="${escapeAttr(codiconsHref)}" />`
-      : '';
-
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-${codiconLink}
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -540,22 +532,74 @@ function buildPendingTreeModel(pending: string[]): TreeJson {
   return dirBuildToJson(root);
 }
 
-function renderPendingTreeHtml(node: TreeJson, depth: number): string {
+/** Map extension → tên file SVG trong material-icon-theme/icons/ */
+const EXT_ICON: Record<string, string> = {
+  ts: 'typescript', tsx: 'react_ts',
+  js: 'javascript', jsx: 'react',  mjs: 'javascript', cjs: 'javascript',
+  css: 'css', scss: 'sass', sass: 'sass', less: 'less',
+  html: 'html', htm: 'html',
+  json: 'json', jsonc: 'json',
+  md: 'markdown', mdx: 'markdown',
+  py: 'python',
+  rs: 'rust',
+  go: 'go',
+  java: 'java',
+  kt: 'kotlin', kts: 'kotlin',
+  rb: 'ruby',
+  php: 'php',
+  c: 'c', cc: 'cpp', cpp: 'cpp', h: 'h', hpp: 'hpp',
+  cs: 'csharp',
+  sh: 'shell', bash: 'shell',
+  yaml: 'yaml', yml: 'yaml',
+  toml: 'toml',
+  xml: 'xml',
+  svg: 'svg',
+  vue: 'vue',
+  svelte: 'svelte',
+  prisma: 'prisma',
+  graphql: 'graphql',
+  dockerfile: 'docker',
+  env: 'dotenv',
+  gitignore: 'git',
+  lock: 'lock',
+  sql: 'database',
+  zip: 'zip', gz: 'zip', tar: 'zip',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', ico: 'image',
+  pdf: 'pdf',
+  txt: 'document',
+};
+
+function fileIconImg(fileName: string, iconBase: string): string {
+  const ext = fileName.includes('.') ? fileName.split('.').pop()!.toLowerCase() : '';
+  const iconName = EXT_ICON[ext] ?? 'file';
+  const src = escapeAttr(`${iconBase}${iconName}.svg`);
+  return `<img src="${src}" width="16" height="16" aria-hidden="true" style="flex-shrink:0;display:block;">`;
+}
+
+function folderImg(open: boolean, iconBase: string): string {
+  const name = open ? 'folder-open' : 'folder';
+  const src = escapeAttr(`${iconBase}${name}.svg`);
+  return `<img src="${src}" width="16" height="16" aria-hidden="true" style="flex-shrink:0;display:block;">`;
+}
+
+function chevronSvg(down: boolean): string {
+  return down
+    ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`
+    : `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+}
+
+function renderPendingTreeHtml(node: TreeJson, depth: number, iconBase: string): string {
   const indentPx = 2 + depth * 8;
   const chunks: string[] = [];
   for (const d of node.dirs) {
-    const inner = renderPendingTreeHtml(d.tree, depth + 1);
+    const inner = renderPendingTreeHtml(d.tree, depth + 1, iconBase);
     chunks.push(
       `<details class="tree-node" open>` +
         `<summary class="tree-row tree-row-folder" style="padding-left:${indentPx}px">` +
-        `<span class="tree-twist">` +
-        `<i class="codicon codicon-chevron-down tree-chev-open" aria-hidden="true"></i>` +
-        `<i class="codicon codicon-chevron-right tree-chev-closed" aria-hidden="true"></i>` +
-        `</span>` +
-        `<span class="tree-ico-slot">` +
-        `<i class="codicon codicon-folder-opened tree-ico-open" aria-hidden="true"></i>` +
-        `<i class="codicon codicon-folder tree-ico-closed" aria-hidden="true"></i>` +
-        `</span>` +
+        `<span class="tree-twist tree-chev-open">${chevronSvg(true)}</span>` +
+        `<span class="tree-twist tree-chev-closed" style="display:none">${chevronSvg(false)}</span>` +
+        `<span class="tree-ico-slot tree-ico-open">${folderImg(true, iconBase)}</span>` +
+        `<span class="tree-ico-slot tree-ico-closed" style="display:none">${folderImg(false, iconBase)}</span>` +
         `<span class="tree-label">${escapeHtml(d.name)}</span>` +
         `</summary>` +
         `<div class="tree-children">${inner}</div>` +
@@ -566,7 +610,7 @@ function renderPendingTreeHtml(node: TreeJson, depth: number): string {
     chunks.push(
       `<button type="button" class="tree-row tree-row-file" data-path="${escapeAttr(f.path)}" style="padding-left:${indentPx}px">` +
         `<span class="tree-twist tree-twist-file" aria-hidden="true"></span>` +
-        `<span class="tree-ico-slot"><i class="codicon codicon-file" aria-hidden="true"></i></span>` +
+        `<span class="tree-ico-slot">${fileIconImg(f.name, iconBase)}</span>` +
         `<span class="tree-label">${escapeHtml(f.name)}</span>` +
         `</button>`
     );
