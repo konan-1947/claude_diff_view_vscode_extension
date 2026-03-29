@@ -10,6 +10,13 @@ import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
 
 export function activate(context: vscode.ExtensionContext): void {
+  // CodeLens buttons (Accept/Revert hunk) are suppressed in diff editors by default.
+  // Enable at workspace scope so they appear in the right (modified) pane.
+  const editorConfig = vscode.workspace.getConfiguration();
+  if (editorConfig.get<boolean>('diffEditor.codeLens') !== true) {
+    void editorConfig.update('diffEditor.codeLens', true, vscode.ConfigurationTarget.Workspace);
+  }
+
   const diffManager       = new DiffManager(context);
   const sessionPanel      = new SessionPanelProvider(diffManager, context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);

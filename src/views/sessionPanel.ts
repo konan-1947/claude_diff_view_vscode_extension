@@ -126,20 +126,31 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
 
     const hookDet = detectOurClaudeHooks(this.context.extensionUri.fsPath);
     const hooksOk = hooksFullyActive(hookDet);
+
+    let extVersion = '';
+    try {
+      const pkgJson = JSON.parse(
+        fs.readFileSync(path.join(this.context.extensionUri.fsPath, 'package.json'), 'utf8')
+      ) as { version?: string };
+      extVersion = pkgJson.version ?? '';
+    } catch {
+      // ignore
+    }
+    const versionTag = extVersion
+      ? `<span class="hook-version">v${escapeHtml(extVersion)}</span>`
+      : '';
+
     let hookStatusHtml = '';
     if (hooksOk) {
-      hookStatusHtml =
-        '<div class="hook-status hook-ok">CLI hooks: active for this extension</div>';
+      hookStatusHtml = `<div class="hook-status hook-ok"><span class="hook-status-text">CLI hooks: active</span>${versionTag}</div>`;
     } else if (!hookDet.settingsFound) {
-      hookStatusHtml =
-        '<div class="hook-status hook-no">CLI hooks: <strong>not installed</strong> (no Claude settings file yet)</div>';
+      hookStatusHtml = `<div class="hook-status hook-no"><span class="hook-status-text">CLI hooks: <strong>not installed</strong> (no Claude settings file yet)</span>${versionTag}</div>`;
     } else if (hookDet.preHookFound || hookDet.postHookFound) {
-      hookStatusHtml = `<div class="hook-status hook-warn">CLI hooks: <strong>incomplete</strong> — pre: ${
+      hookStatusHtml = `<div class="hook-status hook-warn"><span class="hook-status-text">CLI hooks: <strong>incomplete</strong> — pre: ${
         hookDet.preHookFound ? 'OK' : 'missing'
-      }, post: ${hookDet.postHookFound ? 'OK' : 'missing'}</div>`;
+      }, post: ${hookDet.postHookFound ? 'OK' : 'missing'}</span>${versionTag}</div>`;
     } else {
-      hookStatusHtml =
-        '<div class="hook-status hook-no">CLI hooks: <strong>not installed</strong> for this extension</div>';
+      hookStatusHtml = `<div class="hook-status hook-no"><span class="hook-status-text">CLI hooks: <strong>not installed</strong> for this extension</span>${versionTag}</div>`;
     }
 
     const installLabel = hooksOk ? 'Reinstall / update CLI hooks' : 'Install CLI hooks';
@@ -348,6 +359,22 @@ ${codiconLink}
     padding: 8px 10px;
     border-radius: 6px;
     border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.25));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .hook-status-text { flex: 1; min-width: 0; }
+  .hook-version {
+    flex-shrink: 0;
+    font-size: 10px;
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+    border-opacity: 0.3;
   }
   .hook-ok {
     color: var(--vscode-testing-iconPassed, #73c991);
