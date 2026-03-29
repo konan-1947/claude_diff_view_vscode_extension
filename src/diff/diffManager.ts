@@ -228,7 +228,6 @@ export class DiffManager {
       await this.openDiff(nextTarget);
     }
 
-    vscode.window.showInformationMessage(`Accepted: ${path.basename(absPath)}`);
     this._onDidChangeDiffs.fire();
   }
 
@@ -239,13 +238,12 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (snapshot === undefined) {
-      vscode.window.showWarningMessage(`No snapshot found for ${path.basename(absPath)}`);
+
       return;
     }
 
     await this.renderer.revertAll(absPath);
     await this.cleanup(absPath);
-    vscode.window.showInformationMessage(`Reverted: ${path.basename(absPath)}`);
     this._onDidChangeDiffs.fire();
   }
 

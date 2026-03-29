@@ -10,16 +10,43 @@ export interface NavInfo {
   canNext: boolean;
 }
 
+/** Map extension → material-icon-theme SVG filename */
+const EXT_ICON: Record<string, string> = {
+  ts: 'typescript', tsx: 'react_ts',
+  js: 'javascript', jsx: 'react', mjs: 'javascript', cjs: 'javascript',
+  css: 'css', scss: 'sass', sass: 'sass', less: 'less',
+  html: 'html', htm: 'html',
+  json: 'json', jsonc: 'json',
+  md: 'markdown', mdx: 'markdown',
+  py: 'python', rs: 'rust', go: 'go',
+  java: 'java', kt: 'kotlin', kts: 'kotlin',
+  rb: 'ruby', php: 'php',
+  c: 'c', cc: 'cpp', cpp: 'cpp', h: 'h', hpp: 'hpp', cs: 'csharp',
+  sh: 'shell', bash: 'shell',
+  yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml',
+  svg: 'svg', vue: 'vue', svelte: 'svelte',
+  sql: 'database', graphql: 'graphql',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image',
+};
+
 export class NavBarPanel implements vscode.WebviewViewProvider {
   public static readonly viewType = 'claude-diff-view.navBar';
 
   private view?: vscode.WebviewView;
   private navInfo?: NavInfo;
   private activeFilePath?: string;
+  private iconBase = '';
+
+  constructor(private readonly extensionUri: vscode.Uri) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
-    webviewView.webview.options = { enableScripts: true };
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this.extensionUri],
+    };
+    const iconsDir = vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'material-icon-theme', 'icons');
+    this.iconBase = webviewView.webview.asWebviewUri(iconsDir).toString() + '/';
     webviewView.webview.onDidReceiveMessage((msg: { command: string }) => {
       switch (msg.command) {
         case 'prev':   vscode.commands.executeCommand('claude-diff-view.prevFile'); break;
@@ -47,6 +74,13 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     this.view.webview.html = this.buildHtml();
   }
 
+  private fileImg(name: string, size = 14): string {
+    const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
+    const iconName = EXT_ICON[ext] ?? 'file';
+    const src = escapeHtml(`${this.iconBase}${iconName}.svg`);
+    return `<img src="${src}" width="${size}" height="${size}" aria-hidden="true" style="flex-shrink:0;vertical-align:middle;margin-right:5px;">`;
+  }
+
   private buildHtml(): string {
     const info = this.navInfo;
     const fileName = this.activeFilePath ? path.basename(this.activeFilePath) : undefined;
@@ -62,21 +96,23 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
           <button class="btn btn-accept-all" onclick="send('acceptAllChanges')">Accept All Changes</button>
         </div>
         <div class="line line-file">
-          <div class="file-label">${fileName ? escapeHtml(fileName) : 'Open a pending diff file to accept/reject'}</div>
+          <div class="file-label">${fileName
+            ? `${this.fileImg(fileName, 15)}<span>${escapeHtml(fileName)}</span>`
+            : 'Open a pending diff file to accept/reject'}</div>
           <span class="counter">${info.currentIdx} / ${info.total} files</span>
         </div>
         ${
           info.total === 1
             ? `<div class="line line-nav">
           <button class="btn btn-nav" onclick="send('next')">
-            ${escapeHtml(info.nextName || info.prevName || 'Open pending diff')}
+            ${this.fileImg(info.nextName || info.prevName || '')}${escapeHtml(info.nextName || info.prevName || 'Open pending diff')}
           </button>
         </div>`
             : `<div class="line line-nav line-prev">
-          <button class="btn btn-nav btn-prev" onclick="send('prev')" ${info.canPrev ? '' : 'disabled'}>${info.canPrev ? `&#8249; ${escapeHtml(info.prevName)}` : '&#8249; Start'}</button>
+          <button class="btn btn-nav btn-prev" onclick="send('prev')" ${info.canPrev ? '' : 'disabled'}>${info.canPrev ? `&#8249; ${this.fileImg(info.prevName)}${escapeHtml(info.prevName)}` : '&#8249; Start'}</button>
         </div>
         <div class="line line-nav line-next">
-          <button class="btn btn-nav btn-next" onclick="send('next')" ${info.canNext ? '' : 'disabled'}>${info.canNext ? `${escapeHtml(info.nextName)} &#8250;` : 'End &#8250;'}</button>
+          <button class="btn btn-nav btn-next" onclick="send('next')" ${info.canNext ? '' : 'disabled'}>${info.canNext ? `${this.fileImg(info.nextName)}${escapeHtml(info.nextName)} &#8250;` : 'End &#8250;'}</button>
         </div>`
         }
       </div>` : `<div class="empty">No pending diffs</div>`;

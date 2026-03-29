@@ -25,7 +25,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   diffManager.renderer.setNavigationManager(navigationManager);
 
-  const navBarPanel = new NavBarPanel();
+  const navBarPanel = new NavBarPanel(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(NavBarPanel.viewType, navBarPanel)
   );
