@@ -6,5 +6,6 @@ ts_error.txt
 *.vsix
 node_modules/**
 !node_modules/@vscode/codicons/dist/**
+!node_modules/material-icon-theme/icons/**
 **/*.ts
 **/*.map

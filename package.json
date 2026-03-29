@@ -2,8 +2,8 @@
   "name": "claude-diff-view",
   "displayName": "Claude Diff View",
   "description": "Run Claude Code sessions with inline diff review (accept/revert per hunk)",
-  "version": "0.2.3",
-  "publisher": "local-dev",
+  "version": "1.0.0",
+  "publisher": "konan-1947",
   "license": "MIT",
   "repository": {
     "type": "git",
