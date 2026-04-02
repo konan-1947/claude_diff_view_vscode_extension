@@ -107,13 +107,13 @@ export class DecorationManager {
       acceptGutterRanges.push({
         range: gutterRange,
         hoverMessage: new vscode.MarkdownString(
-          `**Accept hunk** (ID: \`${hunk.id}\`)\n\nCh\u1ea1y l\u1ec7nh \`Claude: Accept Hunk\``
+          `**Accept hunk** (ID: \`${hunk.id}\`)\n\nRun command \`AI CLI Diff: Accept Hunk\``
         ),
       });
       revertGutterRanges.push({
         range: gutterRange,
         hoverMessage: new vscode.MarkdownString(
-          `**Revert hunk** (ID: \`${hunk.id}\`)\n\nCh\u1ea1y l\u1ec7nh \`Claude: Revert Hunk\``
+          `**Revert hunk** (ID: \`${hunk.id}\`)\n\nRun command \`AI CLI Diff: Revert Hunk\``
         ),
       });
     }

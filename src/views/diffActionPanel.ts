@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 
 export class DiffActionPanel implements vscode.WebviewViewProvider {
-  public static readonly viewType = 'claude-diff-view.actions';
+  public static readonly viewType = 'ai-cli-diff-view.actions';
 
   private view?: vscode.WebviewView;
   private currentFilePath: string | undefined;
@@ -23,7 +23,9 @@ export class DiffActionPanel implements vscode.WebviewViewProvider {
     webviewView.webview.options = { enableScripts: true };
 
     webviewView.webview.onDidReceiveMessage(async (msg: { command: string }) => {
-      if (!this.currentFilePath) { return; }
+      if (!this.currentFilePath) {
+        return;
+      }
       if (msg.command === 'accept') {
         await this.onAccept(this.currentFilePath);
       } else if (msg.command === 'reject') {
@@ -34,11 +36,7 @@ export class DiffActionPanel implements vscode.WebviewViewProvider {
     this.render();
   }
 
-  setActiveFile(
-    filePath: string | undefined,
-    index = 0,
-    total = 0
-  ): void {
+  setActiveFile(filePath: string | undefined, index = 0, total = 0): void {
     this.currentFilePath = filePath;
     this.fileIndex = index;
     this.fileTotal = total;
@@ -46,14 +44,14 @@ export class DiffActionPanel implements vscode.WebviewViewProvider {
   }
 
   private render(): void {
-    if (!this.view) { return; }
+    if (!this.view) {
+      return;
+    }
     this.view.webview.html = this.buildHtml();
   }
 
   private buildHtml(): string {
-    const basename = this.currentFilePath
-      ? path.basename(this.currentFilePath)
-      : null;
+    const basename = this.currentFilePath ? path.basename(this.currentFilePath) : null;
 
     const counter =
       this.fileTotal > 0
@@ -62,17 +60,17 @@ export class DiffActionPanel implements vscode.WebviewViewProvider {
 
     const content = basename
       ? `
-        <span class="filename">Claude ✦ ${escapeHtml(basename)}</span>
+        <span class="filename">AI CLI Diff | ${escapeHtml(basename)}</span>
         <div class="actions">
           <button class="btn accept" onclick="send('accept')">
-            ✓ Accept file <kbd>⌘↵</kbd>
+            Accept file <kbd>Ctrl/Cmd+Enter</kbd>
           </button>
           <button class="btn reject" onclick="send('reject')">
-            ✗ Reject file <kbd>⌘⌫</kbd>
+            Reject file <kbd>Ctrl/Cmd+Backspace</kbd>
           </button>
           ${counter}
         </div>`
-      : `<span class="idle">No active Claude diff — open a diff tab to review</span>`;
+      : `<span class="idle">No active AI CLI diff - open a diff tab to review</span>`;
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -166,7 +164,7 @@ export class DiffActionPanel implements vscode.WebviewViewProvider {
     const vscode = acquireVsCodeApi();
     function send(cmd) { vscode.postMessage({ command: cmd }); }
     document.addEventListener('keydown', e => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter')  { e.preventDefault(); send('accept'); }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); send('accept'); }
       if ((e.metaKey || e.ctrlKey) && e.key === 'Backspace') { e.preventDefault(); send('reject'); }
     });
   </script>

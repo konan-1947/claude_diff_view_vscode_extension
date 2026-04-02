@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude CLI PreToolUse hook
+// AI CLI diff view PreToolUse hook
 // Called BEFORE Write / Edit / MultiEdit executes.
 // Snapshots the file so the VSCode extension can show a diff later.
 
@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const SNAPSHOT_DIR = path.join(os.tmpdir(), 'claude-diff-snapshots');
+const SNAPSHOT_DIR = path.join(os.tmpdir(), 'ai-cli-diff-snapshots');
 
 let raw = '';
 process.stdin.setEncoding('utf8');
@@ -19,7 +19,7 @@ process.stdin.on('end', () => {
     const filePath = toolInput && toolInput.file_path;
     
     // Debug log for Claude integration
-    const logPath = path.join(os.tmpdir(), "claude-diff-hook-debug.log");
+    const logPath = path.join(os.tmpdir(), "ai-cli-diff-hook-debug.log");
     fs.appendFileSync(logPath, `[PRE] Raw event: ${raw}\n`, 'utf8');
 
     if (!filePath) { process.exit(0); return; }

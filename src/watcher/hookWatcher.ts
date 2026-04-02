@@ -15,7 +15,7 @@ export class HookWatcher {
   private readonly signalDir: string;
 
   constructor(private readonly diffManager: DiffManager) {
-    this.signalDir = path.join(os.tmpdir(), 'claude-diff-signals');
+    this.signalDir = path.join(os.tmpdir(), 'ai-cli-diff-signals');
   }
 
   start(): void {
@@ -35,7 +35,7 @@ export class HookWatcher {
     });
 
     this.watcher.on('error', (err) => {
-      console.error('[claude-diff-view] hookWatcher error:', err);
+      console.error('[ai-cli-diff-view] hookWatcher error:', err);
     });
   }
 
@@ -77,10 +77,10 @@ export class HookWatcher {
       this.diffManager.loadSnapshot(filePath, snapshotContent);
 
       this.diffManager.openDiff(filePath).catch((err: unknown) => {
-        console.error('[claude-diff-view] hookWatcher openDiff failed:', err);
+        console.error('[ai-cli-diff-view] hookWatcher openDiff failed:', err);
       });
     } catch (err: unknown) {
-      console.error('[claude-diff-view] processSignal failed:', err);
+      console.error('[ai-cli-diff-view] processSignal failed:', err);
     }
   }
 

@@ -1,18 +1,16 @@
 /**
  * runnerFactory.ts
  *
- * Kiểm tra sự tồn tại của claude CLI và trả về IAiRunner phù hợp.
+ * Detects supported AI CLI launchers and returns the matching runner.
  */
 
 import * as cp from 'child_process';
-import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
 import { IAiRunner } from './aiRunner';
 import { ClaudeRunner } from './claudeRunner';
 
 type ToolName = 'claude';
 
-/** Kiểm tra xem một CLI executable có tồn tại trên PATH không */
 function isToolAvailable(tool: string): boolean {
   const lookupCmd = process.platform === 'win32' ? 'where' : 'which';
   try {
@@ -26,17 +24,14 @@ function isToolAvailable(tool: string): boolean {
   }
 }
 
-/** Detect các tool có sẵn trên máy */
 function detectAvailableTools(): ToolName[] {
   const available: ToolName[] = [];
-  if (isToolAvailable('claude')) { available.push('claude'); }
+  if (isToolAvailable('claude')) {
+    available.push('claude');
+  }
   return available;
 }
 
-/**
- * Tạo IAiRunner phù hợp dựa trên tool có sẵn.
- * Kết quả được cache trong session (truyền vào qua selectedTool).
- */
 export async function createRunner(
   diffManager: DiffManager,
   preferredTool?: ToolName
@@ -49,11 +44,11 @@ export async function createRunner(
   }
 
   const available = detectAvailableTools();
-
   if (available.length === 0) {
     throw new Error(
-      'Không tìm thấy AI CLI nào trên PATH.\n' +
-      'Cần cài đặt:\n' +
+      'No supported AI CLI launcher found on PATH.\n' +
+      'Best supported review workflows: Claude, Codex, and Qwen.\n' +
+      'Built-in session launch currently requires Claude Code:\n' +
       '  • Claude Code: https://claude.ai/code'
     );
   }
@@ -64,6 +59,8 @@ export async function createRunner(
 
 function buildRunner(tool: ToolName, diffManager: DiffManager): IAiRunner {
   switch (tool) {
-    case 'claude': default: return new ClaudeRunner(diffManager);
+    case 'claude':
+    default:
+      return new ClaudeRunner(diffManager);
   }
 }

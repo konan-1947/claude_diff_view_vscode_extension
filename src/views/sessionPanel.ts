@@ -7,7 +7,7 @@ import { detectOurClaudeHooks, hooksFullyActive } from '../claude/hookInstallDet
 type SessionState = 'idle' | 'running' | 'error';
 
 export class SessionPanelProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = 'claude-diff-view.session';
+  public static readonly viewType = 'ai-cli-diff-view.session';
 
   private view?: vscode.WebviewView;
   private state: SessionState = 'idle';
@@ -64,9 +64,9 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     });
     webviewView.webview.onDidReceiveMessage((msg: { command?: string; path?: string }) => {
       if (msg.command === 'openFile' && msg.path && typeof msg.path === 'string') {
-        void vscode.commands.executeCommand('claude-diff-view.openPendingFile', msg.path);
+        void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
       } else if (msg.command === 'installHooks') {
-        void vscode.commands.executeCommand('claude-diff-view.installHooks');
+        void vscode.commands.executeCommand('ai-cli-diff-view.installHooks');
       }
     });
     this.render();
@@ -395,7 +395,7 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     <button type="button" class="btn-install" id="btn-install" title="Write hooks to ~/.claude/settings.json">
       ${escapeHtml(installLabel)}
     </button>
-    <p class="footer-note">Enables inline diff when using Claude in an external terminal.</p>
+    <p class="footer-note">Best with Claude, Codex, and Qwen. Hook install currently targets Claude.</p>
     ${hookStatusHtml}
   </div>
   <script>

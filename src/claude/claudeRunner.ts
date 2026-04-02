@@ -210,7 +210,7 @@ export class ClaudeRunner implements IAiRunner {
       event = JSON.parse(line) as ClaudeEvent;
     } catch {
       console.warn(
-        '[claude-diff-view] Skipping non-JSON line:',
+        '[ai-cli-diff-view] Skipping non-JSON line:',
         line.slice(0, 120)
       );
       return;
@@ -236,7 +236,7 @@ export class ClaudeRunner implements IAiRunner {
         const basename = filePath.split(/[\\/]/).pop() ?? filePath;
         onProgress?.(`${toolUse.name}: ${basename}`);
         this.diffManager.snapshotBefore(filePath).catch((err: unknown) => {
-          console.error('[claude-diff-view] snapshotBefore failed:', err);
+          console.error('[ai-cli-diff-view] snapshotBefore failed:', err);
         });
       }
       return;
@@ -250,7 +250,7 @@ export class ClaudeRunner implements IAiRunner {
         const basename = filePath.split(/[\\/]/).pop() ?? filePath;
         onProgress?.(`Opening diff: ${basename}`);
         this.diffManager.openDiff(filePath).catch((err: unknown) => {
-          console.error('[claude-diff-view] openDiff failed:', err);
+          console.error('[ai-cli-diff-view] openDiff failed:', err);
         });
       }
       return;
@@ -258,7 +258,7 @@ export class ClaudeRunner implements IAiRunner {
 
     if (event.type === 'result' && (event as ResultEvent).is_error) {
       console.error(
-        '[claude-diff-view] Session error:',
+        '[ai-cli-diff-view] Session error:',
         (event as ResultEvent).result ?? '(no details)'
       );
     }

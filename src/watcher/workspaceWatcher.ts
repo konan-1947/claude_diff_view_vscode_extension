@@ -92,7 +92,7 @@ export class WorkspaceWatcher {
     try {
       this.snapshots.buildInitialSnapshots(folderPath);
     } catch (err) {
-      console.error('[claude-diff-view] workspaceWatcher buildInitialSnapshots error:', err);
+      console.error('[ai-cli-diff-view] workspaceWatcher buildInitialSnapshots error:', err);
     }
   }
 
@@ -163,7 +163,7 @@ export class WorkspaceWatcher {
   private triggerDiff(filePath: string, originalContent: string, newContent: string): void {
     this.diffManager.loadSnapshot(filePath, originalContent);
     this.diffManager.openDiff(filePath).catch((err: unknown) => {
-      console.error('[claude-diff-view] workspaceWatcher openDiff failed:', err);
+      console.error('[ai-cli-diff-view] workspaceWatcher openDiff failed:', err);
     });
   }
 
