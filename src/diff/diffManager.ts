@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import { InlineDiffRenderer } from './inlineDiffRenderer';
 import { calculateHunks } from './hunkCalculator';
 
-const STATE_KEY = 'claude-diff.snapshots';
+const STATE_KEY = 'ai-cli-diff.snapshots';
 
 /** Normalize về cùng định dạng mà vscode.Uri.fsPath sử dụng. */
 function normalizePath(filePath: string): string {
@@ -37,7 +37,7 @@ export class DiffManager {
     this.restoreState();
 
     context.subscriptions.push(
-      vscode.workspace.registerTextDocumentContentProvider('claude-diff', {
+      vscode.workspace.registerTextDocumentContentProvider('ai-cli-diff', {
         onDidChange: this.contentProviderEventEmitter.event,
         provideTextDocumentContent: (uri: vscode.Uri) => {
           // Xóa query (timestamp) đi để trả về đường dẫn file thật chính xác
@@ -129,9 +129,9 @@ export class DiffManager {
     // Chuyển sang dùng UI chuẩn của VS Code: Diff Editor. 
     // Dùng chung 1 query ID cho suốt quá trình Diff để khỏi bị mở đúp thành 2 tab
     const queryId = this.snapshotQueries.get(absPath) || Date.now().toString();
-    const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: queryId });
+    const originalUri = vscode.Uri.file(absPath).with({ scheme: 'ai-cli-diff', query: queryId });
     const modifiedUri = vscode.Uri.file(absPath);
-    const title = `Claude Diff: ${path.basename(absPath)}`;
+    const title = `AI CLI Diff: ${path.basename(absPath)}`;
     
     await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, title, { preview: false });
 
@@ -173,7 +173,7 @@ export class DiffManager {
 
       // Thông báo cho VS Code nạp lại nội dung bên trái (Original) của màn hình Diff
       const queryId = this.snapshotQueries.get(absPath) || '';
-      const originalUri = vscode.Uri.file(absPath).with({ scheme: 'claude-diff', query: queryId });
+      const originalUri = vscode.Uri.file(absPath).with({ scheme: 'ai-cli-diff', query: queryId });
       this.contentProviderEventEmitter.fire(originalUri);
 
       // Cập nhật lại Inline Renderer và tính lại CodeLens

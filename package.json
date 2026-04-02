@@ -1,8 +1,8 @@
 {
-  "name": "claude-diff-view",
-  "displayName": "Claude Diff View",
-  "description": "Run Claude Code sessions with inline diff review (accept/revert per hunk)",
-  "version": "1.0.1",
+  "name": "ai-cli-diff-view",
+  "displayName": "AI CLI diff view",
+  "description": "Inline diff review for AI CLI edits, best with Claude, Codex, and Qwen",
+  "version": "1.0.3",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
@@ -28,108 +28,108 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "claude-diff-view",
-          "title": "Claude Diff View",
+          "id": "ai-cli-diff-view",
+          "title": "AI CLI diff view",
           "icon": "media/claude-icon.svg"
         }
       ]
     },
     "views": {
-      "claude-diff-view": [
+      "ai-cli-diff-view": [
         {
-          "id": "claude-diff-view.session",
+          "id": "ai-cli-diff-view.session",
           "name": "Session",
           "type": "webview"
         }
       ],
       "explorer": [
         {
-          "id": "claude-diff-view.navBar",
-          "name": "Claude Diff",
+          "id": "ai-cli-diff-view.navBar",
+          "name": "AI CLI Diff",
           "type": "webview"
         }
       ]
     },
     "commands": [
       {
-        "command": "claude-diff-view.startSession",
-        "title": "Claude: Start Session"
+        "command": "ai-cli-diff-view.startSession",
+        "title": "AI CLI Diff: Start Claude Session"
       },
       {
-        "command": "claude-diff-view.acceptAllHunks",
-        "title": "Claude: Accept All Changes"
+        "command": "ai-cli-diff-view.acceptAllHunks",
+        "title": "AI CLI Diff: Accept All Changes"
       },
       {
-        "command": "claude-diff-view.acceptAllChanges",
-        "title": "Claude: Accept All Changes (All Files)"
+        "command": "ai-cli-diff-view.acceptAllChanges",
+        "title": "AI CLI Diff: Accept All Changes (All Files)"
       },
       {
-        "command": "claude-diff-view.revertAllHunks",
-        "title": "Claude: Revert All Changes"
+        "command": "ai-cli-diff-view.revertAllHunks",
+        "title": "AI CLI Diff: Revert All Changes"
       },
       {
-        "command": "claude-diff-view.acceptHunk",
-        "title": "Claude: Accept Hunk"
+        "command": "ai-cli-diff-view.acceptHunk",
+        "title": "AI CLI Diff: Accept Hunk"
       },
       {
-        "command": "claude-diff-view.revertHunk",
-        "title": "Claude: Revert Hunk"
+        "command": "ai-cli-diff-view.revertHunk",
+        "title": "AI CLI Diff: Revert Hunk"
       },
       {
-        "command": "claude-diff-view.installHooks",
-        "title": "Claude: Install CLI Hooks (enable diff for terminal claude)",
+        "command": "ai-cli-diff-view.installHooks",
+        "title": "AI CLI Diff: Install Claude CLI Hooks",
         "icon": "$(plug)"
       },
       {
-        "command": "claude-diff-view.openPendingFile",
-        "title": "Claude: Open Pending File"
+        "command": "ai-cli-diff-view.openPendingFile",
+        "title": "AI CLI Diff: Open Pending File"
       },
       {
-        "command": "claude-diff-view.nextFile",
-        "title": "Claude: Next Edited File"
+        "command": "ai-cli-diff-view.nextFile",
+        "title": "AI CLI Diff: Next Edited File"
       },
       {
-        "command": "claude-diff-view.prevFile",
-        "title": "Claude: Previous Edited File"
+        "command": "ai-cli-diff-view.prevFile",
+        "title": "AI CLI Diff: Previous Edited File"
       }
     ],
     "keybindings": [
       {
-        "command": "claude-diff-view.startSession",
+        "command": "ai-cli-diff-view.startSession",
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a"
       },
       {
-        "command": "claude-diff-view.acceptAllHunks",
+        "command": "ai-cli-diff-view.acceptAllHunks",
         "key": "ctrl+shift+y",
         "mac": "cmd+shift+y"
       },
       {
-        "command": "claude-diff-view.revertAllHunks",
+        "command": "ai-cli-diff-view.revertAllHunks",
         "key": "ctrl+shift+z",
         "mac": "cmd+shift+z"
       },
       {
-        "command": "claude-diff-view.prevFile",
+        "command": "ai-cli-diff-view.prevFile",
         "key": "alt+h",
-        "when": "claude-diff-view.hasPendingDiff"
+        "when": "ai-cli-diff-view.hasPendingDiff"
       },
       {
-        "command": "claude-diff-view.nextFile",
+        "command": "ai-cli-diff-view.nextFile",
         "key": "alt+l",
-        "when": "claude-diff-view.hasPendingDiff"
+        "when": "ai-cli-diff-view.hasPendingDiff"
       }
     ],
     "menus": {
       "editor/title": [
         {
-          "command": "claude-diff-view.acceptAllHunks",
-          "when": "claude-diff-view.hasPendingDiff",
+          "command": "ai-cli-diff-view.acceptAllHunks",
+          "when": "ai-cli-diff-view.hasPendingDiff",
           "group": "navigation@1"
         },
         {
-          "command": "claude-diff-view.revertAllHunks",
-          "when": "claude-diff-view.hasPendingDiff",
+          "command": "ai-cli-diff-view.revertAllHunks",
+          "when": "ai-cli-diff-view.hasPendingDiff",
           "group": "navigation@2"
         }
       ]

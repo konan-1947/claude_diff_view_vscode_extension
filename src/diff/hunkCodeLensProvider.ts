@@ -80,7 +80,7 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
       const acceptCmd: vscode.Command = {
         title: `$(check) Accept ${hunkLabel}`,
         tooltip: 'Chấp nhận các thay đổi này',
-        command: 'claude-diff-view.acceptHunk',
+        command: 'ai-cli-diff-view.acceptHunk',
         arguments: [filePath, hunk.id],
       };
       lenses.push(new vscode.CodeLens(range, acceptCmd));
@@ -89,7 +89,7 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
       const revertCmd: vscode.Command = {
         title: `$(discard) Revert ${hunkLabel}`,
         tooltip: 'Hủy bỏ thay đổi, quay về gốc',
-        command: 'claude-diff-view.revertHunk',
+        command: 'ai-cli-diff-view.revertHunk',
         arguments: [filePath, hunk.id],
       };
       lenses.push(new vscode.CodeLens(range, revertCmd));

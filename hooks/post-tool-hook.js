@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude CLI PostToolUse hook
+// AI CLI diff view PostToolUse hook
 // Called AFTER Write / Edit / MultiEdit completes.
 // Writes a signal file for the VSCode extension to pick up and open a diff.
 
@@ -7,8 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const SNAPSHOT_DIR = path.join(os.tmpdir(), 'claude-diff-snapshots');
-const SIGNAL_DIR   = path.join(os.tmpdir(), 'claude-diff-signals');
+const SNAPSHOT_DIR = path.join(os.tmpdir(), 'ai-cli-diff-snapshots');
+const SIGNAL_DIR   = path.join(os.tmpdir(), 'ai-cli-diff-signals');
 
 let raw = '';
 process.stdin.setEncoding('utf8');
@@ -20,7 +20,7 @@ process.stdin.on('end', () => {
     const filePath = toolInput && toolInput.file_path;
     
     // Debug log for Claude integration
-    const logPath = path.join(os.tmpdir(), "claude-diff-hook-debug.log");
+    const logPath = path.join(os.tmpdir(), "ai-cli-diff-hook-debug.log");
     fs.appendFileSync(logPath, `[POST] Raw event: ${raw}\n`, 'utf8');
 
     if (!filePath) { process.exit(0); return; }

@@ -1,13 +1,22 @@
-# Claude Diff View — VS Code Extension
+# AI CLI diff view
 
-Extension integrates **Claude CLI / Claude Code** into VS Code, displaying all the changes made by AI in the form of inline diffs in the editor.
+VS Code extension for reviewing AI-generated file edits as inline diffs inside the editor.
 
----
+Best supported workflows: **Claude**, **Codex**, and **Qwen**.
 
-## Usage: 
-1. Install CLI hooks (click "Install CLI hooks" in sidebar)
-2. Run Claude Code in terminal
-3. Check your diff-view files inside IDE
+Current integration details:
+- Built-in session launch and hook install currently target **Claude Code**.
+- Workspace file watching still lets you review external edits coming from other AI CLIs.
+
+## Usage
+1. If you use Claude Code, click `Install Claude CLI Hooks` in the sidebar.
+2. Run your AI CLI workflow in the terminal.
+3. Review pending diffs directly inside VS Code.
+
+## Positioning
+- `Claude`: strongest built-in integration today.
+- `Codex`: works well through external file-change monitoring.
+- `Qwen`: works well through external file-change monitoring.
 
 ---
 
