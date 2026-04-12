@@ -21,6 +21,18 @@ const EXCLUDED_SEGMENTS = new Set([
   'artifacts',
   '.vs',
   'packages', // legacy NuGet solution folder
+  // Python
+  'venv',
+  '.venv',
+  'env',
+  '.env',
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  'site-packages',
+  'dist-info',
+  'egg-info',
 ]);
 
 export function isExcludedPathSegment(absPath: string): boolean {
