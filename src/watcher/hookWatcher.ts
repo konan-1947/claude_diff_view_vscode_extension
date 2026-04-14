@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
 
 interface SignalFile {
@@ -16,6 +17,18 @@ export class HookWatcher {
 
   constructor(private readonly diffManager: DiffManager) {
     this.signalDir = path.join(os.tmpdir(), 'ai-cli-diff-signals');
+  }
+
+  /**
+   * Kiểm tra xem filePath có thuộc workspace đang mở hay không.
+   */
+  private belongsToCurrentWorkspace(filePath: string): boolean {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+      return false;
+    }
+    const resolved = path.resolve(filePath);
+    return folders.some(folder => resolved.startsWith(folder.uri.fsPath));
   }
 
   start(): void {
@@ -57,14 +70,21 @@ export class HookWatcher {
       }
 
       const raw = fs.readFileSync(signalPath, 'utf8');
-      fs.unlinkSync(signalPath); // consume immediately to avoid double-processing
-
       const signal: SignalFile = JSON.parse(raw);
       const { filePath, snapshotPath } = signal;
 
       if (!filePath || !snapshotPath) {
+        fs.unlinkSync(signalPath);
         return;
       }
+
+      // Bỏ qua signal nếu file không thuộc workspace hiện tại.
+      // Không xóa signal file — để VS Code window đúng xử lý.
+      if (!this.belongsToCurrentWorkspace(filePath)) {
+        return;
+      }
+
+      fs.unlinkSync(signalPath); // consume sau khi xác nhận thuộc workspace này
 
       // Load the snapshot (written by pre-tool-hook.js) into DiffManager
       let snapshotContent = '';
