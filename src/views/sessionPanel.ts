@@ -78,7 +78,7 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     }
     const iconsDir = vscode.Uri.joinPath(
       this.context.extensionUri,
-      'node_modules', 'material-icon-theme', 'icons'
+      'media', 'file-icons'
     );
     const iconBase = this.view.webview.asWebviewUri(iconsDir).toString() + '/';
     this.view.webview.html = this.buildHtml(iconBase);
@@ -549,7 +549,7 @@ const EXT_ICON: Record<string, string> = {
   php: 'php',
   c: 'c', cc: 'cpp', cpp: 'cpp', h: 'h', hpp: 'hpp',
   cs: 'csharp',
-  sh: 'shell', bash: 'shell',
+  sh: 'console', bash: 'console',
   yaml: 'yaml', yml: 'yaml',
   toml: 'toml',
   xml: 'xml',
@@ -559,7 +559,7 @@ const EXT_ICON: Record<string, string> = {
   prisma: 'prisma',
   graphql: 'graphql',
   dockerfile: 'docker',
-  env: 'dotenv',
+  env: 'document',
   gitignore: 'git',
   lock: 'lock',
   sql: 'database',

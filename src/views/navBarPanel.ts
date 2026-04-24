@@ -22,7 +22,7 @@ const EXT_ICON: Record<string, string> = {
   java: 'java', kt: 'kotlin', kts: 'kotlin',
   rb: 'ruby', php: 'php',
   c: 'c', cc: 'cpp', cpp: 'cpp', h: 'h', hpp: 'hpp', cs: 'csharp',
-  sh: 'shell', bash: 'shell',
+  sh: 'console', bash: 'console',
   yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml',
   svg: 'svg', vue: 'vue', svelte: 'svelte',
   sql: 'database', graphql: 'graphql',
@@ -45,7 +45,7 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [this.extensionUri],
     };
-    const iconsDir = vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'material-icon-theme', 'icons');
+    const iconsDir = vscode.Uri.joinPath(this.extensionUri, 'media', 'file-icons');
     this.iconBase = webviewView.webview.asWebviewUri(iconsDir).toString() + '/';
     webviewView.webview.onDidReceiveMessage((msg: { command: string }) => {
       switch (msg.command) {
@@ -84,6 +84,10 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   private buildHtml(): string {
     const info = this.navInfo;
     const fileName = this.activeFilePath ? path.basename(this.activeFilePath) : undefined;
+    const backgroundUri = this.view!.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'media', 'empty-diff-background.png'),
+    ).toString();
+    const bodyClass = info ? 'has-diff' : 'no-diff';
 
     const controls = info ? `
       <div class="controls">
@@ -128,6 +132,8 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     display: flex;
     flex-direction: column;
     justify-content: center;
+    position: relative;
+    overflow: hidden;
     font-family: var(--vscode-font-family);
     font-size: 12px;
     color: var(--vscode-foreground);
@@ -136,10 +142,37 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     padding: 10px 12px;
   }
 
+  body::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url('${backgroundUri}');
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  body.no-diff::before {
+    inset: 8px 0 32px;
+    opacity: 1;
+  }
+
+  body.no-diff {
+    justify-content: flex-end;
+  }
+
+  body.has-diff::before {
+    opacity: 0.3;
+  }
+
   .controls {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    position: relative;
+    z-index: 1;
   }
 
   .line {
@@ -193,11 +226,12 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   .line-all-changes .btn { flex: 1 1 100%; }
 
   .btn-accept {
-    color: var(--vscode-gitDecoration-addedResourceForeground, #4caf6e);
-    border-color: var(--vscode-gitDecoration-addedResourceForeground, rgba(76,175,80,0.4));
+    color: var(--vscode-foreground);
+    background: var(--vscode-button-secondaryBackground, rgba(128,128,128,0.12));
+    border-color: var(--vscode-button-secondaryBorder, rgba(128,128,128,0.35));
   }
   .btn-accept:hover {
-    background: rgba(76, 175, 80, 0.08);
+    background: var(--vscode-button-secondaryHoverBackground, rgba(128,128,128,0.18));
   }
 
   .btn-accept-all {
@@ -239,13 +273,16 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
 
   .empty {
     text-align: center;
-    opacity: 0.35;
+    opacity: 0.85;
     font-style: italic;
-    font-size: 11px;
+    font-size: 12px;
+    font-weight: 600;
+    position: relative;
+    z-index: 1;
   }
 </style>
 </head>
-<body>
+<body class="${bodyClass}">
   ${controls}
   <script>
     const vscode = acquireVsCodeApi();
