@@ -133,10 +133,10 @@ export class DiffManager {
     const modifiedUri = vscode.Uri.file(absPath);
     const title = `AI CLI Diff: ${path.basename(absPath)}`;
     
-    await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, title, { preview: false });
-
     // Vẫn cần gọi renderer để tính toán danh sách hunks (giúp render CodeLens)
     this.renderer.show(absPath, snapshot, modifiedContent);
+
+    await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, title, { preview: false });
     this._onDidChangeDiffs.fire();
   }
 
