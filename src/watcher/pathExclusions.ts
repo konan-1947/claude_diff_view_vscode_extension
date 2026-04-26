@@ -14,6 +14,7 @@ const EXCLUDED_SEGMENTS = new Set([
   'build',
   '.vscode',
   '.idea',
+  '.claude',
   // .NET / Visual Studio
   'bin',
   'obj',
@@ -21,6 +22,12 @@ const EXCLUDED_SEGMENTS = new Set([
   'artifacts',
   '.vs',
   'packages', // legacy NuGet solution folder
+  // Java / JVM
+  'target',
+  '.gradle',
+  '.settings',
+  '.classpath',
+  '.project',
   // Python
   'venv',
   '.venv',
