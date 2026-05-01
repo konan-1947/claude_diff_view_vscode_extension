@@ -14,6 +14,11 @@ import { calculateHunks } from './hunkCalculator';
 
 const STATE_KEY = 'ai-cli-diff.snapshots';
 
+interface SnapshotState {
+  content: string;
+  fileExistedBefore: boolean;
+}
+
 /** Normalize về cùng định dạng mà vscode.Uri.fsPath sử dụng. */
 function normalizePath(filePath: string): string {
   const fsPath = vscode.Uri.file(path.resolve(filePath)).fsPath;
@@ -27,7 +32,7 @@ export class DiffManager {
   public readonly contentProviderEventEmitter = new vscode.EventEmitter<vscode.Uri>();
 
   /** Lưu nội dung gốc TRƯỚC khi sửa (để tính diff) */
-  private snapshots: Map<string, string> = new Map();
+  private snapshots: Map<string, SnapshotState> = new Map();
   private snapshotQueries: Map<string, string> = new Map();
 
   public readonly renderer: InlineDiffRenderer;
@@ -52,20 +57,30 @@ export class DiffManager {
   // ---- State persistence (chỉ lưu đường dẫn để mở lại sau khi restart VS Code) ----
 
   private restoreState(): void {
-    const saved = this.context.workspaceState.get<Record<string, string>>(STATE_KEY, {});
-    for (const [absPath, originalContent] of Object.entries(saved)) {
+    const saved = this.context.workspaceState.get<Record<string, string | SnapshotState>>(STATE_KEY, {});
+    for (const [absPath, savedSnapshot] of Object.entries(saved)) {
       if (!fs.existsSync(absPath)) { continue; }
-      this.snapshots.set(absPath, originalContent);
+      this.snapshots.set(absPath, this.normalizeSavedSnapshot(savedSnapshot));
       this.snapshotQueries.set(absPath, Date.now().toString());
     }
   }
 
   private persistState(): void {
-    const obj: Record<string, string> = {};
-    for (const [absPath, content] of this.snapshots.entries()) {
-      obj[absPath] = content;
+    const obj: Record<string, SnapshotState> = {};
+    for (const [absPath, snapshot] of this.snapshots.entries()) {
+      obj[absPath] = snapshot;
     }
     this.context.workspaceState.update(STATE_KEY, obj);
+  }
+
+  private normalizeSavedSnapshot(savedSnapshot: string | SnapshotState): SnapshotState {
+    if (typeof savedSnapshot === 'string') {
+      return { content: savedSnapshot, fileExistedBefore: true };
+    }
+    return {
+      content: savedSnapshot.content,
+      fileExistedBefore: savedSnapshot.fileExistedBefore === false ? false : true,
+    };
   }
 
   // ---- Public API ----
@@ -80,13 +95,14 @@ export class DiffManager {
       // Đã có snapshot — giữ bản gốc nhất, không ghi đè
       return;
     }
+    const fileExistedBefore = fs.existsSync(absPath);
     try {
       const content = fs.readFileSync(absPath, 'utf8');
-      this.snapshots.set(absPath, content);
+      this.snapshots.set(absPath, { content, fileExistedBefore });
       this.snapshotQueries.set(absPath, Date.now().toString());
     } catch {
       // File chưa tồn tại (Claude tạo file mới)
-      this.snapshots.set(absPath, '');
+      this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
       this.snapshotQueries.set(absPath, Date.now().toString());
     }
     this.persistState();
@@ -112,14 +128,14 @@ export class DiffManager {
     // Nếu không có khác biệt thực sự (hunks = 0), tránh tạo/giữ trạng thái pending sai.
     // Trường hợp này thường xảy ra khi Claude "sửa" nhưng kết quả cuối cùng y hệt bản gốc,
     // hoặc do lỗi resolve path khiến snapshot không khớp.
-    const hunks = calculateHunks(snapshot, modifiedContent);
+    const hunks = calculateHunks(snapshot.content, modifiedContent);
     if (hunks.length === 0) {
       this.snapshots.delete(absPath);
       this.snapshotQueries.delete(absPath);
       this.persistState();
 
       // Vẫn gọi renderer để nó dọn decorations/nav cho editor hiện tại.
-      this.renderer.show(absPath, snapshot, modifiedContent);
+      this.renderer.show(absPath, snapshot.content, modifiedContent);
       // Không còn pending diff nên cũng xóa state inline diff để tránh giữ dư trạng thái.
       this.renderer.clear(absPath);
       this._onDidChangeDiffs.fire();
@@ -134,7 +150,7 @@ export class DiffManager {
     const title = `AI CLI Diff: ${path.basename(absPath)}`;
     
     // Vẫn cần gọi renderer để tính toán danh sách hunks (giúp render CodeLens)
-    this.renderer.show(absPath, snapshot, modifiedContent);
+    this.renderer.show(absPath, snapshot.content, modifiedContent);
 
     await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, title, { preview: false });
     this._onDidChangeDiffs.fire();
@@ -143,10 +159,10 @@ export class DiffManager {
   /**
    * Inject snapshot từ bên ngoài (dùng bởi HookWatcher hoặc WorkspaceWatcher).
    */
-  loadSnapshot(filePath: string, content: string): void {
+  loadSnapshot(filePath: string, content: string, fileExistedBefore = true): void {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) {
-      this.snapshots.set(absPath, content);
+      this.snapshots.set(absPath, { content, fileExistedBefore });
       this.snapshotQueries.set(absPath, Date.now().toString());
       this.persistState();
       this._onDidChangeDiffs.fire();
@@ -162,13 +178,13 @@ export class DiffManager {
 
     if (hunk && oldSnapshot !== undefined) {
       // Patch bản snapshot nguyên thủy với nội dung của Hunk đã Accept
-      const lines = oldSnapshot.split('\n');
+      const lines = oldSnapshot.content.split('\n');
       const deleteCount = hunk.removedLines.length;
       const addedTexts = hunk.addedLines.map(l => l.text);
       lines.splice(hunk.originalStart, deleteCount, ...addedTexts);
       
       const newSnapshot = lines.join('\n');
-      this.snapshots.set(absPath, newSnapshot);
+      this.snapshots.set(absPath, { ...oldSnapshot, content: newSnapshot });
       this.persistState();
 
       // Thông báo cho VS Code nạp lại nội dung bên trái (Original) của màn hình Diff
@@ -198,7 +214,11 @@ export class DiffManager {
   async revertHunk(filePath: string, hunkId: string): Promise<void> {
     const absPath = normalizePath(filePath);
     const isDone = await this.renderer.revertHunk(absPath, hunkId);
-    if (isDone) {
+    const shouldDelete = await this.shouldDeleteRejectedNewFile(absPath);
+    if (shouldDelete) {
+      await this.deleteRejectedNewFile(absPath);
+      await this.cleanup(absPath, { openNormalTextDocument: false });
+    } else if (isDone) {
       await this.cleanup(absPath);
     }
     this._onDidChangeDiffs.fire();
@@ -242,8 +262,12 @@ export class DiffManager {
       return;
     }
 
+    const shouldDelete = !snapshot.fileExistedBefore;
     await this.renderer.revertAll(absPath);
-    await this.cleanup(absPath);
+    if (shouldDelete) {
+      await this.deleteRejectedNewFile(absPath);
+    }
+    await this.cleanup(absPath, { openNormalTextDocument: !shouldDelete });
     this._onDidChangeDiffs.fire();
   }
 
@@ -287,7 +311,7 @@ export class DiffManager {
    * Lấy snapshot gốc (dùng để so sánh sau khi edit).
    */
   getSnapshot(filePath: string): string | undefined {
-    return this.snapshots.get(normalizePath(filePath));
+    return this.snapshots.get(normalizePath(filePath))?.content;
   }
 
   /**
@@ -354,6 +378,39 @@ export class DiffManager {
           editor.revealRange(targetVisibleRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
         }
       } catch {}
+    }
+  }
+
+  private async shouldDeleteRejectedNewFile(absPath: string): Promise<boolean> {
+    const snapshot = this.snapshots.get(absPath);
+    if (!snapshot || snapshot.fileExistedBefore) {
+      return false;
+    }
+
+    const doc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === absPath);
+    if (doc) {
+      return doc.getText().length === 0;
+    }
+
+    try {
+      return fs.readFileSync(absPath, 'utf8').length === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private async deleteRejectedNewFile(absPath: string): Promise<void> {
+    const doc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === absPath);
+    if (doc?.isDirty) {
+      await doc.save();
+    }
+
+    try {
+      await vscode.workspace.fs.delete(vscode.Uri.file(absPath));
+    } catch (err) {
+      if (fs.existsSync(absPath)) {
+        throw err;
+      }
     }
   }
 }

@@ -7,6 +7,7 @@ import { DiffManager } from '../diff/diffManager';
 interface SignalFile {
   filePath: string;
   snapshotPath: string;
+  snapshotMetaPath?: string;
   toolName: string;
   timestamp: number;
 }
@@ -71,7 +72,7 @@ export class HookWatcher {
 
       const raw = fs.readFileSync(signalPath, 'utf8');
       const signal: SignalFile = JSON.parse(raw);
-      const { filePath, snapshotPath } = signal;
+      const { filePath, snapshotPath, snapshotMetaPath } = signal;
 
       if (!filePath || !snapshotPath) {
         fs.unlinkSync(signalPath);
@@ -88,13 +89,29 @@ export class HookWatcher {
 
       // Load the snapshot (written by pre-tool-hook.js) into DiffManager
       let snapshotContent = '';
+      let fileExistedBefore = true;
       try {
         snapshotContent = fs.readFileSync(snapshotPath, 'utf8');
       } catch {
         // Snapshot missing means pre-hook didn't run — open diff with empty "before"
       }
 
-      this.diffManager.loadSnapshot(filePath, snapshotContent);
+      if (snapshotMetaPath) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(snapshotMetaPath, 'utf8')) as {
+            fileExistedBefore?: unknown;
+            timestamp?: unknown;
+          };
+          const isCurrentMeta = typeof meta.timestamp === 'number' && meta.timestamp <= signal.timestamp;
+          if (isCurrentMeta && typeof meta.fileExistedBefore === 'boolean') {
+            fileExistedBefore = meta.fileExistedBefore;
+          }
+        } catch {
+          // Older hooks did not write metadata; default to existing file for safety.
+        }
+      }
+
+      this.diffManager.loadSnapshot(filePath, snapshotContent, fileExistedBefore);
 
       this.diffManager.openDiff(filePath).catch((err: unknown) => {
         console.error('[ai-cli-diff-view] hookWatcher openDiff failed:', err);

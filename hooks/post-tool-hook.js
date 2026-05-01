@@ -28,6 +28,7 @@ process.stdin.on('end', () => {
     const absPath = path.resolve(filePath);
     const safeName = absPath.replace(/[^a-zA-Z0-9]/g, '_');
     const snapshotPath = path.join(SNAPSHOT_DIR, safeName);
+    const snapshotMetaPath = path.join(SNAPSHOT_DIR, `${safeName}.json`);
 
     if (!fs.existsSync(SIGNAL_DIR)) {
       fs.mkdirSync(SIGNAL_DIR, { recursive: true });
@@ -36,6 +37,7 @@ process.stdin.on('end', () => {
     const signal = {
       filePath: absPath,
       snapshotPath,
+      snapshotMetaPath,
       toolName: event.tool_name || 'Edit',
       timestamp: Date.now(),
     };

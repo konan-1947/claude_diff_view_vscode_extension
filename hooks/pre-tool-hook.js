@@ -31,10 +31,16 @@ process.stdin.on('end', () => {
       fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
     }
 
+    const fileExistedBefore = fs.existsSync(absPath);
     let content = '';
     try { content = fs.readFileSync(absPath, 'utf8'); } catch { /* new file */ }
 
     fs.writeFileSync(path.join(SNAPSHOT_DIR, safeName), content, 'utf8');
+    fs.writeFileSync(
+      path.join(SNAPSHOT_DIR, `${safeName}.json`),
+      JSON.stringify({ fileExistedBefore, timestamp: Date.now() }),
+      'utf8'
+    );
   } catch (e) {
     // Never block Claude — always exit 0
   }

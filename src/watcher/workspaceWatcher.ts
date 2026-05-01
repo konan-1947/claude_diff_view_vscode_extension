@@ -140,7 +140,7 @@ export class WorkspaceWatcher {
         if (oldContent === undefined) {
           this.snapshots.set(absPath, newContentRaw);
           if (newContent.trim()) {
-            this.triggerDiff(absPath, '', newContentRaw);
+            this.triggerDiff(absPath, '', newContentRaw, false);
           }
           return;
         }
@@ -152,7 +152,7 @@ export class WorkspaceWatcher {
         this.snapshots.set(absPath, newContentRaw);
 
         if (!this.diffManager.hasPendingDiff(absPath)) {
-          this.triggerDiff(absPath, oldContentRaw!, newContentRaw);
+          this.triggerDiff(absPath, oldContentRaw!, newContentRaw, true);
         }
       } catch {
         // file đang bị lock hoặc xóa — bỏ qua
@@ -160,8 +160,8 @@ export class WorkspaceWatcher {
     }, 200);
   }
 
-  private triggerDiff(filePath: string, originalContent: string, newContent: string): void {
-    this.diffManager.loadSnapshot(filePath, originalContent);
+  private triggerDiff(filePath: string, originalContent: string, newContent: string, fileExistedBefore: boolean): void {
+    this.diffManager.loadSnapshot(filePath, originalContent, fileExistedBefore);
     this.diffManager.openDiff(filePath).catch((err: unknown) => {
       console.error('[ai-cli-diff-view] workspaceWatcher openDiff failed:', err);
     });
