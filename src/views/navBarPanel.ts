@@ -84,8 +84,11 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   private buildHtml(): string {
     const info = this.navInfo;
     const fileName = this.activeFilePath ? path.basename(this.activeFilePath) : undefined;
-    const backgroundUri = this.view!.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'media', 'empty-diff-background.png'),
+    const bgNoDiffUri = this.view!.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_ngu.png'),
+    ).toString();
+    const bgHasDiffUri = this.view!.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_diff.png'),
     ).toString();
     const bodyClass = info ? 'has-diff' : 'no-diff';
 
@@ -146,7 +149,6 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     content: '';
     position: absolute;
     inset: 0;
-    background-image: url('${backgroundUri}');
     background-position: center;
     background-repeat: no-repeat;
     background-size: contain;
@@ -157,6 +159,7 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   body.no-diff::before {
     inset: 8px 0 32px;
     opacity: 1;
+    background-image: url('${bgNoDiffUri}');
   }
 
   body.no-diff {
@@ -165,6 +168,7 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
 
   body.has-diff::before {
     opacity: 0.3;
+    background-image: url('${bgHasDiffUri}');
   }
 
   .controls {
