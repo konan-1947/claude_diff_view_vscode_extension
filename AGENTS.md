@@ -1,19 +1,32 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/` contains the VS Code extension source. Keep code grouped by feature: `commands/` for command registration, `diff/` for inline diff rendering and navigation, `watcher/` for file and hook monitoring, `claude/` for CLI runner integration, and `views/` for webview panels. The extension entry point is `src/extension.ts`. Hook scripts live in `hooks/`, UI assets in `media/`, and local smoke-test files in `code_to_test/`. Generated output goes to `out/` and should not be edited by hand.
+`src/` contains the VS Code extension source. Feature directories: `commands/` (command registration), `diff/` (inline diff rendering and navigation), `watcher/` (file and hook monitoring), `claude/` (CLI runner integration), `views/` (webview panels). Entry point is `src/extension.ts`. Hook scripts live in `hooks/`, UI assets in `media/`, smoke-test files in `code_to_test/`. Generated output goes to `out/` — do not edit by hand.
 
 ## Build, Test, and Development Commands
-Run `npm install` once to install dependencies. Use `npm run compile` to build TypeScript into `out/`. Use `npm run watch` during development for incremental rebuilds. Press `F5` in VS Code to open an Extension Development Host and exercise the extension manually. Use `npx @vscode/vsce package` to create a `.vsix` package for install or release checks.
+- `npm install` — install dependencies (once)
+- `npm run compile` — build TypeScript into `out/`
+- `npm run watch` — incremental rebuild during development
+- `F5` in VS Code — launch Extension Development Host
+- `npx @vscode/vsce package` — create `.vsix` for install/release
 
-## Coding Style & Naming Conventions
-This project uses strict TypeScript. Follow the existing style: 2-space indentation, semicolons, single quotes, and small feature-oriented modules. Use `PascalCase` for classes and providers, `camelCase` for functions and variables, and `kebab-case` for asset filenames. No formatter or linter is configured here, so keep changes consistent with surrounding code and use `npm run compile` as the minimum correctness check.
+No linter or formatter is configured. Use `npm run compile` as the minimum correctness check.
 
-## Testing Guidelines
-There is no automated test suite in the repository yet. Validate changes by running `npm run compile`, then launch the extension with `F5` and test against files in `code_to_test/`. For behavior changes, verify inline diff rendering, accept/revert actions, navigation commands, and Claude hook installation or detection flows. Include manual reproduction and validation steps in your pull request notes.
+## Architecture Notes
+- Activation event: `onStartupFinished` — extension activates on every VS Code start.
+- On activate, the extension auto-enables `diffEditor.codeLens` globally so Accept/Revert buttons appear in diff editor panes.
+- Hook mechanism: `hooks/pre-tool-hook.js` snapshots files before edits; `hooks/post-tool-hook.js` writes signal files to `os.tmpdir()/ai-cli-diff-signals/`. The extension's `HookWatcher` polls for these signals. Hooks always exit 0 to never block Claude.
+- Navigation keybindings: `alt+h` / `alt+l` (prev/next file) only when `ai-cli-diff-view.hasPendingDiff` context is true.
+- Two webview views: `ai-cli-diff-view.session` (sidebar session panel) and `ai-cli-diff-view.navBar` (explorer nav bar).
 
-## Commit & Pull Request Guidelines
-Recent history uses short subjects such as `Update README.md` and `readme`. Keep commit messages concise, imperative, and specific, for example `fix diff tab reopening` or `add hook install detection`. Pull requests should include a short summary, linked issue when applicable, manual test notes, and screenshots or GIFs for editor or webview UI changes.
+## Coding Style
+Strict TypeScript, CommonJS modules, target ES2020. 2-space indentation, semicolons, single quotes. `PascalCase` for classes/providers, `camelCase` for functions/variables, `kebab-case` for asset filenames. Match surrounding code.
 
-## Security & Configuration Tips
-Do not commit secrets, local `.env*` files, generated `out/`, packaged `.vsix` artifacts, or personal state under `.claude/`. If you change hook behavior, keep paths workspace-safe and avoid hardcoded user-specific directories.
+## Testing
+No automated test suite. Validate with `npm run compile` then `F5`. Test against files in `code_to_test/`. Verify: inline diff rendering, accept/revert actions, navigation commands, hook install/detection flows.
+
+## Commits & PRs
+Short imperative subjects (e.g. `fix diff tab reopening`). PRs should include summary, manual test notes, and screenshots/GIFs for UI changes.
+
+## Security
+Do not commit secrets, `.env*` files, `out/`, `.vsix` artifacts, or `.claude/` state. Keep hook paths workspace-safe — no hardcoded user-specific directories.

@@ -3,6 +3,7 @@ import { DiffManager } from './diff/diffManager';
 import { IAiRunner } from './claude/aiRunner';
 import { HookWatcher } from './watcher/hookWatcher';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
+import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { SessionPanelProvider } from './views/sessionPanel';
 import { HunkCodeLensProvider } from './diff/hunkCodeLensProvider';
 import { registerAllCommands } from './commands/commandsRegistry';
@@ -21,6 +22,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const sessionPanel      = new SessionPanelProvider(diffManager, context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);
   const fsHookWatcher     = new HookWatcher(diffManager);
+  const gitBranchWatcher  = new GitBranchWatcher(diffManager);
   const navigationManager = new NavigationManager(diffManager);
 
   diffManager.renderer.setNavigationManager(navigationManager);
@@ -39,6 +41,7 @@ export function activate(context: vscode.ExtensionContext): void {
     { dispose: () => diffManager.disposeAll() },
     { dispose: () => fsHookWatcher.dispose() },
     { dispose: () => workspaceWatcher.dispose() },
+    { dispose: () => gitBranchWatcher.dispose() },
     { dispose: () => sessionPanel.dispose() }
   );
 
@@ -54,6 +57,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   fsHookWatcher.start();
   workspaceWatcher.start();
+  gitBranchWatcher.start();
 
   registerAllCommands({
     diffManager,

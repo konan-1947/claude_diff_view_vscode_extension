@@ -323,6 +323,26 @@ export class DiffManager {
     this.snapshotQueries.clear();
   }
 
+  /**
+   * Xoá toàn bộ pending diffs khi không còn hợp lệ (vd: đổi git branch).
+   * Khác `disposeAll` ở chỗ: cũng đóng các tab diff đang mở và xoá luôn
+   * snapshot đã persist trong workspaceState, để sau khi reload VS Code
+   * snapshot cũ không bị `restoreState()` kéo trở lại.
+   */
+  async clearAll(): Promise<void> {
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode.TabInputTextDiff &&
+            tab.input.original.scheme === 'ai-cli-diff') {
+          await vscode.window.tabGroups.close(tab);
+        }
+      }
+    }
+
+    this.disposeAll();
+    await this.context.workspaceState.update(STATE_KEY, undefined);
+  }
+
   private async cleanup(
     absPath: string,
     opts?: { openNormalTextDocument?: boolean }
