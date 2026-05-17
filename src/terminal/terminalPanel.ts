@@ -28,6 +28,7 @@ interface TerminalSettings {
 }
 
 const SETTINGS_KEY = 'ai-cli-diff-view.terminal.settings';
+const INTRODUCE_SEEN_KEY = 'ai-cli-diff-view.introduce.seen';
 
 const DEFAULT_SETTINGS: TerminalSettings = {
   fontFamily: 'Consolas, "Courier New", monospace',
@@ -70,7 +71,8 @@ type IncomingMessage =
   | { type: 'installFont'; primary: string }
   | { type: 'reloadWindow' }
   | { type: 'openFile'; path: string }
-  | { type: 'installHooks' };
+  | { type: 'installHooks' }
+  | { type: 'introduceSeen' };
 
 export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ai-cli-diff-view.terminal';
@@ -200,10 +202,11 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.view = webviewView;
     const xtermDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm');
     const iconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons');
+    const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
 
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir, iconsDir],
+      localResourceRoots: [xtermDir, iconsDir, introDir],
     };
 
     webviewView.webview.onDidReceiveMessage((msg: IncomingMessage) => {
@@ -221,6 +224,9 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           }
           // Push initial files page state once the webview is ready.
           this.postFilesUpdate();
+          if (!this.context.globalState.get<boolean>(INTRODUCE_SEEN_KEY)) {
+            void this.view?.webview.postMessage({ type: 'showIntroduce' });
+          }
           return;
         case 'input':
           this.pty.write(msg.data);
@@ -305,6 +311,9 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
         case 'installHooks':
           void vscode.commands.executeCommand('ai-cli-diff-view.installHooks');
           return;
+        case 'introduceSeen':
+          void this.context.globalState.update(INTRODUCE_SEEN_KEY, true);
+          return;
       }
     });
 
@@ -322,6 +331,36 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const xtermJs = `${xtermBase}/xterm.js`;
     const xtermCss = `${xtermBase}/xterm.css`;
     const addonFitJs = `${xtermBase}/addon-fit.js`;
+
+    const introBase = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce')
+    );
+    const introSlides = [
+      {
+        src: `${introBase}/welcome.png`,
+        caption: 'Welcome to AI CLI Diff — review every AI edit before it lands.',
+      },
+      {
+        src: `${introBase}/image1.png`,
+        caption: 'Accept or reject each AI change with one click in the side panel.',
+      },
+      {
+        src: `${introBase}/image2.png`,
+        caption: 'Run an AI CLI agent right inside the embedded terminal.',
+      },
+      {
+        src: `${introBase}/image3.png`,
+        caption: 'See changed files in their real folder structure.',
+      },
+      {
+        src: `${introBase}/image4.png`,
+        caption: 'Review changes hunk by hunk directly in the editor.',
+      },
+      {
+        src: `${introBase}/image5.png`,
+        caption: 'Customize terminal font, theme, and cursor from the Settings popover.',
+      },
+    ];
 
     const filesInner = buildPendingFilesInnerHtml({
       diffManager: this.diffManager,
@@ -529,6 +568,99 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   #btn-install-font[disabled] { opacity: 0.55; cursor: default; }
   #btn-reload-window { display: none; }
 
+  /* Introduce overlay */
+  #introduce-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 20;
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+  }
+  #introduce-overlay[hidden] { display: none; }
+  .intro-card {
+    background: var(--vscode-sideBar-background, #1e1e1e);
+    color: var(--vscode-foreground);
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.3));
+    border-radius: 6px;
+    width: 100%;
+    max-width: 520px;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+  }
+  .intro-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+  }
+  .intro-head h2 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.85;
+  }
+  #btn-intro-close {
+    background: transparent;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    border: none;
+    cursor: pointer;
+    line-height: 0;
+    padding: 3px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s, color 0.12s;
+  }
+  #btn-intro-close:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); }
+  .intro-body {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  #intro-img {
+    width: 100%;
+    aspect-ratio: 1919 / 1023;
+    height: auto;
+    object-fit: contain;
+    border-radius: 4px;
+    background: var(--vscode-editor-background, #1e1e1e);
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
+  }
+  #intro-caption {
+    margin: 0;
+    text-align: center;
+    line-height: 1.4;
+    opacity: 0.92;
+  }
+  .intro-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+  }
+  #intro-counter { opacity: 0.7; font-size: 11px; }
+  .intro-nav { display: flex; gap: 8px; }
+  #btn-intro-prev[disabled] { opacity: 0.5; cursor: default; }
+
   .actions {
     display: flex;
     justify-content: space-between;
@@ -576,6 +708,13 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
         <svg class="toggle-to-terminal" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="4 8 8 12 4 16"/>
           <line x1="12" y1="18" x2="20" y2="18"/>
+        </svg>
+      </button>
+      <button id="btn-introduce" class="header-btn" title="Introduce" aria-label="Introduce">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="16" x2="12" y2="12"/>
+          <line x1="12" y1="8" x2="12.01" y2="8"/>
         </svg>
       </button>
       <button id="btn-settings" class="header-btn" title="Settings" aria-label="Settings">
@@ -673,6 +812,30 @@ ${FONT_OPTIONS.map((f) => {
       </div>
     </div>
     <div id="files-wrap">${filesInner}</div>
+    <div id="introduce-overlay" hidden>
+      <div class="intro-card">
+        <div class="intro-head">
+          <h2>Introduction</h2>
+          <button id="btn-intro-close" type="button" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="intro-body">
+          <img id="intro-img" src="" alt="">
+          <p id="intro-caption"></p>
+        </div>
+        <div class="intro-footer">
+          <span id="intro-counter">1 / 4</span>
+          <div class="intro-nav">
+            <button id="btn-intro-prev" class="btn btn-secondary" type="button">Prev</button>
+            <button id="btn-intro-next" class="btn btn-primary" type="button">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
   <script nonce="${nonce}" src="${xtermJs}"></script>
   <script nonce="${nonce}" src="${addonFitJs}"></script>
@@ -838,6 +1001,8 @@ ${FONT_OPTIONS.map((f) => {
             wrap.innerHTML = msg.html;
             bindFilesPage();
           }
+        } else if (msg.type === 'showIntroduce') {
+          openIntro();
         }
       });
 
@@ -1011,6 +1176,57 @@ ${FONT_OPTIONS.map((f) => {
       fBg.addEventListener('input', () => { fBgHex.textContent = fBg.value; });
       fFg.addEventListener('input', () => { fFgHex.textContent = fFg.value; });
       fCursorColor.addEventListener('input', () => { fCursorHex.textContent = fCursorColor.value; });
+
+      // ---- Introduce overlay ----
+      const INTRO_SLIDES = ${JSON.stringify(introSlides)};
+      const introOverlay = document.getElementById('introduce-overlay');
+      const introImg = document.getElementById('intro-img');
+      const introCaption = document.getElementById('intro-caption');
+      const introCounter = document.getElementById('intro-counter');
+      const btnIntroOpen = document.getElementById('btn-introduce');
+      const btnIntroClose = document.getElementById('btn-intro-close');
+      const btnIntroPrev = document.getElementById('btn-intro-prev');
+      const btnIntroNext = document.getElementById('btn-intro-next');
+      let introIdx = 0;
+      let introSeenSent = false;
+
+      function renderIntro() {
+        const slide = INTRO_SLIDES[introIdx];
+        introImg.src = slide.src;
+        introImg.alt = slide.caption;
+        introCaption.textContent = slide.caption;
+        introCounter.textContent = (introIdx + 1) + ' / ' + INTRO_SLIDES.length;
+        btnIntroPrev.disabled = introIdx === 0;
+        btnIntroNext.textContent = introIdx === INTRO_SLIDES.length - 1 ? 'Done' : 'Next';
+      }
+
+      function openIntro() {
+        introIdx = 0;
+        renderIntro();
+        introOverlay.hidden = false;
+      }
+
+      function closeIntro() {
+        introOverlay.hidden = true;
+        if (!introSeenSent) {
+          introSeenSent = true;
+          vscode.postMessage({ type: 'introduceSeen' });
+        }
+      }
+
+      btnIntroOpen.addEventListener('click', openIntro);
+      btnIntroClose.addEventListener('click', closeIntro);
+      btnIntroPrev.addEventListener('click', () => {
+        if (introIdx > 0) { introIdx--; renderIntro(); }
+      });
+      btnIntroNext.addEventListener('click', () => {
+        if (introIdx < INTRO_SLIDES.length - 1) {
+          introIdx++;
+          renderIntro();
+        } else {
+          closeIntro();
+        }
+      });
     })();
   </script>
 </body>
