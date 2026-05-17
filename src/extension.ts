@@ -9,6 +9,7 @@ import { HunkCodeLensProvider } from './diff/hunkCodeLensProvider';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
+import { TerminalPanelProvider } from './terminal/terminalPanel';
 
 export function activate(context: vscode.ExtensionContext): void {
   // CodeLens buttons (Accept/Revert hunk) are suppressed in diff editors by default.
@@ -48,6 +49,34 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(SessionPanelProvider.viewType, sessionPanel)
   );
+
+  const terminalPanel = new TerminalPanelProvider(context);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      TerminalPanelProvider.viewType,
+      terminalPanel,
+      { webviewOptions: { retainContextWhenHidden: true } }
+    ),
+    { dispose: () => terminalPanel.dispose() }
+  );
+
+  const MOVED_RIGHT_KEY = 'ai-cli-diff-view.terminal.movedToRight';
+  if (!context.globalState.get<boolean>(MOVED_RIGHT_KEY)) {
+    void context.globalState.update(MOVED_RIGHT_KEY, true);
+    setTimeout(() => {
+      void (async () => {
+        try {
+          await vscode.commands.executeCommand('ai-cli-diff-view.terminal.focus');
+          await vscode.commands.executeCommand('workbench.action.moveView', {
+            viewId: TerminalPanelProvider.viewType,
+            destinationId: 'workbench.view.auxiliarybar',
+          });
+        } catch {
+          // Best-effort; if API changes, user can drag panel manually.
+        }
+      })();
+    }, 1500);
+  }
 
   const codeLensProvider = new HunkCodeLensProvider(diffManager);
   context.subscriptions.push(
