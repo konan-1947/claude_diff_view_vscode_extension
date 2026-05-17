@@ -7,5 +7,7 @@ ts_error.txt
 node_modules/**
 !node_modules/@vscode/codicons/dist/**
 !node_modules/material-icon-theme/icons/**
+!node_modules/node-pty/**
 **/*.ts
+!node_modules/node-pty/**/*.d.ts
 **/*.map

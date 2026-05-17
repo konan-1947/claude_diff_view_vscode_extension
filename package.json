@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Inline diff review for AI CLI edits, best with Claude, Codex, and Qwen",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
