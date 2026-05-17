@@ -262,8 +262,11 @@ export class InlineDiffRenderer {
 
   private findDocument(filePath: string): vscode.TextDocument | undefined {
     const normalized = this.normalizePath(filePath);
+    // Phải lọc scheme === 'file' — khi diff editor đang mở, snapshot bên trái
+    // (scheme 'ai-cli-diff', read-only) cũng có cùng fsPath với file thật.
+    // Nếu trúng nhầm doc read-only, applyEdit sẽ silent no-op → reject thất bại.
     return vscode.workspace.textDocuments.find(
-      d => this.normalizePath(d.uri.fsPath) === normalized
+      d => d.uri.scheme === 'file' && this.normalizePath(d.uri.fsPath) === normalized
     );
   }
 }

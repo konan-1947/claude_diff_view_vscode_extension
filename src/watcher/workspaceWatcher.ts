@@ -29,6 +29,15 @@ export class WorkspaceWatcher {
   private static readonly LAST_PROCESSED_TTL_MS = 60_000;
   /** VS Code save guard window is 2s — same safety multiplier. */
   private static readonly SAVED_BY_VSCODE_TTL_MS = 10_000;
+  /**
+   * Cờ "đang trong external batch operation" (vd: git checkout đổi branch).
+   * Trong window này, mọi external write chỉ cập nhật baseline mà KHÔNG tạo diff.
+   */
+  private suppressUntil = 0;
+  /** Timestamps các fs event gần đây — dùng để detect burst (vd: git checkout). */
+  private recentExternalWrites: number[] = [];
+  private static readonly BURST_THRESHOLD = 5;
+  private static readonly BURST_WINDOW_MS = 1500;
 
   constructor(private readonly diffManager: DiffManager) {
     this.snapshots = new FileSnapshotStore();
@@ -37,6 +46,28 @@ export class WorkspaceWatcher {
   start(): void {
     this.watchVscodeEvents();
     this.watchWorkspaceFolders();
+  }
+
+  /**
+   * Báo cho watcher biết vừa có external batch operation (vd: git checkout).
+   * - Wipe baseline trong RAM để rebuild từ disk hiện tại.
+   * - Set suppress window để các fs event đến sau (kể cả từ setTimeout 200ms
+   *   đã pending) không tạo diff nữa, chỉ ghi đè baseline.
+   */
+  notifyExternalBatch(windowMs = 5000): void {
+    this.suppressUntil = Date.now() + windowMs;
+    this.snapshots.clear();
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      try {
+        this.snapshots.buildInitialSnapshots(folder.uri.fsPath);
+      } catch {
+        // ignore — sẽ tự rebuild dần qua các event sau
+      }
+    }
+  }
+
+  private isSuppressed(): boolean {
+    return Date.now() < this.suppressUntil;
   }
 
   private normalizePath(p: string): string {
@@ -132,6 +163,21 @@ export class WorkspaceWatcher {
       return;
     }
 
+    // Burst detection: nếu nhiều file đổi cùng lúc (vd: git checkout) thì
+    // coi như external batch — wipe baseline, suppress, và clear các diff
+    // vừa lỡ tạo ra trong ~burst window vừa qua.
+    this.recentExternalWrites = this.recentExternalWrites.filter(
+      (t) => now - t < WorkspaceWatcher.BURST_WINDOW_MS,
+    );
+    this.recentExternalWrites.push(now);
+    if (
+      this.recentExternalWrites.length >= WorkspaceWatcher.BURST_THRESHOLD &&
+      !this.isSuppressed()
+    ) {
+      this.notifyExternalBatch();
+      void this.diffManager.clearAll();
+    }
+
     // 2. Debounce: bỏ qua nếu vừa xử lý file này trong 500ms
     const lastTime = this.lastProcessed.get(absPath) ?? 0;
     if (now - lastTime < 500) { return; }
@@ -154,6 +200,14 @@ export class WorkspaceWatcher {
         if (!fs.existsSync(absPath)) { return; }
 
         const newContentRaw = fs.readFileSync(absPath, 'utf8');
+
+        // Trong window external batch (vd: git checkout): chỉ refresh baseline,
+        // không tạo diff. Tránh việc so working tree mới với baseline branch cũ.
+        if (this.isSuppressed()) {
+          this.snapshots.set(absPath, newContentRaw);
+          return;
+        }
+
         const oldContentRaw = this.snapshots.get(absPath);
 
         const newContent = this.normalizeContent(newContentRaw);

@@ -31,6 +31,11 @@ export class FileSnapshotStore {
     return this.snapshots.has(this.normalizePath(filePath));
   }
 
+  /** Xoá toàn bộ baseline trong RAM. Dùng khi branch switch để rebuild lại từ disk. */
+  clear(): void {
+    this.snapshots.clear();
+  }
+
   /**
    * Đệ quy snapshot nội dung tất cả file text trong một thư mục.
    * Chỉ chạy lần đầu khi extension khởi động để tạo baseline.

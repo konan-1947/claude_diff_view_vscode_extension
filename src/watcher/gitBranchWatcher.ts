@@ -16,6 +16,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
+import { WorkspaceWatcher } from './workspaceWatcher';
+
+const STORED_HEAD_KEY = 'ai-cli-diff.lastHeadByFolder';
 
 export class GitBranchWatcher {
   private disposables: vscode.Disposable[] = [];
@@ -25,8 +28,21 @@ export class GitBranchWatcher {
 
   constructor(
     private readonly diffManager: DiffManager,
+    private readonly workspaceState: vscode.Memento,
+    private readonly workspaceWatcher: WorkspaceWatcher,
     private readonly debounceMs: number = 1000,
   ) {}
+
+  private getStoredHead(folderPath: string): string | undefined {
+    const map = this.workspaceState.get<Record<string, string>>(STORED_HEAD_KEY, {});
+    return map[folderPath];
+  }
+
+  private async setStoredHead(folderPath: string, head: string): Promise<void> {
+    const map = this.workspaceState.get<Record<string, string>>(STORED_HEAD_KEY, {});
+    map[folderPath] = head;
+    await this.workspaceState.update(STORED_HEAD_KEY, map);
+  }
 
   start(): void {
     this.watchAllRoots();
@@ -57,16 +73,29 @@ export class GitBranchWatcher {
     if (!gitHead) { return; }
 
     // Capture initial content
+    let initialHead: string;
     try {
-      this.headContents.set(folderPath, fs.readFileSync(gitHead, 'utf8').trim());
+      initialHead = fs.readFileSync(gitHead, 'utf8').trim();
     } catch {
       return;
     }
+    this.headContents.set(folderPath, initialHead);
 
-    const watcher = fs.watch(path.dirname(gitHead), (_event, filename) => {
-      if (filename && filename.toLowerCase() === 'head') {
-        this.onHeadChange(folderPath, gitHead);
-      }
+    // Nếu HEAD đã lưu khác với HEAD hiện tại nghĩa là user đã đổi branch
+    // khi extension không chạy. Coi trạng thái sau khi đổi branch là baseline
+    // mới và clear pending diffs cũ để không bị so sánh linh tinh.
+    const storedHead = this.getStoredHead(folderPath);
+    if (storedHead !== undefined && storedHead !== initialHead) {
+      this.workspaceWatcher.notifyExternalBatch();
+      void this.clearPendingDiffs();
+    }
+    void this.setStoredHead(folderPath, initialHead);
+
+    // Lưu ý: trên Windows, `filename` thường null cho atomic-rename của git
+    // (HEAD.lock → HEAD). Không lọc theo filename; mọi event đều trigger
+    // re-read HEAD. Debounce + content compare bên dưới sẽ chặn no-op.
+    const watcher = fs.watch(path.dirname(gitHead), () => {
+      this.onHeadChange(folderPath, gitHead);
     });
 
     watcher.on('error', () => {
@@ -110,6 +139,8 @@ export class GitBranchWatcher {
       const oldContent = this.headContents.get(folderPath);
       if (oldContent !== undefined && oldContent !== newContent) {
         this.headContents.set(folderPath, newContent);
+        void this.setStoredHead(folderPath, newContent);
+        this.workspaceWatcher.notifyExternalBatch();
         this.clearPendingDiffs();
       }
     }, this.debounceMs);

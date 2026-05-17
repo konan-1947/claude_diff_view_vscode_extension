@@ -21,7 +21,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const diffManager       = new DiffManager(context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);
   const fsHookWatcher     = new HookWatcher(diffManager);
-  const gitBranchWatcher  = new GitBranchWatcher(diffManager);
+  const gitBranchWatcher  = new GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
   const navigationManager = new NavigationManager(diffManager);
 
   diffManager.renderer.setNavigationManager(navigationManager);
