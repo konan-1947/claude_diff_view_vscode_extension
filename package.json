@@ -28,29 +28,17 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "ai-cli-diff-view",
-          "title": "AI CLI diff view",
-          "icon": "media/claude-icon.svg"
-        },
-        {
           "id": "ai-cli-diff-view-terminal",
-          "title": "AI CLI Terminal",
+          "title": "AI CLI",
           "icon": "media/claude-icon.svg"
         }
       ]
     },
     "views": {
-      "ai-cli-diff-view": [
-        {
-          "id": "ai-cli-diff-view.session",
-          "name": "Session",
-          "type": "webview"
-        }
-      ],
       "ai-cli-diff-view-terminal": [
         {
           "id": "ai-cli-diff-view.terminal",
-          "name": "Terminal",
+          "name": "AI CLI",
           "type": "webview"
         }
       ],

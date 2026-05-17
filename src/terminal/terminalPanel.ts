@@ -2,6 +2,12 @@ import * as os from 'os';
 import * as vscode from 'vscode';
 import { PtySession } from './ptySession';
 import { findInstallableForPrimary, installFont } from './fontInstaller';
+import { DiffManager } from '../diff/diffManager';
+import {
+  buildPendingFilesInnerHtml,
+  PENDING_FILES_CSS,
+  SessionState,
+} from './pendingFilesPage';
 
 type ThemePreset = 'vscode' | 'default-dark' | 'solarized-dark' | 'dracula' | 'custom';
 type CursorStyle = 'block' | 'underline' | 'bar';
@@ -62,7 +68,9 @@ type IncomingMessage =
   | { type: 'getSettings' }
   | { type: 'updateSettings'; settings: TerminalSettings }
   | { type: 'installFont'; primary: string }
-  | { type: 'reloadWindow' };
+  | { type: 'reloadWindow' }
+  | { type: 'openFile'; path: string }
+  | { type: 'installHooks' };
 
 export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ai-cli-diff-view.terminal';
@@ -71,8 +79,66 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private pty = new PtySession();
   private subs: vscode.Disposable[] = [];
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  private sessionState: SessionState = 'idle';
+  private lastPrompt = '';
+  private errorMessage = '';
+  private diffDisposable?: vscode.Disposable;
+
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly diffManager: DiffManager
+  ) {
     this.wirePtyEvents();
+    this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
+      this.postFilesUpdate();
+    });
+  }
+
+  // Public API used by commandsRegistry (mirrors the old SessionPanelProvider).
+  setRunning(prompt: string): void {
+    this.sessionState = 'running';
+    this.lastPrompt = prompt;
+    this.errorMessage = '';
+    this.postFilesUpdate();
+  }
+
+  setIdle(): void {
+    this.sessionState = 'idle';
+    this.postFilesUpdate();
+  }
+
+  setError(message: string): void {
+    this.sessionState = 'error';
+    this.errorMessage = message;
+    this.postFilesUpdate();
+  }
+
+  refresh(): void {
+    this.postFilesUpdate();
+  }
+
+  private postFilesUpdate(): void {
+    if (!this.view) {
+      return;
+    }
+    const html = buildPendingFilesInnerHtml({
+      diffManager: this.diffManager,
+      extensionUri: this.context.extensionUri,
+      iconBase: this.fileIconsBase(),
+      sessionState: this.sessionState,
+      lastPrompt: this.lastPrompt,
+      errorMessage: this.errorMessage,
+    });
+    void this.view.webview.postMessage({ type: 'filesUpdate', html });
+  }
+
+  private fileIconsBase(): string {
+    if (!this.view) {
+      return '';
+    }
+    return this.view.webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons'))
+      .toString() + '/';
   }
 
   private wirePtyEvents(): void {
@@ -133,10 +199,11 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
     const xtermDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm');
+    const iconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons');
 
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir],
+      localResourceRoots: [xtermDir, iconsDir],
     };
 
     webviewView.webview.onDidReceiveMessage((msg: IncomingMessage) => {
@@ -152,6 +219,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           } else {
             this.pty.resize(msg.cols, msg.rows);
           }
+          // Push initial files page state once the webview is ready.
+          this.postFilesUpdate();
           return;
         case 'input':
           this.pty.write(msg.data);
@@ -228,6 +297,14 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           });
           return;
         }
+        case 'openFile':
+          if (msg.path && typeof msg.path === 'string') {
+            void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
+          }
+          return;
+        case 'installHooks':
+          void vscode.commands.executeCommand('ai-cli-diff-view.installHooks');
+          return;
       }
     });
 
@@ -245,6 +322,15 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const xtermJs = `${xtermBase}/xterm.js`;
     const xtermCss = `${xtermBase}/xterm.css`;
     const addonFitJs = `${xtermBase}/addon-fit.js`;
+
+    const filesInner = buildPendingFilesInnerHtml({
+      diffManager: this.diffManager,
+      extensionUri: this.context.extensionUri,
+      iconBase: this.fileIconsBase(),
+      sessionState: this.sessionState,
+      lastPrompt: this.lastPrompt,
+      errorMessage: this.errorMessage,
+    });
 
     const nonce = randomNonce();
     const csp = [
@@ -288,7 +374,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
-  #btn-settings {
+  #header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .header-btn {
     background: transparent;
     color: var(--vscode-icon-foreground, var(--vscode-foreground));
     border: none;
@@ -301,18 +392,41 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     justify-content: center;
     transition: background 0.12s, color 0.12s;
   }
-  #btn-settings svg { display: block; }
-  #btn-settings:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); color: var(--vscode-foreground); }
-  #btn-settings:active { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.28)); }
+  .header-btn svg { display: block; }
+  .header-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); color: var(--vscode-foreground); }
+  .header-btn:active { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.28)); }
 
-  #term-wrap {
+  /* Page switching */
+  body.page-files #term-wrap { display: none; }
+  body.page-terminal #files-wrap { display: none; }
+  body.page-files #btn-settings { display: none; }
+  body.page-terminal .title-files { display: none; }
+  body.page-files .title-terminal { display: none; }
+  body.page-terminal .toggle-to-files { display: inline-flex; }
+  body.page-terminal .toggle-to-terminal { display: none; }
+  body.page-files .toggle-to-files { display: none; }
+  body.page-files .toggle-to-terminal { display: inline-flex; }
+
+  #content {
     flex: 1 1 auto;
     position: relative;
+    overflow: hidden;
+    min-height: 0;
+  }
+  #term-wrap {
+    position: absolute;
+    inset: 0;
     overflow: hidden;
     background: var(--vscode-editor-background);
   }
   #term { width: 100%; height: 100%; }
   .xterm { padding: 4px 0 0 6px; height: 100%; }
+
+  #files-wrap {
+    position: absolute;
+    inset: 0;
+  }
+  ${PENDING_FILES_CSS}
 
   #err {
     position: absolute;
@@ -412,7 +526,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   .install-status { font-size: 11px; opacity: 0.8; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .install-status.ok { color: var(--vscode-charts-green, #4caf50); }
   .install-status.err { color: var(--vscode-errorForeground, #f48771); }
-  #btn-install[disabled] { opacity: 0.55; cursor: default; }
+  #btn-install-font[disabled] { opacity: 0.55; cursor: default; }
   #btn-reload-window { display: none; }
 
   .actions {
@@ -446,100 +560,119 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   .btn:active { filter: brightness(0.95); }
 </style>
 </head>
-<body>
+<body class="page-terminal">
   <div id="header">
-    <span id="header-title">Terminal</span>
-    <button id="btn-settings" title="Settings" aria-label="Settings">
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-    </button>
+    <span id="header-title">
+      <span class="title-terminal">Terminal</span>
+      <span class="title-files">Pending Files</span>
+    </span>
+    <div id="header-actions">
+      <button id="btn-toggle-page" class="header-btn" title="Switch view" aria-label="Switch view">
+        <svg class="toggle-to-files" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 6h18"/>
+          <path d="M3 12h18"/>
+          <path d="M3 18h12"/>
+        </svg>
+        <svg class="toggle-to-terminal" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="4 8 8 12 4 16"/>
+          <line x1="12" y1="18" x2="20" y2="18"/>
+        </svg>
+      </button>
+      <button id="btn-settings" class="header-btn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
   </div>
-  <div id="term-wrap">
-    <div id="err"></div>
-    <div id="term"></div>
-    <div id="settings-overlay" hidden>
-      <div class="settings-head">
-        <h2>Settings</h2>
-        <button id="btn-close" title="Close" aria-label="Close">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      </div>
+  <div id="content">
+    <div id="term-wrap">
+      <div id="err"></div>
+      <div id="term"></div>
+      <div id="settings-overlay" hidden>
+        <div class="settings-head">
+          <h2>Settings</h2>
+          <button id="btn-close" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
 
-      <div class="field">
-        <label for="f-font-family">Font family</label>
-        <select id="f-font-family">
+        <div class="field">
+          <label for="f-font-family">Font family</label>
+          <select id="f-font-family">
 ${FONT_OPTIONS.map((f) => {
   const installable = !!findInstallableForPrimary(f.primary);
-  return `          <option value="${escapeAttr(f.value)}" data-primary="${escapeAttr(f.primary)}"${installable ? ' data-installable="1"' : ''}>${escapeHtml(f.label)}</option>`;
+  return `            <option value="${escapeAttr(f.value)}" data-primary="${escapeAttr(f.primary)}"${installable ? ' data-installable="1"' : ''}>${escapeHtml(f.label)}</option>`;
 }).join('\n')}
-        </select>
-      </div>
-      <div class="field field-install" id="install-row" hidden>
-        <label></label>
-        <div class="install-controls">
-          <button id="btn-install" class="btn btn-secondary" type="button">Install font</button>
-          <button id="btn-reload-window" class="btn btn-secondary" type="button">Reload window</button>
-          <span class="install-status" id="install-status"></span>
+          </select>
         </div>
-      </div>
-      <div class="field">
-        <label for="f-font-size">Font size</label>
-        <input id="f-font-size" type="number" min="6" max="32" step="1">
-      </div>
-      <div class="field">
-        <label for="f-preset">Theme</label>
-        <select id="f-preset">
-          <option value="vscode">Follow VS Code</option>
-          <option value="default-dark">Default Dark</option>
-          <option value="solarized-dark">Solarized Dark</option>
-          <option value="dracula">Dracula</option>
-          <option value="custom">Custom</option>
-        </select>
-      </div>
-      <div class="field indent custom-only">
-        <label for="f-bg">Background</label>
-        <div class="color-row">
-          <input id="f-bg" type="color">
-          <span id="f-bg-hex"></span>
+        <div class="field field-install" id="install-row" hidden>
+          <label></label>
+          <div class="install-controls">
+            <button id="btn-install-font" class="btn btn-secondary" type="button">Install font</button>
+            <button id="btn-reload-window" class="btn btn-secondary" type="button">Reload window</button>
+            <span class="install-status" id="install-status"></span>
+          </div>
         </div>
-      </div>
-      <div class="field indent custom-only">
-        <label for="f-fg">Foreground</label>
-        <div class="color-row">
-          <input id="f-fg" type="color">
-          <span id="f-fg-hex"></span>
+        <div class="field">
+          <label for="f-font-size">Font size</label>
+          <input id="f-font-size" type="number" min="6" max="32" step="1">
         </div>
-      </div>
-      <div class="field indent custom-only">
-        <label for="f-cursor-color">Cursor color</label>
-        <div class="color-row">
-          <input id="f-cursor-color" type="color">
-          <span id="f-cursor-hex"></span>
+        <div class="field">
+          <label for="f-preset">Theme</label>
+          <select id="f-preset">
+            <option value="vscode">Follow VS Code</option>
+            <option value="default-dark">Default Dark</option>
+            <option value="solarized-dark">Solarized Dark</option>
+            <option value="dracula">Dracula</option>
+            <option value="custom">Custom</option>
+          </select>
         </div>
-      </div>
-      <div class="field">
-        <label for="f-cursor-style">Cursor style</label>
-        <select id="f-cursor-style">
-          <option value="block">Block</option>
-          <option value="underline">Underline</option>
-          <option value="bar">Bar</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="f-cursor-blink">Cursor blink</label>
-        <input id="f-cursor-blink" type="checkbox">
-      </div>
+        <div class="field indent custom-only">
+          <label for="f-bg">Background</label>
+          <div class="color-row">
+            <input id="f-bg" type="color">
+            <span id="f-bg-hex"></span>
+          </div>
+        </div>
+        <div class="field indent custom-only">
+          <label for="f-fg">Foreground</label>
+          <div class="color-row">
+            <input id="f-fg" type="color">
+            <span id="f-fg-hex"></span>
+          </div>
+        </div>
+        <div class="field indent custom-only">
+          <label for="f-cursor-color">Cursor color</label>
+          <div class="color-row">
+            <input id="f-cursor-color" type="color">
+            <span id="f-cursor-hex"></span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-cursor-style">Cursor style</label>
+          <select id="f-cursor-style">
+            <option value="block">Block</option>
+            <option value="underline">Underline</option>
+            <option value="bar">Bar</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-cursor-blink">Cursor blink</label>
+          <input id="f-cursor-blink" type="checkbox">
+        </div>
 
-      <div class="actions">
-        <button id="btn-reset" class="btn btn-secondary" type="button">Reset</button>
-        <button id="btn-apply" class="btn btn-primary" type="button">Apply</button>
+        <div class="actions">
+          <button id="btn-reset" class="btn btn-secondary" type="button">Reset</button>
+          <button id="btn-apply" class="btn btn-primary" type="button">Apply</button>
+        </div>
       </div>
     </div>
+    <div id="files-wrap">${filesInner}</div>
   </div>
   <script nonce="${nonce}" src="${xtermJs}"></script>
   <script nonce="${nonce}" src="${addonFitJs}"></script>
@@ -595,7 +728,6 @@ ${FONT_OPTIONS.map((f) => {
             };
           case 'vscode':
           default: {
-            // editor.* CSS vars are always injected; terminal.* are not (themes may skip them).
             const bg = pickVar('--vscode-terminal-background', '') ||
                        pickVar('--vscode-editor-background', '#1e1e1e');
             const fg = pickVar('--vscode-terminal-foreground', '') ||
@@ -617,16 +749,12 @@ ${FONT_OPTIONS.map((f) => {
         term.options.theme = theme;
         const wrap = document.getElementById('term-wrap');
         if (wrap) wrap.style.background = theme.background;
-        // xterm caches glyphs in a texture atlas keyed on (size, family). Changing only
-        // fontFamily without clearing the atlas results in the OLD glyphs being reused.
         try { term.clearTextureAtlas && term.clearTextureAtlas(); } catch (_) {}
         safeFit();
         try { term.refresh(0, term.rows - 1); } catch (_) {}
         vscode.postMessage({ type: 'resize', cols: term.cols, rows: term.rows });
       }
 
-      // Width-comparison font detection: render in target family vs the generic
-      // monospace fallback and compare. If widths differ, the target is installed.
       function isFontInstalled(family) {
         const test = 'mmmmmmmmmmlliIWW';
         const size = '72px';
@@ -666,7 +794,6 @@ ${FONT_OPTIONS.map((f) => {
       });
       ro.observe(document.getElementById('term-wrap'));
 
-      // When user switches VS Code theme, re-apply if we're following it.
       const themeObserver = new MutationObserver(() => {
         if (currentSettings.themePreset === 'vscode') {
           applySettings(currentSettings);
@@ -692,10 +819,9 @@ ${FONT_OPTIONS.map((f) => {
         } else if (msg.type === 'installProgress') {
           setInstallStatus(msg.message || 'Installing…', '');
         } else if (msg.type === 'installDone') {
-          // Re-detect installation status across all options (in case other related fonts changed).
           refreshFontAnnotations();
-          btnInstall.disabled = true;
-          btnInstall.textContent = 'Installed';
+          btnInstallFont.disabled = true;
+          btnInstallFont.textContent = 'Installed';
           if (msg.restartRecommended) {
             btnReload.style.display = '';
             setInstallStatus('Installed. Reload window to start using it.', 'ok');
@@ -703,11 +829,52 @@ ${FONT_OPTIONS.map((f) => {
             setInstallStatus('Installed.', 'ok');
           }
         } else if (msg.type === 'installError') {
-          btnInstall.disabled = false;
-          btnInstall.textContent = 'Retry install';
+          btnInstallFont.disabled = false;
+          btnInstallFont.textContent = 'Retry install';
           setInstallStatus(msg.error || 'Install failed', 'err');
+        } else if (msg.type === 'filesUpdate') {
+          const wrap = document.getElementById('files-wrap');
+          if (wrap) {
+            wrap.innerHTML = msg.html;
+            bindFilesPage();
+          }
         }
       });
+
+      // ---- Page toggle ----
+      const btnTogglePage = document.getElementById('btn-toggle-page');
+      btnTogglePage.addEventListener('click', () => {
+        const isTerminal = document.body.classList.contains('page-terminal');
+        document.body.classList.toggle('page-terminal', !isTerminal);
+        document.body.classList.toggle('page-files', isTerminal);
+        if (!isTerminal) {
+          // Switched back to terminal — refit since size may have changed.
+          requestAnimationFrame(() => {
+            safeFit();
+            vscode.postMessage({ type: 'resize', cols: term.cols, rows: term.rows });
+          });
+        }
+      });
+
+      // ---- Files page bindings (rebound after every filesUpdate) ----
+      function bindFilesPage() {
+        const tree = document.getElementById('file-tree');
+        if (tree) {
+          tree.querySelectorAll('.tree-row-file').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              const p = btn.getAttribute('data-path');
+              if (p) vscode.postMessage({ type: 'openFile', path: p });
+            });
+          });
+        }
+        const btnInstallHooks = document.getElementById('btn-install');
+        if (btnInstallHooks) {
+          btnInstallHooks.addEventListener('click', () => {
+            vscode.postMessage({ type: 'installHooks' });
+          });
+        }
+      }
+      bindFilesPage();
 
       // ---- Settings overlay ----
       const overlay = document.getElementById('settings-overlay');
@@ -731,7 +898,6 @@ ${FONT_OPTIONS.map((f) => {
       function populateForm(s) {
         fFontFamily.value = s.fontFamily;
         if (fFontFamily.value !== s.fontFamily) {
-          // Saved font isn't one of the presets — inject it as an extra option so the select shows it.
           let extra = fFontFamily.querySelector('option[data-extra="1"]');
           if (!extra) {
             extra = document.createElement('option');
@@ -778,7 +944,7 @@ ${FONT_OPTIONS.map((f) => {
 
       // ---- Font install row ----
       const installRow = document.getElementById('install-row');
-      const btnInstall = document.getElementById('btn-install');
+      const btnInstallFont = document.getElementById('btn-install-font');
       const btnReload = document.getElementById('btn-reload-window');
       const installStatus = document.getElementById('install-status');
 
@@ -787,7 +953,6 @@ ${FONT_OPTIONS.map((f) => {
           if (!opt.value || opt.dataset.extra === '1') return;
           const installed = isFontInstalled(opt.value);
           opt.dataset.installed = installed ? '1' : '0';
-          // Reset and rebuild label
           const baseLabel = opt.dataset.baseLabel || opt.textContent;
           opt.dataset.baseLabel = baseLabel;
           opt.textContent = installed ? baseLabel : (baseLabel + ' — not installed');
@@ -808,8 +973,8 @@ ${FONT_OPTIONS.map((f) => {
         const installed = opt.dataset.installed === '1';
         if (installable && !installed) {
           installRow.hidden = false;
-          btnInstall.disabled = false;
-          btnInstall.textContent = 'Install font';
+          btnInstallFont.disabled = false;
+          btnInstallFont.textContent = 'Install font';
           btnReload.style.display = 'none';
           setInstallStatus('', '');
         } else {
@@ -817,11 +982,11 @@ ${FONT_OPTIONS.map((f) => {
         }
       }
 
-      btnInstall.addEventListener('click', () => {
+      btnInstallFont.addEventListener('click', () => {
         const opt = fFontFamily.options[fFontFamily.selectedIndex];
         if (!opt || opt.dataset.installable !== '1') return;
-        btnInstall.disabled = true;
-        btnInstall.textContent = 'Installing…';
+        btnInstallFont.disabled = true;
+        btnInstallFont.textContent = 'Installing…';
         setInstallStatus('Preparing…', '');
         vscode.postMessage({ type: 'installFont', primary: opt.dataset.primary });
       });
@@ -858,6 +1023,8 @@ ${FONT_OPTIONS.map((f) => {
       try { d.dispose(); } catch { /* ignore */ }
     }
     this.subs.length = 0;
+    this.diffDisposable?.dispose();
+    this.diffDisposable = undefined;
   }
 }
 

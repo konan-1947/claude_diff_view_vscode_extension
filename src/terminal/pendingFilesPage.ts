@@ -1,178 +1,119 @@
 import * as fs from 'fs';
-import * as vscode from 'vscode';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
 import { detectOurClaudeHooks, hooksFullyActive } from '../commands/hookInstallDetect';
 
-type SessionState = 'idle' | 'running' | 'error';
+export type SessionState = 'idle' | 'running' | 'error';
 
-export class SessionPanelProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = 'ai-cli-diff-view.session';
+export interface PendingFilesContext {
+  diffManager: DiffManager;
+  extensionUri: vscode.Uri;
+  iconBase: string;
+  sessionState: SessionState;
+  lastPrompt: string;
+  errorMessage: string;
+}
 
-  private view?: vscode.WebviewView;
-  private state: SessionState = 'idle';
-  private lastPrompt = '';
-  private errorMessage = '';
-  private readonly diffDisposable: vscode.Disposable;
+/** HTML inserted into #files-wrap. Pure function of the inputs above. */
+export function buildPendingFilesInnerHtml(ctx: PendingFilesContext): string {
+  const pending = ctx.diffManager.getPendingFiles();
+  const treeModel = buildPendingTreeModel(pending);
+  const pendingTreeHtml =
+    pending.length === 0 ? '' : renderPendingTreeHtml(treeModel, 0, ctx.iconBase);
 
-  constructor(
-    private readonly diffManager: DiffManager,
-    private readonly context: vscode.ExtensionContext
-  ) {
-    this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
-      this.render();
-    });
-  }
-
-  dispose(): void {
-    this.diffDisposable.dispose();
-  }
-
-  /** Re-read hook install state from disk (e.g. after installHooks). */
-  refresh(): void {
-    this.render();
-  }
-
-  setRunning(prompt: string): void {
-    this.state = 'running';
-    this.lastPrompt = prompt;
-    this.errorMessage = '';
-    this.render();
-  }
-
-  setIdle(): void {
-    this.state = 'idle';
-    this.render();
-  }
-
-  setError(message: string): void {
-    this.state = 'error';
-    this.errorMessage = message;
-    this.render();
-  }
-
-  resolveWebviewView(webviewView: vscode.WebviewView): void {
-    this.view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [this.context.extensionUri],
-    };
-    webviewView.onDidChangeVisibility(() => {
-      if (webviewView.visible) {
-        this.render();
-      }
-    });
-    webviewView.webview.onDidReceiveMessage((msg: { command?: string; path?: string }) => {
-      if (msg.command === 'openFile' && msg.path && typeof msg.path === 'string') {
-        void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
-      } else if (msg.command === 'installHooks') {
-        void vscode.commands.executeCommand('ai-cli-diff-view.installHooks');
-      }
-    });
-    this.render();
-  }
-
-  private render(): void {
-    if (!this.view) {
-      return;
-    }
-    const iconsDir = vscode.Uri.joinPath(
-      this.context.extensionUri,
-      'media', 'file-icons'
-    );
-    const iconBase = this.view.webview.asWebviewUri(iconsDir).toString() + '/';
-    this.view.webview.html = this.buildHtml(iconBase);
-  }
-
-  private buildHtml(iconBase: string): string {
-    const pending = this.diffManager.getPendingFiles();
-    const treeModel = buildPendingTreeModel(pending);
-    const pendingTreeHtml =
-      pending.length === 0 ? '' : renderPendingTreeHtml(treeModel, 0, iconBase);
-
-    let statusHtml = '';
-    if (this.state === 'running') {
-      statusHtml = `
+  let statusHtml = '';
+  if (ctx.sessionState === 'running') {
+    statusHtml = `
       <div class="banner banner-run">
         <span class="banner-icon">&#8635;</span>
         <div class="banner-text">
           <div class="banner-title">Running</div>
-          <div class="banner-detail">${escapeHtml(this.lastPrompt || '(no prompt)')}</div>
+          <div class="banner-detail">${escapeHtml(ctx.lastPrompt || '(no prompt)')}</div>
         </div>
       </div>`;
-    } else if (this.state === 'error') {
-      statusHtml = `
+  } else if (ctx.sessionState === 'error') {
+    statusHtml = `
       <div class="banner banner-err">
         <span class="banner-icon">&#9888;</span>
         <div class="banner-text">
           <div class="banner-title">Session failed</div>
-          <div class="banner-detail">${escapeHtml(this.errorMessage || 'Unknown error')}</div>
+          <div class="banner-detail">${escapeHtml(ctx.errorMessage || 'Unknown error')}</div>
         </div>
       </div>`;
-    }
+  }
 
-    const pendingBlock =
-      pending.length === 0
-        ? `<div class="empty-pending">No pending file changes</div>`
-        : `
+  const pendingBlock =
+    pending.length === 0
+      ? `<div class="empty-pending">No pending file changes</div>`
+      : `
       <div class="section-title">
         <span>Pending changes</span>
         <span class="badge">${pending.length}</span>
       </div>
       <div class="file-tree" id="file-tree">${pendingTreeHtml}</div>`;
 
-    const hookDet = detectOurClaudeHooks(this.context.extensionUri.fsPath);
-    const hooksOk = hooksFullyActive(hookDet);
+  const hookDet = detectOurClaudeHooks(ctx.extensionUri.fsPath);
+  const hooksOk = hooksFullyActive(hookDet);
 
-    let extVersion = '';
-    try {
-      const pkgJson = JSON.parse(
-        fs.readFileSync(path.join(this.context.extensionUri.fsPath, 'package.json'), 'utf8')
-      ) as { version?: string };
-      extVersion = pkgJson.version ?? '';
-    } catch {
-      // ignore
-    }
-    const versionTag = extVersion
-      ? `<span class="hook-version">v${escapeHtml(extVersion)}</span>`
-      : '';
+  let extVersion = '';
+  try {
+    const pkgJson = JSON.parse(
+      fs.readFileSync(path.join(ctx.extensionUri.fsPath, 'package.json'), 'utf8')
+    ) as { version?: string };
+    extVersion = pkgJson.version ?? '';
+  } catch {
+    // ignore
+  }
+  const versionTag = extVersion
+    ? `<span class="hook-version">v${escapeHtml(extVersion)}</span>`
+    : '';
 
-    let hookStatusHtml = '';
-    if (hooksOk) {
-      hookStatusHtml = `<div class="hook-status hook-ok"><span class="hook-status-text">CLI hooks: active</span>${versionTag}</div>`;
-    } else if (!hookDet.settingsFound) {
-      hookStatusHtml = `<div class="hook-status hook-no"><span class="hook-status-text">CLI hooks: <strong>not installed</strong> (no Claude settings file yet)</span>${versionTag}</div>`;
-    } else if (hookDet.preHookFound || hookDet.postHookFound) {
-      hookStatusHtml = `<div class="hook-status hook-warn"><span class="hook-status-text">CLI hooks: <strong>incomplete</strong> — pre: ${
-        hookDet.preHookFound ? 'OK' : 'missing'
-      }, post: ${hookDet.postHookFound ? 'OK' : 'missing'}</span>${versionTag}</div>`;
-    } else {
-      hookStatusHtml = `<div class="hook-status hook-no"><span class="hook-status-text">CLI hooks: <strong>not installed</strong> for this extension</span>${versionTag}</div>`;
-    }
-
-    const installLabel = hooksOk ? 'Reinstall / update CLI hooks' : 'Install CLI hooks';
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    font-family: var(--vscode-font-family);
-    font-size: 12px;
-    color: var(--vscode-foreground);
-    background: var(--vscode-sideBar-background);
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    min-height: 100%;
-    user-select: none;
+  let hookStatusHtml = '';
+  if (hooksOk) {
+    hookStatusHtml = `<div class="hook-status hook-ok"><span class="hook-status-text">CLI hooks: active</span>${versionTag}</div>`;
+  } else if (!hookDet.settingsFound) {
+    hookStatusHtml = `<div class="hook-status hook-no"><span class="hook-status-text">CLI hooks: <strong>not installed</strong> (no Claude settings file yet)</span>${versionTag}</div>`;
+  } else if (hookDet.preHookFound || hookDet.postHookFound) {
+    hookStatusHtml = `<div class="hook-status hook-warn"><span class="hook-status-text">CLI hooks: <strong>incomplete</strong> — pre: ${
+      hookDet.preHookFound ? 'OK' : 'missing'
+    }, post: ${hookDet.postHookFound ? 'OK' : 'missing'}</span>${versionTag}</div>`;
+  } else {
+    hookStatusHtml = `<div class="hook-status hook-no"><span class="hook-status-text">CLI hooks: <strong>not installed</strong> for this extension</span>${versionTag}</div>`;
   }
 
-  .scroll-region {
+  const installLabel = hooksOk ? 'Reinstall / update CLI hooks' : 'Install CLI hooks';
+
+  return `
+    <div class="scroll-region">
+      ${statusHtml}
+      <div class="section">
+        ${pendingBlock}
+      </div>
+    </div>
+    <div class="bottom-stick">
+      <button type="button" class="btn-install" id="btn-install" title="Write hooks to ~/.claude/settings.json">
+        ${escapeHtml(installLabel)}
+      </button>
+      <p class="footer-note">Best with Claude, Codex, and Qwen. Hook install currently targets Claude.</p>
+      ${hookStatusHtml}
+    </div>
+  `;
+}
+
+/** CSS rules for the pending files page. Inlined into the unified webview's <style>. */
+export const PENDING_FILES_CSS = `
+  #files-wrap {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--vscode-sideBar-background);
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+  }
+  #files-wrap .scroll-region {
     flex: 1 1 0;
     min-height: 0;
     overflow-y: auto;
@@ -180,16 +121,15 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     display: flex;
     flex-direction: column;
     gap: 14px;
+    user-select: none;
   }
-
-  .bottom-stick {
+  #files-wrap .bottom-stick {
     flex-shrink: 0;
     padding: 10px 14px 12px;
     border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.28));
     background: var(--vscode-sideBar-background);
   }
-
-  .banner {
+  #files-wrap .banner {
     display: flex;
     gap: 10px;
     align-items: flex-start;
@@ -198,16 +138,15 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.25));
     background: var(--vscode-editor-inactiveSelectionBackground, rgba(128,128,128,0.08));
   }
-  .banner-run .banner-icon { color: var(--vscode-charts-yellow, #cca700); font-size: 16px; line-height: 1.2; }
-  .banner-err {
+  #files-wrap .banner-run .banner-icon { color: var(--vscode-charts-yellow, #cca700); font-size: 16px; line-height: 1.2; }
+  #files-wrap .banner-err {
     border-color: var(--vscode-inputValidation-errorBorder, rgba(241,76,76,0.45));
     background: var(--vscode-inputValidation-errorBackground, rgba(241,76,76,0.08));
   }
-  .banner-err .banner-icon { color: var(--vscode-errorForeground, #f14c4c); }
-  .banner-title { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; }
-  .banner-detail { margin-top: 4px; font-size: 12px; line-height: 1.45; opacity: 0.95; word-break: break-word; }
-
-  .section-title {
+  #files-wrap .banner-err .banner-icon { color: var(--vscode-errorForeground, #f14c4c); }
+  #files-wrap .banner-title { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; }
+  #files-wrap .banner-detail { margin-top: 4px; font-size: 12px; line-height: 1.45; opacity: 0.95; word-break: break-word; }
+  #files-wrap .section-title {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -218,7 +157,7 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     opacity: 0.75;
     margin-bottom: 6px;
   }
-  .badge {
+  #files-wrap .badge {
     font-size: 11px;
     font-weight: 700;
     padding: 2px 8px;
@@ -226,24 +165,18 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     background: var(--vscode-badge-background);
     color: var(--vscode-badge-foreground);
   }
-
-  /* Tree: mimic workbench file explorer (codicons + row layout; still HTML, not native widget) */
-  .file-tree {
+  #files-wrap .file-tree {
     display: flex;
     flex-direction: column;
     font-size: 13px;
     line-height: 22px;
     color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
   }
-  .tree-node { outline: none; }
-  .tree-node > .tree-row-folder {
-    list-style: none;
-    cursor: pointer;
-  }
-  .tree-node > .tree-row-folder::-webkit-details-marker { display: none; }
-  .tree-node > .tree-row-folder::marker { content: ''; }
-
-  .tree-row {
+  #files-wrap .tree-node { outline: none; }
+  #files-wrap .tree-node > .tree-row-folder { list-style: none; cursor: pointer; }
+  #files-wrap .tree-node > .tree-row-folder::-webkit-details-marker { display: none; }
+  #files-wrap .tree-node > .tree-row-folder::marker { content: ''; }
+  #files-wrap .tree-row {
     display: flex;
     align-items: center;
     min-height: 22px;
@@ -261,15 +194,12 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     width: 100%;
     box-sizing: border-box;
   }
-  .tree-row:hover {
-    background: var(--vscode-list-hoverBackground);
-  }
-  .tree-row:focus-visible {
+  #files-wrap .tree-row:hover { background: var(--vscode-list-hoverBackground); }
+  #files-wrap .tree-row:focus-visible {
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: -1px;
   }
-
-  .tree-twist {
+  #files-wrap .tree-twist {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -280,19 +210,12 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     color: var(--vscode-icon-foreground);
     opacity: 0.9;
   }
-  .tree-twist-file {
-    flex-shrink: 0;
-    width: 16px;
-    height: 16px;
-    margin-right: 1px;
-  }
-
-  .tree-node:not([open]) .tree-chev-open { display: none !important; }
-  .tree-node[open] .tree-chev-closed { display: none !important; }
-  .tree-node:not([open]) .tree-ico-open { display: none !important; }
-  .tree-node[open] .tree-ico-closed { display: none !important; }
-
-  .tree-ico-slot {
+  #files-wrap .tree-twist-file { flex-shrink: 0; width: 16px; height: 16px; margin-right: 1px; }
+  #files-wrap .tree-node:not([open]) .tree-chev-open { display: none !important; }
+  #files-wrap .tree-node[open] .tree-chev-closed { display: none !important; }
+  #files-wrap .tree-node:not([open]) .tree-ico-open { display: none !important; }
+  #files-wrap .tree-node[open] .tree-ico-closed { display: none !important; }
+  #files-wrap .tree-ico-slot {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -302,28 +225,18 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     margin-right: 4px;
     color: var(--vscode-icon-foreground);
   }
-  .tree-row-file .tree-ico-slot {
-    opacity: 0.92;
-  }
-
-  .tree-label {
+  #files-wrap .tree-row-file .tree-ico-slot { opacity: 0.92; }
+  #files-wrap .tree-label {
     flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .tree-row-folder .tree-label {
-    font-weight: 400;
-  }
-
-  .tree-children {
-    display: block;
-  }
-
-  .empty-pending { font-size: 12px; opacity: 0.45; font-style: italic; padding: 8px 0; }
-
-  .btn-install {
+  #files-wrap .tree-row-folder .tree-label { font-weight: 400; }
+  #files-wrap .tree-children { display: block; }
+  #files-wrap .empty-pending { font-size: 12px; opacity: 0.45; font-style: italic; padding: 8px 0; }
+  #files-wrap .btn-install {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -340,12 +253,10 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     background: var(--vscode-button-background);
     transition: filter 0.12s;
   }
-  .btn-install:hover { filter: brightness(1.08); }
-  .btn-install:active { filter: brightness(0.95); }
-
-  .footer-note { font-size: 10px; opacity: 0.4; line-height: 1.35; margin-top: 8px; }
-
-  .hook-status {
+  #files-wrap .btn-install:hover { filter: brightness(1.08); }
+  #files-wrap .btn-install:active { filter: brightness(0.95); }
+  #files-wrap .footer-note { font-size: 10px; opacity: 0.4; line-height: 1.35; margin-top: 8px; }
+  #files-wrap .hook-status {
     font-size: 11px;
     line-height: 1.45;
     padding: 8px 10px;
@@ -355,9 +266,10 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     align-items: center;
     justify-content: space-between;
     gap: 6px;
+    margin-top: 12px;
   }
-  .hook-status-text { flex: 1; min-width: 0; }
-  .hook-version {
+  #files-wrap .hook-status-text { flex: 1; min-width: 0; }
+  #files-wrap .hook-version {
     flex-shrink: 0;
     font-size: 10px;
     opacity: 0.6;
@@ -366,58 +278,18 @@ export class SessionPanelProvider implements vscode.WebviewViewProvider {
     padding: 1px 6px;
     border-radius: 4px;
     border: 1px solid currentColor;
-    border-opacity: 0.3;
   }
-  .hook-ok {
+  #files-wrap .hook-ok {
     color: var(--vscode-testing-iconPassed, #73c991);
     background: rgba(115, 201, 145, 0.08);
     border-color: var(--vscode-testing-iconPassed, rgba(115,201,145,0.35));
   }
-  .hook-no { opacity: 0.9; }
-  .hook-warn {
+  #files-wrap .hook-no { opacity: 0.9; }
+  #files-wrap .hook-warn {
     color: var(--vscode-editorWarning-foreground, #cca700);
     background: rgba(204, 167, 0, 0.08);
   }
-  .bottom-stick .hook-status {
-    margin-top: 12px;
-    margin-bottom: 0;
-  }
-</style>
-</head>
-<body>
-  <div class="scroll-region">
-    ${statusHtml}
-    <div class="section">
-      ${pendingBlock}
-    </div>
-  </div>
-  <div class="bottom-stick">
-    <button type="button" class="btn-install" id="btn-install" title="Write hooks to ~/.claude/settings.json">
-      ${escapeHtml(installLabel)}
-    </button>
-    <p class="footer-note">Best with Claude, Codex, and Qwen. Hook install currently targets Claude.</p>
-    ${hookStatusHtml}
-  </div>
-  <script>
-    const vscode = acquireVsCodeApi();
-    (function bindFileTree() {
-      var el = document.getElementById('file-tree');
-      if (!el) return;
-      el.querySelectorAll('.tree-row-file').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var p = btn.getAttribute('data-path');
-          if (p) vscode.postMessage({ command: 'openFile', path: p });
-        });
-      });
-    })();
-    document.getElementById('btn-install').addEventListener('click', function () {
-      vscode.postMessage({ command: 'installHooks' });
-    });
-  </script>
-</body>
-</html>`;
-  }
-}
+`;
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -532,7 +404,6 @@ function buildPendingTreeModel(pending: string[]): TreeJson {
   return dirBuildToJson(root);
 }
 
-/** Map extension → tên file SVG trong material-icon-theme/icons/ */
 const EXT_ICON: Record<string, string> = {
   ts: 'typescript', tsx: 'react_ts',
   js: 'javascript', jsx: 'react',  mjs: 'javascript', cjs: 'javascript',

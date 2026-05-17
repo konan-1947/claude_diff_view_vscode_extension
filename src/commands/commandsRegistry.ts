@@ -2,20 +2,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
-import { SessionPanelProvider } from '../views/sessionPanel';
+import { TerminalPanelProvider } from '../terminal/terminalPanel';
 import { IAiRunner } from '../runner/aiRunner';
 import { createRunner } from '../runner/runnerFactory';
 
 export interface CommandDeps {
   diffManager: DiffManager;
-  sessionPanel: SessionPanelProvider;
+  panel: TerminalPanelProvider;
   context: vscode.ExtensionContext;
   getRunner(): IAiRunner | undefined;
   setRunner(runner: IAiRunner): void;
 }
 
 export function registerAllCommands(deps: CommandDeps): void {
-  const { diffManager, sessionPanel, context } = deps;
+  const { diffManager, panel, context } = deps;
 
   function getActiveDiffFilePath(): string | undefined {
     const editor = vscode.window.activeTextEditor;
@@ -80,7 +80,7 @@ export function registerAllCommands(deps: CommandDeps): void {
         return;
       }
 
-      sessionPanel.setRunning(prompt);
+      panel.setRunning(prompt);
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `AI CLI Diff (${toolLabel})`, cancellable: false },
         async (progress) => {
@@ -91,11 +91,11 @@ export function registerAllCommands(deps: CommandDeps): void {
 
           try {
             await runner.run(prompt, workingDir, () => {}, onProgress);
-            sessionPanel.setIdle();
+            panel.setIdle();
             vscode.window.showInformationMessage(`${toolLabel} session complete.`);
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            sessionPanel.setError(message);
+            panel.setError(message);
             vscode.window.showErrorMessage(`${toolLabel} session failed: ${message}`);
           }
         }
@@ -214,7 +214,7 @@ export function registerAllCommands(deps: CommandDeps): void {
         fs.mkdirSync(settingsDir, { recursive: true });
       }
       fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-      sessionPanel.refresh();
+      panel.refresh();
       vscode.window.showInformationMessage(
         `${toolLabel} hooks installed. AI CLI Diff will now track \`${runner.toolName}\` edits from any terminal.`
       );

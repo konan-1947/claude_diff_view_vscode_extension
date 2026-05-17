@@ -4,7 +4,6 @@ import { IAiRunner } from './runner/aiRunner';
 import { HookWatcher } from './watcher/hookWatcher';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
-import { SessionPanelProvider } from './views/sessionPanel';
 import { HunkCodeLensProvider } from './diff/hunkCodeLensProvider';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
@@ -20,7 +19,6 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   const diffManager       = new DiffManager(context);
-  const sessionPanel      = new SessionPanelProvider(diffManager, context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);
   const fsHookWatcher     = new HookWatcher(diffManager);
   const gitBranchWatcher  = new GitBranchWatcher(diffManager);
@@ -43,15 +41,10 @@ export function activate(context: vscode.ExtensionContext): void {
     { dispose: () => fsHookWatcher.dispose() },
     { dispose: () => workspaceWatcher.dispose() },
     { dispose: () => gitBranchWatcher.dispose() },
-    { dispose: () => sessionPanel.dispose() },
     { dispose: () => activeRunner?.cancel?.() }
   );
 
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(SessionPanelProvider.viewType, sessionPanel)
-  );
-
-  const terminalPanel = new TerminalPanelProvider(context);
+  const terminalPanel = new TerminalPanelProvider(context, diffManager);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       TerminalPanelProvider.viewType,
@@ -91,7 +84,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerAllCommands({
     diffManager,
-    sessionPanel,
+    panel: terminalPanel,
     context,
     getRunner: () => activeRunner,
     setRunner: (r) => { activeRunner = r; },
