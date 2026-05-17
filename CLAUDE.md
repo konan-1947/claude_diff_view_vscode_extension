@@ -43,14 +43,14 @@ This is the primary path for edits made outside the built-in runner.
 2. `hooks/post-tool-hook.js` writes a JSON signal into the temp signal directory.
 3. `src/watcher/hookWatcher.ts` consumes the signal, ignores files outside the current workspace, loads the stored snapshot into `DiffManager`, and opens the diff.
 
-Hook installation is managed by the `ai-cli-diff-view.installHooks` command in `src/commands/commandsRegistry.ts`. It rewrites `~/.claude/settings.json` with `PreToolUse` and `PostToolUse` hook entries pointing at this extension's bundled hook scripts. `src/claude/hookInstallDetect.ts` reads the same settings file to drive the sidebar hook status.
+Hook installation is managed by the `ai-cli-diff-view.installHooks` command in `src/commands/commandsRegistry.ts`. It rewrites `~/.claude/settings.json` with `PreToolUse` and `PostToolUse` hook entries pointing at this extension's bundled hook scripts. `src/commands/hookInstallDetect.ts` reads the same settings file to drive the sidebar hook status.
 
 **Built-in Claude runner pipeline**
 
 The built-in session path is Claude-only right now.
 
-1. `src/claude/runnerFactory.ts` detects whether `claude` is available on PATH.
-2. `src/claude/claudeRunner.ts` spawns `claude --output-format stream-json --verbose -p <prompt>`.
+1. `src/runner/runnerFactory.ts` detects whether `claude` is available on PATH.
+2. `src/runner/claudeRunner.ts` spawns `claude --output-format stream-json --verbose -p <prompt>`.
 3. While parsing the NDJSON stream, it snapshots files before `Write`/`Edit`/`MultiEdit` tool calls and opens diffs when tool results arrive.
 
 ### Diff state model

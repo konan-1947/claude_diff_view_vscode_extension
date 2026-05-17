@@ -11,13 +11,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { InlineDiffRenderer } from './inlineDiffRenderer';
 import { calculateHunks } from './hunkCalculator';
-
-const STATE_KEY = 'ai-cli-diff.snapshots';
-
-interface SnapshotState {
-  content: string;
-  fileExistedBefore: boolean;
-}
+import { SnapshotStore, SnapshotState } from './snapshotStore';
 
 /** Normalize về cùng định dạng mà vscode.Uri.fsPath sử dụng. */
 function normalizePath(filePath: string): string {
@@ -34,12 +28,17 @@ export class DiffManager {
   /** Lưu nội dung gốc TRƯỚC khi sửa (để tính diff) */
   private snapshots: Map<string, SnapshotState> = new Map();
   private snapshotQueries: Map<string, string> = new Map();
+  private readonly store: SnapshotStore;
 
   public readonly renderer: InlineDiffRenderer;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.renderer = new InlineDiffRenderer(context.extensionUri);
-    this.restoreState();
+    this.store = new SnapshotStore(context.workspaceState);
+    this.snapshots = this.store.load();
+    for (const absPath of this.snapshots.keys()) {
+      this.snapshotQueries.set(absPath, Date.now().toString());
+    }
 
     context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider('ai-cli-diff', {
@@ -52,35 +51,6 @@ export class DiffManager {
         }
       })
     );
-  }
-
-  // ---- State persistence (chỉ lưu đường dẫn để mở lại sau khi restart VS Code) ----
-
-  private restoreState(): void {
-    const saved = this.context.workspaceState.get<Record<string, string | SnapshotState>>(STATE_KEY, {});
-    for (const [absPath, savedSnapshot] of Object.entries(saved)) {
-      if (!fs.existsSync(absPath)) { continue; }
-      this.snapshots.set(absPath, this.normalizeSavedSnapshot(savedSnapshot));
-      this.snapshotQueries.set(absPath, Date.now().toString());
-    }
-  }
-
-  private persistState(): void {
-    const obj: Record<string, SnapshotState> = {};
-    for (const [absPath, snapshot] of this.snapshots.entries()) {
-      obj[absPath] = snapshot;
-    }
-    this.context.workspaceState.update(STATE_KEY, obj);
-  }
-
-  private normalizeSavedSnapshot(savedSnapshot: string | SnapshotState): SnapshotState {
-    if (typeof savedSnapshot === 'string') {
-      return { content: savedSnapshot, fileExistedBefore: true };
-    }
-    return {
-      content: savedSnapshot.content,
-      fileExistedBefore: savedSnapshot.fileExistedBefore === false ? false : true,
-    };
   }
 
   // ---- Public API ----
@@ -105,7 +75,7 @@ export class DiffManager {
       this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
       this.snapshotQueries.set(absPath, Date.now().toString());
     }
-    this.persistState();
+    void this.store.save(this.snapshots);
   }
 
   /**
@@ -132,7 +102,7 @@ export class DiffManager {
     if (hunks.length === 0) {
       this.snapshots.delete(absPath);
       this.snapshotQueries.delete(absPath);
-      this.persistState();
+      void this.store.save(this.snapshots);
 
       // Vẫn gọi renderer để nó dọn decorations/nav cho editor hiện tại.
       this.renderer.show(absPath, snapshot.content, modifiedContent);
@@ -164,7 +134,7 @@ export class DiffManager {
     if (!this.snapshots.has(absPath)) {
       this.snapshots.set(absPath, { content, fileExistedBefore });
       this.snapshotQueries.set(absPath, Date.now().toString());
-      this.persistState();
+      void this.store.save(this.snapshots);
       this._onDidChangeDiffs.fire();
     }
   }
@@ -185,7 +155,7 @@ export class DiffManager {
       
       const newSnapshot = lines.join('\n');
       this.snapshots.set(absPath, { ...oldSnapshot, content: newSnapshot });
-      this.persistState();
+      void this.store.save(this.snapshots);
 
       // Thông báo cho VS Code nạp lại nội dung bên trái (Original) của màn hình Diff
       const queryId = this.snapshotQueries.get(absPath) || '';
@@ -327,7 +297,7 @@ export class DiffManager {
    * Xoá toàn bộ pending diffs khi không còn hợp lệ (vd: đổi git branch).
    * Khác `disposeAll` ở chỗ: cũng đóng các tab diff đang mở và xoá luôn
    * snapshot đã persist trong workspaceState, để sau khi reload VS Code
-   * snapshot cũ không bị `restoreState()` kéo trở lại.
+   * snapshot cũ không bị `SnapshotStore.load()` kéo trở lại.
    */
   async clearAll(): Promise<void> {
     for (const group of vscode.window.tabGroups.all) {
@@ -340,7 +310,7 @@ export class DiffManager {
     }
 
     this.disposeAll();
-    await this.context.workspaceState.update(STATE_KEY, undefined);
+    await this.store.clear();
   }
 
   private async cleanup(
@@ -351,7 +321,7 @@ export class DiffManager {
 
     this.snapshots.delete(absPath);
     this.snapshotQueries.delete(absPath);
-    this.persistState();
+    void this.store.save(this.snapshots);
 
     // Xóa inline diff state/decorations và cập nhật nav UI ngay.
     this.renderer.clear(absPath);

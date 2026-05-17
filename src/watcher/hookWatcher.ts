@@ -15,6 +15,9 @@ interface SignalFile {
 export class HookWatcher {
   private watcher: fs.FSWatcher | undefined;
   private readonly signalDir: string;
+  private readonly pendingTimers = new Set<NodeJS.Timeout>();
+  /** Signals older than this are considered stale leftovers from foreign workspaces. */
+  private static readonly STALE_SIGNAL_MS = 24 * 60 * 60 * 1000;
 
   constructor(private readonly diffManager: DiffManager) {
     this.signalDir = path.join(os.tmpdir(), 'ai-cli-diff-signals');
@@ -37,6 +40,8 @@ export class HookWatcher {
       fs.mkdirSync(this.signalDir, { recursive: true });
     }
 
+    this.pruneOldSignals();
+
     // Process any leftover signals from a previous session
     this.drainExisting();
 
@@ -44,13 +49,41 @@ export class HookWatcher {
       if (filename && filename.endsWith('.json')) {
         const signalPath = path.join(this.signalDir, filename);
         // Small delay to ensure the hook script has finished writing
-        setTimeout(() => this.processSignal(signalPath), 150);
+        const timer = setTimeout(() => {
+          this.pendingTimers.delete(timer);
+          this.processSignal(signalPath);
+        }, 150);
+        this.pendingTimers.add(timer);
       }
     });
 
     this.watcher.on('error', (err) => {
       console.error('[ai-cli-diff-view] hookWatcher error:', err);
     });
+  }
+
+  /**
+   * Signals belonging to a workspace that isn't currently open are skipped
+   * (and intentionally not unlinked) so another VS Code window can pick them up.
+   * If no window ever does, they linger forever — prune any older than a day.
+   */
+  private pruneOldSignals(): void {
+    try {
+      const cutoff = Date.now() - HookWatcher.STALE_SIGNAL_MS;
+      for (const file of fs.readdirSync(this.signalDir)) {
+        if (!file.endsWith('.json')) { continue; }
+        const fullPath = path.join(this.signalDir, file);
+        try {
+          if (fs.statSync(fullPath).mtimeMs < cutoff) {
+            fs.unlinkSync(fullPath);
+          }
+        } catch {
+          // file may have been consumed concurrently — ignore
+        }
+      }
+    } catch {
+      // signalDir missing or unreadable — ignore
+    }
   }
 
   private drainExisting(): void {
@@ -124,5 +157,9 @@ export class HookWatcher {
   dispose(): void {
     this.watcher?.close();
     this.watcher = undefined;
+    for (const timer of this.pendingTimers) {
+      clearTimeout(timer);
+    }
+    this.pendingTimers.clear();
   }
 }

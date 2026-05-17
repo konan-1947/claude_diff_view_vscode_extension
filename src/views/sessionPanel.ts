@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
-import { detectOurClaudeHooks, hooksFullyActive } from '../claude/hookInstallDetect';
+import { detectOurClaudeHooks, hooksFullyActive } from '../commands/hookInstallDetect';
 
 type SessionState = 'idle' | 'running' | 'error';
 

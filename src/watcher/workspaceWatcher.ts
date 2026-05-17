@@ -24,6 +24,11 @@ export class WorkspaceWatcher {
   /** Lưu thời điểm VS Code vừa Save file (để bỏ qua fs.watch trigger từ chính VS Code) */
   private savedFilesByVsCode = new Map<string, number>();
   private readonly snapshots: FileSnapshotStore;
+  private readonly pendingTimers = new Set<NodeJS.Timeout>();
+  /** Debounce window is 500ms — keep entries an order of magnitude longer for safety, then drop. */
+  private static readonly LAST_PROCESSED_TTL_MS = 60_000;
+  /** VS Code save guard window is 2s — same safety multiplier. */
+  private static readonly SAVED_BY_VSCODE_TTL_MS = 10_000;
 
   constructor(private readonly diffManager: DiffManager) {
     this.snapshots = new FileSnapshotStore();
@@ -52,12 +57,27 @@ export class WorkspaceWatcher {
       const filePath = this.normalizePath(doc.uri.fsPath);
       this.snapshots.set(filePath, doc.getText());
       this.savedFilesByVsCode.set(filePath, Date.now());
+      this.pruneStaleMapEntries();
 
       if (this.diffManager.hasPendingDiff(filePath)) {
         this.diffManager.renderer.applyDecorations(filePath);
       }
     });
     this.disposables.push(d);
+  }
+
+  private pruneStaleMapEntries(): void {
+    const now = Date.now();
+    for (const [key, ts] of this.lastProcessed) {
+      if (now - ts > WorkspaceWatcher.LAST_PROCESSED_TTL_MS) {
+        this.lastProcessed.delete(key);
+      }
+    }
+    for (const [key, ts] of this.savedFilesByVsCode) {
+      if (now - ts > WorkspaceWatcher.SAVED_BY_VSCODE_TTL_MS) {
+        this.savedFilesByVsCode.delete(key);
+      }
+    }
   }
 
   private watchWorkspaceFolders(): void {
@@ -116,12 +136,14 @@ export class WorkspaceWatcher {
     const lastTime = this.lastProcessed.get(absPath) ?? 0;
     if (now - lastTime < 500) { return; }
     this.lastProcessed.set(absPath, now);
+    this.pruneStaleMapEntries();
 
     if (!isTextFile(path.basename(absPath))) { return; }
     if (!this.isInWorkspace(absPath)) { return; }
 
     // Đọc nội dung mới từ disk sau một chút để đảm bảo write xong
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      this.pendingTimers.delete(timer);
       // Re-check after timeout in case VS Code onDidSaveTextDocument fired during the 200ms delay
       const lastVsCodeSaveAfterTimeout = this.savedFilesByVsCode.get(absPath) ?? 0;
       if (Date.now() - lastVsCodeSaveAfterTimeout < 2000) {
@@ -158,6 +180,7 @@ export class WorkspaceWatcher {
         // file đang bị lock hoặc xóa — bỏ qua
       }
     }, 200);
+    this.pendingTimers.add(timer);
   }
 
   private triggerDiff(filePath: string, originalContent: string, newContent: string, fileExistedBefore: boolean): void {
@@ -182,6 +205,10 @@ export class WorkspaceWatcher {
   dispose(): void {
     for (const d of this.disposables) { d.dispose(); }
     this.disposables = [];
+    for (const timer of this.pendingTimers) {
+      clearTimeout(timer);
+    }
+    this.pendingTimers.clear();
   }
 }
 

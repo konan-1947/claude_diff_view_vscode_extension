@@ -40,4 +40,10 @@ export interface IAiRunner {
    * Dùng cho hook matcher.
    */
   getFileEditToolNames(): string[];
+
+  /**
+   * Huỷ session đang chạy (kill child process) nếu có.
+   * Dùng khi extension deactivate để tránh orphan process.
+   */
+  cancel?(): void;
 }

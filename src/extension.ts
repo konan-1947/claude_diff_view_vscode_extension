@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { DiffManager } from './diff/diffManager';
-import { IAiRunner } from './claude/aiRunner';
+import { IAiRunner } from './runner/aiRunner';
 import { HookWatcher } from './watcher/hookWatcher';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
@@ -43,7 +43,8 @@ export function activate(context: vscode.ExtensionContext): void {
     { dispose: () => fsHookWatcher.dispose() },
     { dispose: () => workspaceWatcher.dispose() },
     { dispose: () => gitBranchWatcher.dispose() },
-    { dispose: () => sessionPanel.dispose() }
+    { dispose: () => sessionPanel.dispose() },
+    { dispose: () => activeRunner?.cancel?.() }
   );
 
   context.subscriptions.push(

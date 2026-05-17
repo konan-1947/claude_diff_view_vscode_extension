@@ -3,8 +3,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
 import { SessionPanelProvider } from '../views/sessionPanel';
-import { IAiRunner } from '../claude/aiRunner';
-import { createRunner } from '../claude/runnerFactory';
+import { IAiRunner } from '../runner/aiRunner';
+import { createRunner } from '../runner/runnerFactory';
 
 export interface CommandDeps {
   diffManager: DiffManager;

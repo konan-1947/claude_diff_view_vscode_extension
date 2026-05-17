@@ -53,8 +53,18 @@ export type { StatusCallback, ProgressCallback };
 
 export class ClaudeRunner implements IAiRunner {
   readonly toolName = 'claude';
+  private currentProc: cp.ChildProcess | undefined;
 
   constructor(private readonly diffManager: DiffManager) {}
+
+  cancel(): void {
+    try {
+      this.currentProc?.kill();
+    } catch {
+      // process may have already exited
+    }
+    this.currentProc = undefined;
+  }
 
   /**
    * Claude CLI có thể trả về path tương đối so với workingDir.
@@ -144,6 +154,7 @@ export class ClaudeRunner implements IAiRunner {
         env: { ...process.env },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      this.currentProc = proc;
 
       // NDJSON line buffer — chunks may split across lines
       let lineBuffer = '';
@@ -181,6 +192,7 @@ export class ClaudeRunner implements IAiRunner {
       onStatus('running');
 
       proc.on('close', (code) => {
+        if (this.currentProc === proc) { this.currentProc = undefined; }
         onStatus('idle');
         if (code === 0 || code === null) {
           resolve();
@@ -190,6 +202,7 @@ export class ClaudeRunner implements IAiRunner {
       });
 
       proc.on('error', (err) => {
+        if (this.currentProc === proc) { this.currentProc = undefined; }
         onStatus('error', err.message);
         reject(err);
       });
