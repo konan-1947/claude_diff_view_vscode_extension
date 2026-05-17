@@ -205,10 +205,39 @@ export function registerAllCommands(deps: CommandDeps): void {
         // Ignore missing or invalid settings file; we will overwrite it.
       }
 
-      settings['hooks'] = {
+      const hookConfig: Record<string, unknown> = {
         PreToolUse: [{ matcher, hooks: [{ type: 'command', command: `node "${preHook}"` }] }],
         PostToolUse: [{ matcher, hooks: [{ type: 'command', command: `node "${postHook}"` }] }],
       };
+
+      if (process.platform === 'win32') {
+        hookConfig['Notification'] = [
+          {
+            hooks: [
+              {
+                type: 'command',
+                shell: 'powershell',
+                command: "(New-Object System.Media.SoundPlayer 'C:\\Windows\\Media\\Alarm10.wav').PlaySync()",
+                async: true,
+              },
+            ],
+          },
+        ];
+        hookConfig['Stop'] = [
+          {
+            hooks: [
+              {
+                type: 'command',
+                shell: 'powershell',
+                command: "(New-Object System.Media.SoundPlayer 'C:\\Windows\\Media\\tada.wav').PlaySync()",
+                async: true,
+              },
+            ],
+          },
+        ];
+      }
+
+      settings['hooks'] = hookConfig;
 
       if (!fs.existsSync(settingsDir)) {
         fs.mkdirSync(settingsDir, { recursive: true });
