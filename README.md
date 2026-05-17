@@ -1,27 +1,40 @@
 # AI CLI diff view
 
-VS Code extension for reviewing AI-generated file edits as inline diffs inside the editor.
+VS Code extension for reviewing AI CLI file edits as inline diffs inside the editor.
 
-Best supported workflows: **Claude**, **Codex**, and **Qwen**.
+## Features
 
-Current integration details:
-- Built-in session launch and hook install currently target **Claude Code**.
-- Workspace file watching still lets you review external edits coming from other AI CLIs.
+![Accept or reject in the side panel](media/introduce/image1.png)
+
+*Accept or reject each AI change with one click in the side panel.*
+
+---
+
+![Embedded terminal](media/introduce/image2.png)
+
+*Run an AI CLI agent right inside the embedded terminal.*
+
+---
+
+![Real folder structure](media/introduce/image3.png)
+
+*See changed files in their real folder structure.*
+
+---
+
+![Inline hunk review](media/introduce/image4.png)
+
+*Review changes hunk by hunk directly in the editor.*
+
+---
+
+![Terminal settings](media/introduce/image5.png)
+
+*Customize terminal font, theme, and cursor from the Settings popover.*
 
 ## Usage
-1. If you use Claude Code, click `Install Claude CLI Hooks` in the sidebar.
-2. Run your AI CLI workflow in the terminal.
-3. Review pending diffs directly inside VS Code.
 
-## Positioning
-- `Claude`: strongest built-in integration today.
-- `Codex`: works well through external file-change monitoring.
-- `Qwen`: works well through external file-change monitoring.
+1. Click `Install Hooks` in the AI CLI sidebar to wire your AI CLI into the extension.
+2. Run your AI CLI workflow in the embedded terminal (or externally).
+3. Review pending diffs directly inside VS Code — accept or revert hunk by hunk.
 
----
-
-<img alt="Screenshot 2026-03-29 160654" src="https://github.com/user-attachments/assets/d8c894fe-d4b6-4f17-bbdc-7274f849830a" />
-
----
-
-<img alt="Screenshot 2026-03-29 160727" src="https://github.com/user-attachments/assets/a0305d90-2f11-4ecf-8f90-ac88c7c0916d" />
