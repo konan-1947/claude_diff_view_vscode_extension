@@ -1,4 +1,5 @@
 import * as os from 'os';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { PtySession } from './ptySession';
 import { findInstallableForPrimary, installFont } from './fontInstaller';
@@ -62,10 +63,12 @@ const FONT_OPTIONS: ReadonlyArray<FontOption> = [
 ];
 
 type IncomingMessage =
-  | { type: 'ready'; cols: number; rows: number }
-  | { type: 'input'; data: string }
-  | { type: 'resize'; cols: number; rows: number }
-  | { type: 'restart' }
+  | { type: 'ready' }
+  | { type: 'createSession'; cols: number; rows: number }
+  | { type: 'closeSession'; id: string }
+  | { type: 'input'; id: string; data: string }
+  | { type: 'resize'; id: string; cols: number; rows: number }
+  | { type: 'restart'; id: string }
   | { type: 'getSettings' }
   | { type: 'updateSettings'; settings: TerminalSettings }
   | { type: 'installFont'; primary: string }
@@ -74,12 +77,20 @@ type IncomingMessage =
   | { type: 'installHooks' }
   | { type: 'introduceSeen' };
 
+interface SessionRecord {
+  pty: PtySession;
+  subs: vscode.Disposable[];
+  title: string;
+  cols: number;
+  rows: number;
+}
+
 export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ai-cli-diff-view.terminal';
 
   private view?: vscode.WebviewView;
-  private pty = new PtySession();
-  private subs: vscode.Disposable[] = [];
+  private sessions = new Map<string, SessionRecord>();
+  private nextSessionNum = 0;
 
   private sessionState: SessionState = 'idle';
   private lastPrompt = '';
@@ -90,7 +101,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly diffManager: DiffManager
   ) {
-    this.wirePtyEvents();
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
       this.postFilesUpdate();
     });
@@ -143,18 +153,42 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       .toString() + '/';
   }
 
-  private wirePtyEvents(): void {
-    this.subs.push(
-      this.pty.onData((data) => {
-        this.view?.webview.postMessage({ type: 'data', data });
+  private spawnSession(cols: number, rows: number): { id: string; title: string } {
+    this.nextSessionNum += 1;
+    const id = `s${this.nextSessionNum}`;
+    const title = resolveShellName();
+    const pty = new PtySession();
+    const subs: vscode.Disposable[] = [
+      pty.onData((data) => {
+        this.view?.webview.postMessage({ type: 'data', id, data });
       }),
-      this.pty.onExit((code) => {
-        this.view?.webview.postMessage({ type: 'exit', code });
+      pty.onExit((code) => {
+        this.view?.webview.postMessage({ type: 'exit', id, code });
       }),
-      this.pty.onError((message) => {
-        this.view?.webview.postMessage({ type: 'error', message });
-      })
-    );
+      pty.onError((message) => {
+        this.view?.webview.postMessage({ type: 'error', id, message });
+      }),
+    ];
+    const safeCols = Math.max(1, cols | 0);
+    const safeRows = Math.max(1, rows | 0);
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
+    pty.start(cwd, safeCols, safeRows);
+    this.sessions.set(id, { pty, subs, title, cols: safeCols, rows: safeRows });
+    this.view?.webview.postMessage({ type: 'sessionCreated', id, title });
+    return { id, title };
+  }
+
+  private closeSessionInternal(id: string): void {
+    const rec = this.sessions.get(id);
+    if (!rec) {
+      return;
+    }
+    for (const d of rec.subs) {
+      try { d.dispose(); } catch { /* ignore */ }
+    }
+    try { rec.pty.dispose(); } catch { /* ignore */ }
+    this.sessions.delete(id);
+    this.view?.webview.postMessage({ type: 'sessionClosed', id });
   }
 
   private loadSettings(): TerminalSettings {
@@ -215,33 +249,64 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       }
       switch (msg.type) {
         case 'ready':
-          if (!this.pty.isRunning()) {
-            const cwd =
-              vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
-            this.pty.start(cwd, msg.cols, msg.rows);
-          } else {
-            this.pty.resize(msg.cols, msg.rows);
-          }
           // Push initial files page state once the webview is ready.
           this.postFilesUpdate();
           if (!this.context.globalState.get<boolean>(INTRODUCE_SEEN_KEY)) {
             void this.view?.webview.postMessage({ type: 'showIntroduce' });
           }
           return;
+        case 'createSession':
+          this.spawnSession(msg.cols, msg.rows);
+          return;
+        case 'closeSession':
+          this.closeSessionInternal(msg.id);
+          if (this.sessions.size === 0) {
+            this.spawnSession(80, 24);
+          }
+          return;
         case 'input':
-          this.pty.write(msg.data);
+          this.sessions.get(msg.id)?.pty.write(msg.data);
           return;
-        case 'resize':
-          this.pty.resize(msg.cols, msg.rows);
+        case 'resize': {
+          const rec = this.sessions.get(msg.id);
+          if (rec) {
+            rec.cols = Math.max(1, msg.cols | 0);
+            rec.rows = Math.max(1, msg.rows | 0);
+            rec.pty.resize(rec.cols, rec.rows);
+          }
           return;
-        case 'restart':
-          this.pty.dispose();
-          this.pty = new PtySession();
-          this.subs.forEach((d) => { try { d.dispose(); } catch { /* ignore */ } });
-          this.subs = [];
-          this.wirePtyEvents();
-          this.render();
+        }
+        case 'restart': {
+          const old = this.sessions.get(msg.id);
+          if (!old) {
+            return;
+          }
+          const { cols, rows, title } = old;
+          // Dispose old pty + subs but keep the id; emit data/exit/error under the same id.
+          for (const d of old.subs) {
+            try { d.dispose(); } catch { /* ignore */ }
+          }
+          try { old.pty.dispose(); } catch { /* ignore */ }
+          this.sessions.delete(msg.id);
+
+          const pty = new PtySession();
+          const id = msg.id;
+          const subs: vscode.Disposable[] = [
+            pty.onData((data) => {
+              this.view?.webview.postMessage({ type: 'data', id, data });
+            }),
+            pty.onExit((code) => {
+              this.view?.webview.postMessage({ type: 'exit', id, code });
+            }),
+            pty.onError((message) => {
+              this.view?.webview.postMessage({ type: 'error', id, message });
+            }),
+          ];
+          const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
+          pty.start(cwd, cols, rows);
+          this.sessions.set(id, { pty, subs, title, cols, rows });
           return;
+        }
         case 'getSettings':
           this.view?.webview.postMessage({ type: 'settings', settings: this.loadSettings() });
           return;
@@ -437,6 +502,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
   /* Page switching */
   body.page-files #term-wrap { display: none; }
+  body.page-files #tab-strip { display: none; }
   body.page-terminal #files-wrap { display: none; }
   body.page-files #btn-settings { display: none; }
   body.page-terminal .title-files { display: none; }
@@ -445,6 +511,91 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   body.page-terminal .toggle-to-terminal { display: none; }
   body.page-files .toggle-to-files { display: none; }
   body.page-files .toggle-to-terminal { display: inline-flex; }
+
+  /* Tab strip */
+  #tab-strip {
+    flex: 0 0 28px;
+    height: 28px;
+    display: flex;
+    align-items: stretch;
+    background: var(--vscode-sideBar-background);
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+    font-family: var(--vscode-font-family);
+    font-size: 11px;
+    user-select: none;
+    min-width: 0;
+  }
+  .tabs {
+    flex: 1 1 auto;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-width: 0;
+    scrollbar-width: thin;
+  }
+  .tabs::-webkit-scrollbar { height: 4px; }
+  .tabs::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(128,128,128,0.4)); border-radius: 2px; }
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px 0 10px;
+    min-width: 90px;
+    max-width: 160px;
+    height: 100%;
+    border-right: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.18));
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    box-sizing: border-box;
+    color: var(--vscode-foreground);
+    opacity: 0.78;
+  }
+  .tab:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.12)); opacity: 1; }
+  .tab.active {
+    background: var(--vscode-editor-background);
+    opacity: 1;
+  }
+  .tab.active::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 1px;
+    background: var(--vscode-focusBorder, #007fd4);
+  }
+  .tab-title {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tab-close {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    opacity: 0;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .tab:hover .tab-close, .tab.active .tab-close { opacity: 0.7; }
+  .tab-close:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); opacity: 1; }
+  .tab-add {
+    flex: 0 0 28px;
+    background: transparent;
+    border: none;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tab-add:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); }
 
   #content {
     flex: 1 1 auto;
@@ -458,7 +609,13 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     overflow: hidden;
     background: var(--vscode-editor-background);
   }
-  #term { width: 100%; height: 100%; }
+  #term-host { width: 100%; height: 100%; position: relative; }
+  .term-pane {
+    position: absolute;
+    inset: 0;
+    display: none;
+  }
+  .term-pane.active { display: block; }
   .xterm { padding: 4px 0 0 6px; height: 100%; }
 
   #files-wrap {
@@ -725,10 +882,14 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       </button>
     </div>
   </div>
+  <div id="tab-strip">
+    <div id="tabs" class="tabs"></div>
+    <button id="tab-add" class="tab-add" type="button" title="New terminal" aria-label="New terminal">+</button>
+  </div>
   <div id="content">
     <div id="term-wrap">
       <div id="err"></div>
-      <div id="term"></div>
+      <div id="term-host"></div>
       <div id="settings-overlay" hidden>
         <div class="settings-head">
           <h2>Settings</h2>
@@ -856,19 +1017,15 @@ ${FONT_OPTIONS.map((f) => {
       const DEFAULTS = ${JSON.stringify(DEFAULT_SETTINGS)};
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
-      const term = new Terminal({
-        fontFamily: DEFAULTS.fontFamily,
-        fontSize: DEFAULTS.fontSize,
-        cursorStyle: DEFAULTS.cursorStyle,
-        cursorBlink: DEFAULTS.cursorBlink,
-        allowProposedApi: true,
-        theme: resolveTheme(DEFAULTS),
-      });
-      const fit = new FitAddon.FitAddon();
-      term.loadAddon(fit);
-      term.open(document.getElementById('term'));
+      const termHost = document.getElementById('term-host');
+      const tabsEl = document.getElementById('tabs');
+      const btnAddTab = document.getElementById('tab-add');
 
-      function safeFit() { try { fit.fit(); } catch (_) { /* ignore */ } }
+      // id -> { id, term, fit, host, tab, dataDisp, exited }
+      const sessions = new Map();
+      let activeId = null;
+
+      function safeFitSession(sess) { try { sess.fit.fit(); } catch (_) { /* ignore */ } }
 
       function pickVar(name, fallback) {
         const v = getComputedStyle(document.body).getPropertyValue(name).trim();
@@ -904,18 +1061,118 @@ ${FONT_OPTIONS.map((f) => {
 
       function applySettings(s) {
         currentSettings = s;
-        term.options.fontFamily = s.fontFamily;
-        term.options.fontSize = s.fontSize;
-        term.options.cursorStyle = s.cursorStyle;
-        term.options.cursorBlink = s.cursorBlink;
         const theme = resolveTheme(s);
-        term.options.theme = theme;
         const wrap = document.getElementById('term-wrap');
         if (wrap) wrap.style.background = theme.background;
-        try { term.clearTextureAtlas && term.clearTextureAtlas(); } catch (_) {}
-        safeFit();
-        try { term.refresh(0, term.rows - 1); } catch (_) {}
-        vscode.postMessage({ type: 'resize', cols: term.cols, rows: term.rows });
+        for (const sess of sessions.values()) {
+          sess.term.options.fontFamily = s.fontFamily;
+          sess.term.options.fontSize = s.fontSize;
+          sess.term.options.cursorStyle = s.cursorStyle;
+          sess.term.options.cursorBlink = s.cursorBlink;
+          sess.term.options.theme = theme;
+          try { sess.term.clearTextureAtlas && sess.term.clearTextureAtlas(); } catch (_) {}
+          safeFitSession(sess);
+          try { sess.term.refresh(0, sess.term.rows - 1); } catch (_) {}
+          vscode.postMessage({ type: 'resize', id: sess.id, cols: sess.term.cols, rows: sess.term.rows });
+        }
+      }
+
+      function makeXterm() {
+        return new Terminal({
+          fontFamily: currentSettings.fontFamily,
+          fontSize: currentSettings.fontSize,
+          cursorStyle: currentSettings.cursorStyle,
+          cursorBlink: currentSettings.cursorBlink,
+          allowProposedApi: true,
+          theme: resolveTheme(currentSettings),
+        });
+      }
+
+      function buildTabDom(id, title) {
+        const tab = document.createElement('div');
+        tab.className = 'tab';
+        tab.dataset.id = id;
+        const titleEl = document.createElement('span');
+        titleEl.className = 'tab-title';
+        titleEl.textContent = title;
+        const closeEl = document.createElement('span');
+        closeEl.className = 'tab-close';
+        closeEl.title = 'Close terminal';
+        closeEl.textContent = '×';
+        tab.appendChild(titleEl);
+        tab.appendChild(closeEl);
+        tab.addEventListener('click', (e) => {
+          if (e.target === closeEl) return;
+          activateTab(id);
+        });
+        closeEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          vscode.postMessage({ type: 'closeSession', id });
+        });
+        return tab;
+      }
+
+      function activateTab(id) {
+        if (!sessions.has(id)) return;
+        if (activeId === id) return;
+        const old = sessions.get(activeId);
+        if (old) {
+          old.host.classList.remove('active');
+          old.tab.classList.remove('active');
+        }
+        const next = sessions.get(id);
+        next.host.classList.add('active');
+        next.tab.classList.add('active');
+        activeId = id;
+        // scroll the tab into view
+        try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
+        requestAnimationFrame(() => {
+          safeFitSession(next);
+          vscode.postMessage({ type: 'resize', id, cols: next.term.cols, rows: next.term.rows });
+          try { next.term.focus(); } catch (_) {}
+        });
+      }
+
+      function onSessionCreated(id, title) {
+        const host = document.createElement('div');
+        host.className = 'term-pane';
+        host.dataset.id = id;
+        termHost.appendChild(host);
+
+        const t = makeXterm();
+        const f = new FitAddon.FitAddon();
+        t.loadAddon(f);
+        t.open(host);
+
+        const tab = buildTabDom(id, title);
+        tabsEl.appendChild(tab);
+
+        const sess = { id, term: t, fit: f, host, tab, dataDisp: null, exited: false };
+        sess.dataDisp = t.onData((data) => {
+          if (sess.exited) return;
+          vscode.postMessage({ type: 'input', id, data });
+        });
+        sessions.set(id, sess);
+        activateTab(id);
+        // also fit + report dims (activateTab already does this on the rAF tick)
+      }
+
+      function onSessionClosed(id) {
+        const sess = sessions.get(id);
+        if (!sess) return;
+        try { sess.dataDisp && sess.dataDisp.dispose(); } catch (_) {}
+        try { sess.term.dispose(); } catch (_) {}
+        sess.host.remove();
+        sess.tab.remove();
+        sessions.delete(id);
+        if (activeId === id) {
+          activeId = null;
+          const remaining = Array.from(sessions.keys());
+          if (remaining.length > 0) {
+            activateTab(remaining[remaining.length - 1]);
+          }
+          // if zero remain, extension auto-spawns a replacement and we receive sessionCreated.
+        }
       }
 
       function isFontInstalled(family) {
@@ -944,18 +1201,26 @@ ${FONT_OPTIONS.map((f) => {
       }
 
       requestAnimationFrame(() => {
-        safeFit();
-        vscode.postMessage({ type: 'ready', cols: term.cols, rows: term.rows });
+        vscode.postMessage({ type: 'ready' });
         vscode.postMessage({ type: 'getSettings' });
+        // Bootstrap the first session. Extension will reply with sessionCreated.
+        vscode.postMessage({ type: 'createSession', cols: 80, rows: 24 });
       });
-
-      term.onData((data) => { vscode.postMessage({ type: 'input', data }); });
 
       const ro = new ResizeObserver(() => {
-        safeFit();
-        vscode.postMessage({ type: 'resize', cols: term.cols, rows: term.rows });
+        const sess = sessions.get(activeId);
+        if (!sess) return;
+        safeFitSession(sess);
+        vscode.postMessage({ type: 'resize', id: activeId, cols: sess.term.cols, rows: sess.term.rows });
       });
-      ro.observe(document.getElementById('term-wrap'));
+      ro.observe(termHost);
+
+      btnAddTab.addEventListener('click', () => {
+        const sess = sessions.get(activeId);
+        const cols = sess ? sess.term.cols : 80;
+        const rows = sess ? sess.term.rows : 24;
+        vscode.postMessage({ type: 'createSession', cols, rows });
+      });
 
       const themeObserver = new MutationObserver(() => {
         if (currentSettings.themePreset === 'vscode') {
@@ -967,14 +1232,25 @@ ${FONT_OPTIONS.map((f) => {
       window.addEventListener('message', (e) => {
         const msg = e.data;
         if (!msg) return;
-        if (msg.type === 'data') {
-          term.write(msg.data);
+        if (msg.type === 'sessionCreated') {
+          onSessionCreated(msg.id, msg.title);
+        } else if (msg.type === 'sessionClosed') {
+          onSessionClosed(msg.id);
+        } else if (msg.type === 'data') {
+          const s = sessions.get(msg.id);
+          if (s) s.term.write(msg.data);
         } else if (msg.type === 'exit') {
-          term.writeln('\\r\\n\\x1b[2m[shell exited: ' + msg.code + '] press any key to restart\\x1b[0m');
-          const once = term.onData(() => {
-            once.dispose();
-            vscode.postMessage({ type: 'restart' });
-          });
+          const s = sessions.get(msg.id);
+          if (s) {
+            s.exited = true;
+            s.term.writeln('\\r\\n\\x1b[2m[shell exited: ' + msg.code + '] press any key to restart\\x1b[0m');
+            const once = s.term.onData(() => {
+              once.dispose();
+              s.exited = false;
+              try { s.term.reset(); } catch (_) {}
+              vscode.postMessage({ type: 'restart', id: msg.id });
+            });
+          }
         } else if (msg.type === 'error') {
           showError('PTY error: ' + msg.message);
         } else if (msg.type === 'settings') {
@@ -1013,10 +1289,13 @@ ${FONT_OPTIONS.map((f) => {
         document.body.classList.toggle('page-terminal', !isTerminal);
         document.body.classList.toggle('page-files', isTerminal);
         if (!isTerminal) {
-          // Switched back to terminal — refit since size may have changed.
+          // Switched back to terminal — refit active session since size may have changed.
           requestAnimationFrame(() => {
-            safeFit();
-            vscode.postMessage({ type: 'resize', cols: term.cols, rows: term.rows });
+            const sess = sessions.get(activeId);
+            if (sess) {
+              safeFitSession(sess);
+              vscode.postMessage({ type: 'resize', id: activeId, cols: sess.term.cols, rows: sess.term.rows });
+            }
           });
         }
       });
@@ -1234,14 +1513,25 @@ ${FONT_OPTIONS.map((f) => {
   }
 
   dispose(): void {
-    this.pty.dispose();
-    for (const d of this.subs) {
-      try { d.dispose(); } catch { /* ignore */ }
+    for (const rec of this.sessions.values()) {
+      for (const d of rec.subs) {
+        try { d.dispose(); } catch { /* ignore */ }
+      }
+      try { rec.pty.dispose(); } catch { /* ignore */ }
     }
-    this.subs.length = 0;
+    this.sessions.clear();
     this.diffDisposable?.dispose();
     this.diffDisposable = undefined;
   }
+}
+
+function resolveShellName(): string {
+  const shell =
+    vscode.env.shell ||
+    process.env['ComSpec'] ||
+    (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
+  const base = path.basename(shell);
+  return base.replace(/\.exe$/i, '');
 }
 
 function randomNonce(): string {

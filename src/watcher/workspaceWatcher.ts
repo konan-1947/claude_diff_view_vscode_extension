@@ -32,12 +32,9 @@ export class WorkspaceWatcher {
   /**
    * Cờ "đang trong external batch operation" (vd: git checkout đổi branch).
    * Trong window này, mọi external write chỉ cập nhật baseline mà KHÔNG tạo diff.
+   * Được set bởi GitBranchWatcher khi phát hiện .git/HEAD đổi.
    */
   private suppressUntil = 0;
-  /** Timestamps các fs event gần đây — dùng để detect burst (vd: git checkout). */
-  private recentExternalWrites: number[] = [];
-  private static readonly BURST_THRESHOLD = 5;
-  private static readonly BURST_WINDOW_MS = 1500;
 
   constructor(private readonly diffManager: DiffManager) {
     this.snapshots = new FileSnapshotStore();
@@ -161,21 +158,6 @@ export class WorkspaceWatcher {
     if (now - lastVsCodeSave < 2000) {
       // Bỏ qua vì đây là viết từ chính VS Code editor
       return;
-    }
-
-    // Burst detection: nếu nhiều file đổi cùng lúc (vd: git checkout) thì
-    // coi như external batch — wipe baseline, suppress, và clear các diff
-    // vừa lỡ tạo ra trong ~burst window vừa qua.
-    this.recentExternalWrites = this.recentExternalWrites.filter(
-      (t) => now - t < WorkspaceWatcher.BURST_WINDOW_MS,
-    );
-    this.recentExternalWrites.push(now);
-    if (
-      this.recentExternalWrites.length >= WorkspaceWatcher.BURST_THRESHOLD &&
-      !this.isSuppressed()
-    ) {
-      this.notifyExternalBatch();
-      void this.diffManager.clearAll();
     }
 
     // 2. Debounce: bỏ qua nếu vừa xử lý file này trong 500ms
