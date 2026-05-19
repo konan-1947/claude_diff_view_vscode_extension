@@ -721,6 +721,13 @@ ${FONT_OPTIONS.map((f) => {
             navigator.clipboard.writeText(t.getSelection()).catch(() => {});
             return false;
           }
+          // Ctrl/Cmd+V pastes from clipboard (like a normal terminal).
+          if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'v' || e.key === 'V')) {
+            navigator.clipboard.readText().then((text) => {
+              if (text) t.paste(text);
+            }).catch(() => {});
+            return false;
+          }
           return true;
         });
         return t;
