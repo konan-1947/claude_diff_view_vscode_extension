@@ -95,6 +95,14 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('ai-cli-diff-view.prevFile', () => navigationManager.prevFile())
   );
 
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) {
+        terminalPanel.focusTerminal();
+      }
+    })
+  );
+
   function updateNavBarState(): void {
     const editor = vscode.window.activeTextEditor;
     const filePath = editor?.document.uri.fsPath;

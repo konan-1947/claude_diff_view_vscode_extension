@@ -937,6 +937,11 @@ ${FONT_OPTIONS.map((f) => {
           }
         } else if (msg.type === 'showIntroduce') {
           openIntro();
+        } else if (msg.type === 'focusTerminal') {
+          const sess = sessions.get(activeId);
+          if (sess) {
+            requestAnimationFrame(() => { try { sess.term.focus(); } catch (_) {} });
+          }
         }
       });
 

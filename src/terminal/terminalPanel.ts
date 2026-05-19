@@ -72,6 +72,18 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.postFilesUpdate();
   }
 
+  focusTerminal(): void {
+    if (!this.view) {
+      return;
+    }
+    try {
+      this.view.show(false);
+    } catch {
+      // view may not be resolvable yet; ignore.
+    }
+    void this.view.webview.postMessage({ type: 'focusTerminal' });
+  }
+
   private postFilesUpdate(): void {
     if (!this.view) {
       return;
