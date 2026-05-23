@@ -9,15 +9,9 @@ import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
+import { SaveGuard } from './diff/saveGuard';
 
 export function activate(context: vscode.ExtensionContext): void {
-  // CodeLens buttons (Accept/Revert hunk) are suppressed in diff editors by default.
-  // Enable at workspace scope so they appear in the right (modified) pane.
-  const editorConfig = vscode.workspace.getConfiguration();
-  if (editorConfig.get<boolean>('diffEditor.codeLens') !== true) {
-    void editorConfig.update('diffEditor.codeLens', true, vscode.ConfigurationTarget.Global);
-  }
-
   const diffManager       = new DiffManager(context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);
   const fsHookWatcher     = new HookWatcher(diffManager);
@@ -78,6 +72,10 @@ export function activate(context: vscode.ExtensionContext): void {
     diffManager.onDidChangeDiffs(() => codeLensProvider.refresh())
   );
 
+  const saveGuard = new SaveGuard(diffManager);
+  saveGuard.start();
+  context.subscriptions.push({ dispose: () => saveGuard.dispose() });
+
   fsHookWatcher.start();
   workspaceWatcher.start();
   gitBranchWatcher.start();
@@ -130,17 +128,15 @@ export function activate(context: vscode.ExtensionContext): void {
       updateNavBarState();
       if (!editor || editor.document.uri.scheme !== 'file') { return; }
       const filePath = editor.document.uri.fsPath;
-      if (diffManager.renderer.hasPending(filePath)) {
-        if (!diffManager.renderer.isEditorInDiffView(editor) && !isOpeningDiff) {
-          isOpeningDiff = true;
-          try {
-            await diffManager.openDiff(filePath);
-          } finally {
-            setTimeout(() => { isOpeningDiff = false; }, 500);
-          }
-          return;
+      // openDiff là idempotent: tự vẽ lại inline diff khi file pending được
+      // mở (kể cả khi tab vừa bị đóng rồi mở lại nên buffer mất spacer).
+      if (diffManager.hasPendingDiff(filePath) && !isOpeningDiff) {
+        isOpeningDiff = true;
+        try {
+          await diffManager.openDiff(filePath);
+        } finally {
+          setTimeout(() => { isOpeningDiff = false; }, 300);
         }
-        diffManager.renderer.applyDecorations(filePath);
       }
     })
   );
@@ -153,6 +149,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((e) => {
+      // Bỏ qua các thay đổi do chính extension gây ra (chèn/gỡ spacer).
+      if (diffManager.renderer.isApplyingEdit) { return; }
       const filePath = e.document.uri.fsPath;
       if (diffManager.renderer.hasPending(filePath)) {
         diffManager.renderer.applyDecorations(filePath);

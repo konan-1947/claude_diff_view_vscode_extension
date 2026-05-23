@@ -1,192 +1,110 @@
 /**
  * decorationManager.ts
  *
- * Quản lý TextEditorDecorationType và việc render decoration
- * (added lines highlight, removed lines ghost text, gutter icons) lên editor.
+ * Render decoration cho inline diff vẽ thẳng trên file thật:
+ *  - dòng được THÊM   -> nền xanh
+ *  - dòng SPACER (chỗ code bị xóa) -> nền đỏ + ghost text gạch ngang
+ *  - SỐ DÒNG tự vẽ     -> số dòng gốc của VS Code bị tắt; ta tự render số dòng
+ *    "thật" để dòng spacer không làm lệch đánh số (xem inlineDiffRenderer).
+ *
+ * Nút Accept/Revert do `HunkCodeLensProvider` lo (CodeLens — hiện sẵn, bấm 1
+ * phát). KHÔNG chèn text nút vào buffer để tránh làm bẩn file thật.
  */
 
 import * as vscode from 'vscode';
-import { Hunk } from './hunkCalculator';
+
+/** Một dòng spacer cần phủ nội dung dòng code đã bị xóa lên trên. */
+export interface SpacerDecoration {
+  /** Dòng spacer trong buffer hiển thị (0-indexed) */
+  line: number;
+  /** Nội dung dòng code đã bị xóa */
+  text: string;
+}
 
 export class DecorationManager {
+  /** Số dòng tự vẽ (render qua `before` vì số dòng gốc đã bị tắt). */
+  private readonly lineNumberDecor: vscode.TextEditorDecorationType;
   private readonly addedLineDecor: vscode.TextEditorDecorationType;
-  private readonly removedLineDecor: vscode.TextEditorDecorationType;
-  /** Giữ lại để tương thích — không dùng icon thật vì đã có CodeLens */
-  private readonly acceptGutterDecor: vscode.TextEditorDecorationType;
-  private readonly revertGutterDecor: vscode.TextEditorDecorationType;
-  private readonly navigationBarDecor: vscode.TextEditorDecorationType;
+  private readonly spacerLineDecor: vscode.TextEditorDecorationType;
 
   constructor() {
+    this.lineNumberDecor = vscode.window.createTextEditorDecorationType({});
+
     this.addedLineDecor = vscode.window.createTextEditorDecorationType({
       isWholeLine: true,
-      backgroundColor: 'rgba(46, 160, 67, 0.15)', // màu xanh lá pastel mờ thay vì xanh dương đậm
+      backgroundColor: 'rgba(46, 160, 67, 0.15)',
       overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.addedForeground'),
       overviewRulerLane: vscode.OverviewRulerLane.Right,
     });
 
-    this.removedLineDecor = vscode.window.createTextEditorDecorationType({
-      // Không dùng isWholeLine / backgroundColor ở đây vì sẽ tô đỏ cả dòng text mới.
-      // Màu nền chỉ được áp dụng lên ghost text block phía sau.
+    this.spacerLineDecor = vscode.window.createTextEditorDecorationType({
+      isWholeLine: true,
+      backgroundColor: 'rgba(248, 81, 73, 0.12)',
       overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.deletedForeground'),
       overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
-
-    // Gutter decorations — giữ trống vì CodeLens đã cover
-    this.acceptGutterDecor = vscode.window.createTextEditorDecorationType({});
-    this.revertGutterDecor = vscode.window.createTextEditorDecorationType({});
-
-    // Thanh điều hướng nổi ở cuối editor. 
-    // Dùng CSS position: fixed cực đoan để đẩy nó dính xuống dưới cùng của view.
-    this.navigationBarDecor = vscode.window.createTextEditorDecorationType({
-      after: {
-        margin: '0 0 0 0',
-        textDecoration: `
-          none; 
-          position: fixed;
-          bottom: 20px;
-          right: 50%;
-          transform: translateX(50%);
-          z-index: 1000;
-        `
-      }
-    });
   }
 
   /**
-   * Áp dụng decorations lên một editor cụ thể dựa trên danh sách hunks.
+   * Áp dụng decoration lên một editor.
+   * @param spacers     - các dòng trống cần hiển thị nội dung code đã xóa
+   * @param addedLines  - chỉ số các dòng được thêm (tô nền xanh)
+   * @param lineLabels  - nhãn số dòng cho TỪNG dòng buffer (đã pad sẵn, dòng
+   *                      spacer là chuỗi trắng)
    */
-
-  applyToEditor(editor: vscode.TextEditor, hunks: Hunk[]): void {
-    const addedRanges: vscode.Range[] = [];
-    const removedRanges: vscode.DecorationOptions[] = [];
-    const acceptGutterRanges: vscode.DecorationOptions[] = [];
-    const revertGutterRanges: vscode.DecorationOptions[] = [];
-    const navigationBarRanges: vscode.DecorationOptions[] = [];
-
-    for (const hunk of hunks) {
-      // Dòng được thêm — tô nền xanh
-      for (const addedLine of hunk.addedLines) {
-        const lineIdx = addedLine.modifiedLineIndex;
-        addedRanges.push(
-          new vscode.Range(
-            new vscode.Position(lineIdx, 0),
-            new vscode.Position(lineIdx, Number.MAX_SAFE_INTEGER)
-          )
-        );
-      }
-
-      // Dòng bị xóa — hiển thị ghost text ở cuối dòng anchor
-      if (hunk.removedLines.length > 0) {
-        const anchorLine = Math.max(0, hunk.modifiedStart);
-        const removedText =
-          '   \u25c0 x\u00f3a: ' +
-          hunk.removedLines.map(r => r.text.trim()).join(' \u21b5 ');
-        removedRanges.push({
-          range: new vscode.Range(
-            new vscode.Position(anchorLine, Number.MAX_SAFE_INTEGER),
-            new vscode.Position(anchorLine, Number.MAX_SAFE_INTEGER)
-          ),
-          renderOptions: {
-            after: {
-              contentText: removedText,
-              color: 'rgba(248, 81, 73, 0.6)', // đỏ nhạt, dễ chịu hơn thay vì editorError.foreground
-              textDecoration: 'line-through; opacity: 0.5;', // giảm opacity mờ thêm 1 chút
-              fontStyle: 'italic',
-              margin: '0 0 0 20px',
-            },
+  applyToEditor(
+    editor: vscode.TextEditor,
+    spacers: SpacerDecoration[],
+    addedLines: number[],
+    lineLabels: string[]
+  ): void {
+    // --- Số dòng tự vẽ (mọi dòng) ---
+    const lineNumberOptions: vscode.DecorationOptions[] = lineLabels.map(
+      (label, i) => ({
+        range: new vscode.Range(i, 0, i, 0),
+        renderOptions: {
+          before: {
+            contentText: label,
+            color: new vscode.ThemeColor('editorLineNumber.foreground'),
+            margin: '0 14px 0 0',
+            textDecoration: 'none; white-space: pre;',
           },
-        });
-      }
+        },
+      })
+    );
 
-      // Gutter hover — gắn vào dòng đầu tiên của hunk
-      const gutterLine = hunk.modifiedStart;
-      const gutterRange = new vscode.Range(
-        new vscode.Position(gutterLine, 0),
-        new vscode.Position(gutterLine, 0)
-      );
-      acceptGutterRanges.push({
-        range: gutterRange,
-        hoverMessage: new vscode.MarkdownString(
-          `**Accept hunk** (ID: \`${hunk.id}\`)\n\nRun command \`AI CLI Diff: Accept Hunk\``
-        ),
-      });
-      revertGutterRanges.push({
-        range: gutterRange,
-        hoverMessage: new vscode.MarkdownString(
-          `**Revert hunk** (ID: \`${hunk.id}\`)\n\nRun command \`AI CLI Diff: Revert Hunk\``
-        ),
-      });
-    }
+    const addedRanges = addedLines.map(
+      (line) => new vscode.Range(line, 0, line, Number.MAX_SAFE_INTEGER)
+    );
 
-    editor.setDecorations(this.addedLineDecor, addedRanges);
-    editor.setDecorations(this.removedLineDecor, removedRanges);
-    editor.setDecorations(this.acceptGutterDecor, acceptGutterRanges);
-    editor.setDecorations(this.revertGutterDecor, revertGutterRanges);
-    editor.setDecorations(this.navigationBarDecor, []);
-  }
-
-  private renderNavigationBar(editor: vscode.TextEditor, info: any, ranges: vscode.DecorationOptions[]): void {
-    const { currentIdx, total, prevName, nextName } = info;
-    
-    // Tạo HTML-like string sử dụng CSS cực đoan trong textDecoration
-    const navContent = ` < Alt+H ${prevName}  |  View ${total} edited files (${currentIdx}/${total})  |  ${nextName} Alt+L > `;
-    
-    // Dùng dòng cuối cùng có thể nhìn thấy để gắn decoration
-    const lastLine = editor.document.lineCount - 1;
-    const range = new vscode.Range(lastLine, 0, lastLine, 0);
-
-    ranges.push({
-      range,
+    // Nội dung dòng đã xóa render bằng `after` để canh thẳng cột với code.
+    const spacerOptions: vscode.DecorationOptions[] = spacers.map((s) => ({
+      range: new vscode.Range(s.line, 0, s.line, 0),
       renderOptions: {
         after: {
-          contentText: navContent,
-          color: new vscode.ThemeColor('editor.foreground'),
-          backgroundColor: new vscode.ThemeColor('editor.background'),
-          border: '1px solid rgba(128, 128, 128, 0.4)',
-          textDecoration: `
-            none;
-            position: fixed;
-            bottom: 60px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 10px 20px;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-            font-size: 13px;
-            font-weight: 500;
-            white-space: pre;
-            pointer-events: none;
-            z-index: 9999;
-            display: flex;
-            align-items: center;
-            letter-spacing: 0.5px;
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(128, 128, 128, 0.2);
-          `
-        }
-      }
-    });
+          contentText: s.text.length > 0 ? s.text : ' ',
+          color: 'rgba(248, 81, 73, 0.9)',
+          textDecoration: 'line-through; white-space: pre;',
+        },
+      },
+    }));
 
-    editor.setDecorations(this.navigationBarDecor, ranges);
+    editor.setDecorations(this.lineNumberDecor, lineNumberOptions);
+    editor.setDecorations(this.addedLineDecor, addedRanges);
+    editor.setDecorations(this.spacerLineDecor, spacerOptions);
   }
 
-  /**
-   * Xóa tất cả decorations khỏi một editor.
-   */
+  /** Xóa toàn bộ decoration khỏi một editor. */
   clearEditor(editor: vscode.TextEditor): void {
+    editor.setDecorations(this.lineNumberDecor, []);
     editor.setDecorations(this.addedLineDecor, []);
-    editor.setDecorations(this.removedLineDecor, []);
-    editor.setDecorations(this.acceptGutterDecor, []);
-    editor.setDecorations(this.revertGutterDecor, []);
-    editor.setDecorations(this.navigationBarDecor, []);
+    editor.setDecorations(this.spacerLineDecor, []);
   }
 
-  /** Dispose tất cả decoration types khi deactivate. */
+  /** Dispose decoration types khi deactivate. */
   disposeAll(): void {
+    this.lineNumberDecor.dispose();
     this.addedLineDecor.dispose();
-    this.removedLineDecor.dispose();
-    this.acceptGutterDecor.dispose();
-    this.revertGutterDecor.dispose();
-    this.navigationBarDecor.dispose();
+    this.spacerLineDecor.dispose();
   }
 }

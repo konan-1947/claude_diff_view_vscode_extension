@@ -2,8 +2,10 @@ import * as vscode from 'vscode';
 import { DiffManager } from './diffManager';
 
 /**
- * Cung cấp CodeLens (nút bấm "Accept Hunk | Revert Hunk") hiển thị ngay trên mỗi block thay đổi.
- * Khắc phục giới hạn của chuẩn VS Code (không cho phép click trực tiếp vào gutter icon).
+ * Hiển thị nút Accept/Revert cho từng hunk dưới dạng CodeLens — luôn hiện sẵn
+ * ngay trên hunk, bấm 1 phát (không cần hover), không đụng vào nội dung file.
+ *
+ * Nhãn kèm số thứ tự hunk (vd "Accept Hunk 1/3").
  */
 export class HunkCodeLensProvider implements vscode.CodeLensProvider {
   private _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
@@ -15,85 +17,38 @@ export class HunkCodeLensProvider implements vscode.CodeLensProvider {
     this._onDidChangeCodeLenses.fire();
   }
 
-  /**
-   * Trả về true nếu document đang được mở trong ít nhất một regular editor
-   * (không phải diff editor). Dùng Tab API (VSCode 1.71+).
-   */
-  private hasRegularEditor(document: vscode.TextDocument): boolean {
-    const fsPath = document.uri.fsPath;
-
-    // Tập hợp các tab đang là diff editor
-    const diffModifiedPaths = new Set<string>();
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input instanceof vscode.TabInputTextDiff) {
-          diffModifiedPaths.add(tab.input.modified.fsPath);
-          diffModifiedPaths.add(tab.input.original.fsPath);
-        }
-      }
-    }
-
-    // Kiểm tra có tab thường nào mở file này không
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input instanceof vscode.TabInputText) {
-          if (tab.input.uri.fsPath === fsPath) {
-            return true;
-          }
-        }
-      }
-    }
-
-    // Không tìm thấy regular tab → chỉ có trong diff editor
-    return !diffModifiedPaths.has(fsPath);
-  }
-
-  provideCodeLenses(
-    document: vscode.TextDocument,
-    token: vscode.CancellationToken
-  ): vscode.CodeLens[] | Thenable<vscode.CodeLens[]> {
+  provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const filePath = document.uri.fsPath;
-
-    // Chỉ hiện CodeLens nếu file đang có pending diff
-    if (!this.diffManager.hasPendingDiff(filePath)) {
+    if (!this.diffManager.renderer.isRendered(filePath)) {
       return [];
     }
 
-    // Bỏ điều kiện này để cho phép nút nguồn hiện chữ Accept/Revert Hunk ngay bên trong 
-    // màn hình Diff Editor (ở nửa tab bên phải - Modified).
-    // if (!this.hasRegularEditor(document)) {
-    //   return [];
-    // }
-
-    const hunks = this.diffManager.renderer.getHunks(filePath);
+    const views = this.diffManager.renderer.getHunkViews(filePath);
     const lenses: vscode.CodeLens[] = [];
 
-    const totalHunks = hunks.length;
-    for (let index = 0; index < hunks.length; index++) {
-      const hunk = hunks[index]!;
-      const hunkLabel = `Hunk ${index + 1}/${totalHunks}`;
-      // Đặt CodeLens ở dòng bắt đầu của hunk
-      const lineIdx = Math.max(0, hunk.modifiedStart);
-      const range = new vscode.Range(lineIdx, 0, lineIdx, 0);
+    views.forEach((view, index) => {
+      const hunkLabel = `Hunk ${index + 1}/${views.length}`;
+      // Đặt CodeLens ngay trên dòng đầu vùng hiển thị của hunk.
+      const line = Math.max(0, view.spacerStart);
+      const range = new vscode.Range(line, 0, line, 0);
 
-      // Nút Accept
-      const acceptCmd: vscode.Command = {
-        title: `$(check) Accept ${hunkLabel}`,
-        tooltip: 'Chấp nhận các thay đổi này',
-        command: 'ai-cli-diff-view.acceptHunk',
-        arguments: [filePath, hunk.id],
-      };
-      lenses.push(new vscode.CodeLens(range, acceptCmd));
-
-      // Nút Revert
-      const revertCmd: vscode.Command = {
-        title: `$(discard) Revert ${hunkLabel}`,
-        tooltip: 'Hủy bỏ thay đổi, quay về gốc',
-        command: 'ai-cli-diff-view.revertHunk',
-        arguments: [filePath, hunk.id],
-      };
-      lenses.push(new vscode.CodeLens(range, revertCmd));
-    }
+      lenses.push(
+        new vscode.CodeLens(range, {
+          title: `Accept ${hunkLabel}`,
+          tooltip: 'Chấp nhận các thay đổi của hunk này',
+          command: 'ai-cli-diff-view.acceptHunk',
+          arguments: [filePath, view.hunk.id],
+        })
+      );
+      lenses.push(
+        new vscode.CodeLens(range, {
+          title: `Revert ${hunkLabel}`,
+          tooltip: 'Hủy bỏ thay đổi, quay về gốc',
+          command: 'ai-cli-diff-view.revertHunk',
+          arguments: [filePath, view.hunk.id],
+        })
+      );
+    });
 
     return lenses;
   }
