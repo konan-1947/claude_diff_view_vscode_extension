@@ -2,26 +2,32 @@
 (function () {
   'use strict';
 
+  const T0 = performance.now();
+  const tlog = (label) => {
+    const ms = (performance.now() - T0).toFixed(0);
+    console.log('[ai-cli-diff TIMING] +' + ms + 'ms ' + label);
+  };
+  tlog('script start');
+
   const vscodeApi = acquireVsCodeApi();
   const monacoBase = window.__MONACO_BASE__;
 
   require.config({ paths: { vs: monacoBase } });
-  // VS Code webview CSP requires monaco workers via a blob shim.
+
+  // No diff worker needed: we use a regular editor and apply decorations from
+  // hunks computed by the extension. Provide a no-op worker URL so Monaco's
+  // tokenizer worker requests don't error out loudly.
   window.MonacoEnvironment = {
     getWorkerUrl: function () {
-      const workerScript = `
-        self.MonacoEnvironment = { baseUrl: '${monacoBase}' };
-        importScripts('${monacoBase}/base/worker/workerMain.js');
-      `;
-      const blob = new Blob([workerScript], { type: 'text/javascript' });
+      const blob = new Blob(['self.onmessage=function(){};'], { type: 'text/javascript' });
       return URL.createObjectURL(blob);
     },
   };
 
+  tlog('require(editor.main) called');
   require(['vs/editor/editor.main'], function () {
-    // Monaco standalone workers không biết tsconfig, node_modules, path alias,
-    // tailwind plugin... -> false positive khắp nơi. Tắt diagnostics, giữ
-    // tokenizer (màu code) và hover/completion.
+    tlog('editor.main loaded');
+
     if (monaco.languages.typescript) {
       const diagOff = {
         noSemanticValidation: true,
@@ -42,14 +48,15 @@
     }
 
     const state = {
-      diffEditor: null,
+      editor: null,
+      model: null,
       filePath: null,
-      originalModel: null,
-      modifiedModel: null,
       originalContent: '',
       currentContent: '',
-      lineChanges: [],
+      hunks: [],
       hunkWidgets: [],
+      decorationIds: [],
+      viewZoneIds: [],
       hoveredHunkIdx: -1,
       didAutoReveal: false,
       currentTheme: 'vs-dark',
@@ -59,37 +66,62 @@
     function setInFlight(value) {
       state.inFlight = value;
       document.querySelectorAll('.hunk-btn').forEach((b) => { b.disabled = value; });
-      const acceptAllBtn = document.getElementById('btn-accept-all');
-      const rejectAllBtn = document.getElementById('btn-reject-all');
-      if (acceptAllBtn) { acceptAllBtn.disabled = value; }
-      if (rejectAllBtn) { rejectAllBtn.disabled = value; }
+      const acceptBtn = document.getElementById('btn-accept-file');
+      const rejectBtn = document.getElementById('btn-reject-file');
+      if (acceptBtn) { acceptBtn.disabled = value; }
+      if (rejectBtn) { rejectBtn.disabled = value; }
+    }
+
+    function currentHunkIdx() {
+      if (state.hoveredHunkIdx >= 0 && state.hoveredHunkIdx < state.hunks.length) {
+        return state.hoveredHunkIdx;
+      }
+      const pos = state.editor && state.editor.getPosition();
+      if (pos) {
+        const idx = findHunkIdxAtLine(pos.lineNumber);
+        if (idx !== -1) { return idx; }
+      }
+      return state.hunks.length > 0 ? 0 : -1;
+    }
+
+    function updateHunkCounter() {
+      const el = document.getElementById('hunk-counter');
+      if (!el) { return; }
+      const total = state.hunks.length;
+      if (total === 0) {
+        el.textContent = '0 / 0';
+      } else {
+        const idx = currentHunkIdx();
+        el.textContent = ((idx >= 0 ? idx + 1 : 1) + ' / ' + total);
+      }
+      const prev = document.getElementById('btn-prev-hunk');
+      const next = document.getElementById('btn-next-hunk');
+      const acc = document.getElementById('btn-accept-file');
+      const rej = document.getElementById('btn-reject-file');
+      const has = total > 0;
+      if (prev) { prev.disabled = !has || total < 2; }
+      if (next) { next.disabled = !has || total < 2; }
+      if (acc) { acc.disabled = !has || state.inFlight; }
+      if (rej) { rej.disabled = !has || state.inFlight; }
     }
 
     const container = document.getElementById('container');
-    state.diffEditor = monaco.editor.createDiffEditor(container, {
-      renderSideBySide: false,
+    tlog('before createEditor');
+    state.editor = monaco.editor.create(container, {
       readOnly: false,
-      originalEditable: false,
       automaticLayout: true,
-      ignoreTrimWhitespace: false,
-      renderOverviewRuler: true,
       glyphMargin: false,
       scrollBeyondLastLine: false,
-      renderMarginRevertIcon: false,
-      diffAlgorithm: 'advanced',
+      renderOverviewRuler: true,
+      minimap: { enabled: true },
     });
-
-    const modifiedEditor = state.diffEditor.getModifiedEditor();
-    const originalEditor = state.diffEditor.getOriginalEditor();
-    originalEditor.updateOptions({ lineNumbers: 'off' });
-
-    state.diffEditor.onDidUpdateDiff(() => refreshHunks());
+    tlog('createEditor done');
 
     let suppressEditEvent = false;
     let editDebounce = null;
-    modifiedEditor.onDidChangeModelContent(() => {
+    state.editor.onDidChangeModelContent(() => {
       if (suppressEditEvent) { return; }
-      const value = state.modifiedModel ? state.modifiedModel.getValue() : '';
+      const value = state.model ? state.model.getValue() : '';
       state.currentContent = value;
       if (editDebounce) { clearTimeout(editDebounce); }
       editDebounce = setTimeout(() => {
@@ -99,7 +131,7 @@
     });
 
     let cursorDebounce = null;
-    modifiedEditor.onDidChangeCursorPosition((e) => {
+    state.editor.onDidChangeCursorPosition((e) => {
       if (cursorDebounce) { clearTimeout(cursorDebounce); }
       cursorDebounce = setTimeout(() => {
         cursorDebounce = null;
@@ -111,17 +143,34 @@
       }, 150);
     });
 
+    state.editor.onDidScrollChange(() => repositionAllBars());
+    state.editor.onDidLayoutChange(() => repositionAllBars());
+    state.editor.onMouseMove((e) => {
+      const line = e.target && e.target.position && e.target.position.lineNumber;
+      if (!line) { return; }
+      const idx = findHunkIdxAtLine(line);
+      if (idx !== -1) { setHoveredHunk(idx); }
+    });
+    state.editor.onMouseLeave(() => { updateHoveredHunkFromCursor(); });
+    state.editor.onDidChangeCursorPosition(() => { updateHoveredHunkFromCursor(); });
+
     registerActions();
 
-    document.getElementById('btn-accept-all').addEventListener('click', () => {
+    document.getElementById('btn-accept-file').addEventListener('click', () => {
       if (state.inFlight) { return; }
       setInFlight(true);
       vscodeApi.postMessage({ type: 'acceptAll' });
     });
-    document.getElementById('btn-reject-all').addEventListener('click', () => {
+    document.getElementById('btn-reject-file').addEventListener('click', () => {
       if (state.inFlight) { return; }
       setInFlight(true);
       vscodeApi.postMessage({ type: 'rejectAll' });
+    });
+    document.getElementById('btn-prev-hunk').addEventListener('click', () => {
+      gotoHunk(-1);
+    });
+    document.getElementById('btn-next-hunk').addEventListener('click', () => {
+      gotoHunk(+1);
     });
     document.getElementById('btn-next-file').addEventListener('click', () => {
       vscodeApi.postMessage({ type: 'nextFile' });
@@ -140,13 +189,16 @@
       }
     });
 
+    tlog('post ready to extension');
     vscodeApi.postMessage({ type: 'ready' });
 
     function applySet(msg) {
+      tlog('applySet received hunks=' + (msg.hunks ? msg.hunks.length : 0));
       const isSameFile = state.filePath === msg.filePath;
       state.filePath = msg.filePath;
-      state.originalContent = msg.originalContent;
-      state.currentContent = msg.currentContent;
+      state.originalContent = msg.originalContent || '';
+      state.currentContent = msg.currentContent || '';
+      state.hunks = msg.hunks || [];
 
       document.getElementById('toolbar-file').textContent = msg.filePath;
       applyNav(msg.nav);
@@ -158,47 +210,25 @@
         applyConfig(msg.editorConfig);
       }
 
-      // Reuse models when content matches (cheap path for diff refresh after hunk accept).
-      const newOriginal = msg.originalContent;
-      const newCurrent = msg.currentContent;
-
-      if (
-        isSameFile &&
-        state.originalModel &&
-        state.modifiedModel &&
-        state.originalModel.getValue() === newOriginal &&
-        state.modifiedModel.getValue() === newCurrent
-      ) {
-        // No content change; nothing to do.
-        return;
-      }
-
       suppressEditEvent = true;
       try {
-        if (isSameFile && state.originalModel && state.modifiedModel) {
-          // In-place update: preserves cursor + scroll.
-          if (state.originalModel.getValue() !== newOriginal) {
-            state.originalModel.setValue(newOriginal);
-          }
-          if (state.modifiedModel.getValue() !== newCurrent) {
-            state.modifiedModel.setValue(newCurrent);
-          }
-        } else {
-          // Switching file or first load: dispose + recreate models.
-          if (state.originalModel) { state.originalModel.dispose(); }
-          if (state.modifiedModel) { state.modifiedModel.dispose(); }
-          state.originalModel = monaco.editor.createModel(newOriginal, msg.language);
-          state.modifiedModel = monaco.editor.createModel(newCurrent, msg.language);
-          state.diffEditor.setModel({
-            original: state.originalModel,
-            modified: state.modifiedModel,
-          });
+        if (!state.model || (!isSameFile)) {
+          if (state.model) { state.model.dispose(); }
+          state.model = monaco.editor.createModel(state.currentContent, msg.language);
+          state.editor.setModel(state.model);
           state.didAutoReveal = false;
+        } else if (state.model.getValue() !== state.currentContent) {
+          state.model.setValue(state.currentContent);
         }
       } finally {
         suppressEditEvent = false;
       }
 
+      renderDiffDecorations();
+      renderHunkWidgets();
+      maybeAutoReveal();
+      updateHunkCounter();
+      tlog('applySet render done');
       setInFlight(false);
     }
 
@@ -207,7 +237,7 @@
       const counter = document.getElementById('file-counter');
       const prev = document.getElementById('btn-prev-file');
       const next = document.getElementById('btn-next-file');
-      counter.textContent = `${nav.currentIdx} / ${nav.total}`;
+      counter.textContent = nav.currentIdx + ' / ' + nav.total;
       const multi = nav.total > 1;
       prev.disabled = !multi;
       next.disabled = !multi;
@@ -220,7 +250,7 @@
 
     function applyConfig(cfg) {
       if (!cfg) { return; }
-      const options = {
+      state.editor.updateOptions({
         fontFamily: cfg.fontFamily,
         fontSize: cfg.fontSize,
         lineHeight: cfg.lineHeight || undefined,
@@ -229,105 +259,133 @@
         wordWrap: cfg.wordWrap,
         renderWhitespace: cfg.renderWhitespace,
         minimap: { enabled: cfg.minimapEnabled },
-      };
-      state.diffEditor.updateOptions(options);
-      modifiedEditor.updateOptions(options);
-      state.diffEditor.getOriginalEditor().updateOptions(options);
-    }
-
-    function refreshHunks() {
-      // getLineChanges() có thể trả null khi diff chưa tính xong.
-      let attempts = 0;
-      const tryGet = () => {
-        const changes = state.diffEditor.getLineChanges();
-        if (changes === null && attempts < 10) {
-          attempts++;
-          setTimeout(tryGet, 50);
-          return;
-        }
-        state.lineChanges = changes || [];
-        renderHunkWidgets();
-        maybeAutoReveal();
-      };
-      tryGet();
+      });
     }
 
     /**
-     * Mỗi hunk = 1 Monaco Content Widget chứa nút Accept/Reject, ẩn mặc định
-     * (opacity 0). Khi cursor/chuột nằm trong vùng hunk, set class .visible
-     * để fade in. Bám vào dòng đầu của hunk, đẩy sang phải bằng CSS để nằm
-     * bên rìa code.
+     * Apply green-line decorations on lines that were added (modifiedLineIndex).
+     * Insert view zones above the hunk anchor for removed lines (red).
      */
+    function renderDiffDecorations() {
+      const decorations = [];
+      for (const hunk of state.hunks) {
+        for (const added of hunk.addedLines) {
+          const line = added.modifiedLineIndex + 1;
+          decorations.push({
+            range: new monaco.Range(line, 1, line, 1),
+            options: {
+              isWholeLine: true,
+              className: 'diff-added-line',
+              linesDecorationsClassName: 'diff-added-gutter',
+              overviewRuler: {
+                color: 'rgba(46, 160, 67, 0.7)',
+                position: monaco.editor.OverviewRulerLane.Center,
+              },
+            },
+          });
+        }
+      }
+      state.decorationIds = state.editor.deltaDecorations(state.decorationIds, decorations);
+
+      state.editor.changeViewZones((accessor) => {
+        for (const id of state.viewZoneIds) { accessor.removeZone(id); }
+        state.viewZoneIds = [];
+        for (const hunk of state.hunks) {
+          if (hunk.removedLines.length === 0) { continue; }
+          const dom = document.createElement('div');
+          dom.className = 'diff-removed-zone';
+          for (const removed of hunk.removedLines) {
+            const lineEl = document.createElement('div');
+            lineEl.className = 'diff-removed-line';
+            lineEl.textContent = removed.text;
+            dom.appendChild(lineEl);
+          }
+          // afterLineNumber 0 = above line 1; N = below line N. We want zone
+          // to appear immediately before the first added line (or at modifiedStart
+          // for pure deletions).
+          const after = Math.max(0, hunk.modifiedStart);
+          const id = accessor.addZone({
+            afterLineNumber: after,
+            heightInLines: hunk.removedLines.length,
+            domNode: dom,
+          });
+          state.viewZoneIds.push(id);
+        }
+      });
+    }
+
     function renderHunkWidgets() {
       for (const w of state.hunkWidgets) {
-        modifiedEditor.removeOverlayWidget(w);
+        state.editor.removeOverlayWidget(w);
       }
       state.hunkWidgets = [];
       state.hoveredHunkIdx = -1;
 
-      state.lineChanges.forEach((change, idx) => {
-        const dom = makeHunkBar(change, idx);
+      state.hunks.forEach((hunk, idx) => {
+        const dom = makeHunkBar(hunk, idx);
         const widget = {
           _idx: idx,
-          _change: change,
+          _hunk: hunk,
           _dom: dom,
-          getId: () => `ai-cli-diff.hunkBar.${idx}`,
+          getId: () => 'ai-cli-diff.hunkBar.' + idx,
           getDomNode: () => dom,
-          // null = không dùng anchor preset, tự positioning qua CSS top/right.
           getPosition: () => null,
         };
-        modifiedEditor.addOverlayWidget(widget);
+        state.editor.addOverlayWidget(widget);
         state.hunkWidgets.push(widget);
       });
-
       repositionAllBars();
       updateHoveredHunkFromCursor();
     }
 
-    /**
-     * Cập nhật `top` cho mỗi bar dựa trên pixel offset của dòng đầu hunk
-     * (trừ scrollTop hiện tại). Bar nằm cố định bên phải viewport editor.
-     */
     function repositionAllBars() {
-      const scrollTop = modifiedEditor.getScrollTop();
+      const scrollTop = state.editor.getScrollTop();
+      const layout = state.editor.getLayoutInfo();
+      const minimapW = (layout && layout.minimap && layout.minimap.minimapWidth) || 0;
+      const scrollbarW = (layout && layout.verticalScrollbarWidth) || 0;
+      const rightPx = minimapW + scrollbarW + 8;
       for (const w of state.hunkWidgets) {
-        const line = hunkAnchorLine(w._change);
-        const top = modifiedEditor.getTopForLineNumber(line) - scrollTop;
-        w._dom.style.top = `${top}px`;
+        const lastLine = hunkLastLine(w._hunk);
+        const top = state.editor.getBottomForLineNumber(lastLine) - scrollTop;
+        w._dom.style.top = top + 'px';
+        w._dom.style.right = rightPx + 'px';
       }
     }
 
-    modifiedEditor.onDidScrollChange(() => repositionAllBars());
-    modifiedEditor.onDidLayoutChange(() => repositionAllBars());
+    /** 1-indexed Monaco line that the hunk widget anchors UNDER (its bottom edge). */
+    function hunkLastLine(hunk) {
+      if (hunk.addedLines.length > 0) {
+        return hunk.modifiedStart + hunk.addedLines.length;
+      }
+      return Math.max(1, hunk.modifiedStart + 1);
+    }
 
     function maybeAutoReveal() {
-      if (state.didAutoReveal || state.lineChanges.length === 0) { return; }
+      if (state.didAutoReveal || state.hunks.length === 0) { return; }
       state.didAutoReveal = true;
-      const first = state.lineChanges[0];
-      const line = first.modifiedStartLineNumber || 1;
-      modifiedEditor.revealLineInCenter(line);
-      modifiedEditor.setPosition({ lineNumber: line, column: 1 });
+      const line = hunkAnchorLine(state.hunks[0]);
+      state.editor.revealLineInCenter(line);
+      state.editor.setPosition({ lineNumber: line, column: 1 });
     }
 
-    /**
-     * Anchor line cho Content Widget: dòng đầu của hunk (modifiedStart).
-     * Với pure deletion (modifiedEnd===0), bám vào dòng kề trước/kề sau.
-     */
-    function hunkAnchorLine(change) {
-      if (change.modifiedEndLineNumber === 0 || change.modifiedEndLineNumber < change.modifiedStartLineNumber) {
-        return Math.max(1, change.modifiedStartLineNumber);
-      }
-      return change.modifiedStartLineNumber;
+    /** 1-indexed Monaco line that the hunk widget anchors to. */
+    function hunkAnchorLine(hunk) {
+      return Math.max(1, hunk.modifiedStart + 1);
     }
 
-    /** Hunk index chứa dòng `line` (modified side), hoặc -1 nếu không trong hunk nào. */
+    /** Hunk index covering modified-side `line` (1-indexed). */
     function findHunkIdxAtLine(line) {
       if (!line || line < 1) { return -1; }
-      for (let i = 0; i < state.lineChanges.length; i++) {
-        const c = state.lineChanges[i];
-        const start = c.modifiedStartLineNumber;
-        const end = c.modifiedEndLineNumber === 0 ? start : c.modifiedEndLineNumber;
-        if (line >= start && line <= end) { return i; }
+      for (let i = 0; i < state.hunks.length; i++) {
+        const h = state.hunks[i];
+        if (h.addedLines.length > 0) {
+          const start = h.modifiedStart + 1;
+          const end = h.modifiedStart + h.addedLines.length;
+          if (line >= start && line <= end) { return i; }
+        } else {
+          // Pure deletion: anchor on the single line at modifiedStart+1.
+          if (line === h.modifiedStart + 1 || line === h.modifiedStart) { return i; }
+        }
       }
       return -1;
     }
@@ -337,39 +395,21 @@
       state.hoveredHunkIdx = idx;
       state.hunkWidgets.forEach((w, i) => {
         const dom = w.getDomNode();
-        if (i === idx) {
-          dom.classList.add('visible');
-        } else {
-          dom.classList.remove('visible');
-        }
+        if (i === idx) { dom.classList.add('visible'); }
+        else { dom.classList.remove('visible'); }
       });
+      updateHunkCounter();
     }
 
     function updateHoveredHunkFromCursor() {
-      const pos = modifiedEditor.getPosition();
+      const pos = state.editor.getPosition();
       setHoveredHunk(pos ? findHunkIdxAtLine(pos.lineNumber) : -1);
     }
 
-    modifiedEditor.onMouseMove((e) => {
-      const line = e.target && e.target.position && e.target.position.lineNumber;
-      if (!line) { return; }
-      const idx = findHunkIdxAtLine(line);
-      if (idx !== -1) { setHoveredHunk(idx); }
-    });
-
-    modifiedEditor.onMouseLeave(() => {
-      updateHoveredHunkFromCursor();
-    });
-
-    modifiedEditor.onDidChangeCursorPosition(() => {
-      updateHoveredHunkFromCursor();
-    });
-
-    function makeHunkBar(change, idx) {
+    function makeHunkBar(hunk, idx) {
       const node = document.createElement('div');
       node.className = 'hunk-bar';
       node.dataset.hunkIdx = String(idx);
-
       node.addEventListener('mouseenter', () => setHoveredHunk(idx));
 
       const acceptBtn = document.createElement('button');
@@ -379,7 +419,7 @@
       acceptBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); });
       acceptBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        acceptHunk(change);
+        acceptHunk(hunk);
       });
 
       const rejectBtn = document.createElement('button');
@@ -389,7 +429,7 @@
       rejectBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); });
       rejectBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        rejectHunk(change);
+        rejectHunk(hunk);
       });
 
       node.appendChild(acceptBtn);
@@ -397,22 +437,22 @@
       return node;
     }
 
-    function acceptHunk(change) {
+    function acceptHunk(hunk) {
       if (state.inFlight) { return; }
-      const { newOriginal, newCurrent } = applyAccept(change);
+      const { newOriginal, newCurrent } = applyAccept(hunk);
       setInFlight(true);
       vscodeApi.postMessage({ type: 'acceptHunk', newOriginal, newCurrent });
     }
 
-    function rejectHunk(change) {
+    function rejectHunk(hunk) {
       if (state.inFlight) { return; }
-      const { newOriginal, newCurrent } = applyReject(change);
+      const { newOriginal, newCurrent } = applyReject(hunk);
       setInFlight(true);
       vscodeApi.postMessage({ type: 'rejectHunk', newOriginal, newCurrent });
     }
 
     function registerActions() {
-      modifiedEditor.addAction({
+      state.editor.addAction({
         id: 'ai-cli-diff.acceptCurrentHunk',
         label: 'AI CLI Diff: Accept Current Hunk',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY],
@@ -421,7 +461,7 @@
           if (h) { acceptHunk(h); }
         },
       });
-      modifiedEditor.addAction({
+      state.editor.addAction({
         id: 'ai-cli-diff.rejectCurrentHunk',
         label: 'AI CLI Diff: Reject Current Hunk',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyN],
@@ -430,31 +470,31 @@
           if (h) { rejectHunk(h); }
         },
       });
-      modifiedEditor.addAction({
+      state.editor.addAction({
         id: 'ai-cli-diff.nextHunk',
         label: 'AI CLI Diff: Next Hunk',
         keybindings: [monaco.KeyCode.F7],
         run: () => gotoHunk(+1),
       });
-      modifiedEditor.addAction({
+      state.editor.addAction({
         id: 'ai-cli-diff.prevHunk',
         label: 'AI CLI Diff: Previous Hunk',
         keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F7],
         run: () => gotoHunk(-1),
       });
-      modifiedEditor.addAction({
+      state.editor.addAction({
         id: 'ai-cli-diff.nextFile',
         label: 'AI CLI Diff: Next File',
         keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyL],
         run: () => vscodeApi.postMessage({ type: 'nextFile' }),
       });
-      modifiedEditor.addAction({
+      state.editor.addAction({
         id: 'ai-cli-diff.prevFile',
         label: 'AI CLI Diff: Previous File',
         keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyH],
         run: () => vscodeApi.postMessage({ type: 'prevFile' }),
       });
-      modifiedEditor.addAction({
+      state.editor.addAction({
         id: 'ai-cli-diff.acceptAll',
         label: 'AI CLI Diff: Accept All Hunks',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyY],
@@ -464,121 +504,81 @@
           vscodeApi.postMessage({ type: 'acceptAll' });
         },
       });
-      modifiedEditor.addAction({
+      state.editor.addAction({
         id: 'ai-cli-diff.save',
         label: 'AI CLI Diff: Save',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
         run: () => vscodeApi.postMessage({ type: 'save' }),
       });
-      // Override Monaco's local undo/redo so VS Code's WorkspaceEdit stack stays the single source of truth.
-      modifiedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, () => {
+      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, () => {
         vscodeApi.postMessage({ type: 'undo' });
       });
-      modifiedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ, () => {
+      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ, () => {
         vscodeApi.postMessage({ type: 'redo' });
       });
     }
 
     function findHunkAtCursor() {
-      const pos = modifiedEditor.getPosition();
+      const pos = state.editor.getPosition();
       if (!pos) { return null; }
-      const line = pos.lineNumber;
-      // Prefer hunk that contains cursor; else nearest.
-      let contained = null;
-      let nearest = null;
-      let nearestDist = Infinity;
-      for (const c of state.lineChanges) {
-        const start = c.modifiedStartLineNumber;
-        const end = c.modifiedEndLineNumber === 0 ? start : c.modifiedEndLineNumber;
-        if (line >= start && line <= end) {
-          contained = c;
-          break;
-        }
-        const dist = Math.min(Math.abs(line - start), Math.abs(line - end));
-        if (dist < nearestDist) {
-          nearestDist = dist;
-          nearest = c;
-        }
+      const idx = findHunkIdxAtLine(pos.lineNumber);
+      if (idx !== -1) { return state.hunks[idx]; }
+      // Nearest hunk fallback.
+      let best = null;
+      let bestDist = Infinity;
+      for (const h of state.hunks) {
+        const anchor = hunkAnchorLine(h);
+        const d = Math.abs(pos.lineNumber - anchor);
+        if (d < bestDist) { best = h; bestDist = d; }
       }
-      return contained || nearest;
+      return best;
     }
 
     function gotoHunk(direction) {
-      if (state.lineChanges.length === 0) { return; }
-      const pos = modifiedEditor.getPosition();
+      if (state.hunks.length === 0) { return; }
+      const pos = state.editor.getPosition();
       const line = pos ? pos.lineNumber : 1;
-      const sorted = state.lineChanges.slice().sort(
-        (a, b) => a.modifiedStartLineNumber - b.modifiedStartLineNumber
+      const sorted = state.hunks.slice().sort(
+        (a, b) => hunkAnchorLine(a) - hunkAnchorLine(b)
       );
       let target = null;
       if (direction > 0) {
-        target = sorted.find(c => c.modifiedStartLineNumber > line) || sorted[0];
+        target = sorted.find(h => hunkAnchorLine(h) > line) || sorted[0];
       } else {
         for (let i = sorted.length - 1; i >= 0; i--) {
-          if (sorted[i].modifiedStartLineNumber < line) {
-            target = sorted[i];
-            break;
-          }
+          if (hunkAnchorLine(sorted[i]) < line) { target = sorted[i]; break; }
         }
         target = target || sorted[sorted.length - 1];
       }
       if (target) {
-        const targetLine = target.modifiedStartLineNumber || 1;
-        modifiedEditor.revealLineInCenter(targetLine);
-        modifiedEditor.setPosition({ lineNumber: targetLine, column: 1 });
+        const targetLine = hunkAnchorLine(target);
+        state.editor.revealLineInCenter(targetLine);
+        state.editor.setPosition({ lineNumber: targetLine, column: 1 });
       }
     }
 
     /**
-     * Accept hunk: bake modified slice INTO the original.
+     * Accept hunk: bake modified slice INTO the original baseline.
+     * newOriginal: splice removedLines.length entries at originalStart, replace with addedLines text.
+     * newCurrent: unchanged.
      */
-    function applyAccept(change) {
-      const modifiedSlice = extractSlice(
-        state.currentContent,
-        change.modifiedStartLineNumber,
-        change.modifiedEndLineNumber
-      );
-      const newOriginal = replaceSlice(
-        state.originalContent,
-        change.originalStartLineNumber,
-        change.originalEndLineNumber,
-        modifiedSlice
-      );
-      return { newOriginal, newCurrent: state.currentContent };
+    function applyAccept(hunk) {
+      const origLines = state.originalContent.split('\n');
+      const insertText = hunk.addedLines.map(a => a.text);
+      origLines.splice(hunk.originalStart, hunk.removedLines.length, ...insertText);
+      return { newOriginal: origLines.join('\n'), newCurrent: state.currentContent };
     }
 
     /**
-     * Reject hunk: roll modified slice back to original slice.
+     * Reject hunk: rollback modified slice back to original.
+     * newCurrent: splice addedLines.length entries at modifiedStart, replace with removedLines text.
+     * newOriginal: unchanged.
      */
-    function applyReject(change) {
-      const originalSlice = extractSlice(
-        state.originalContent,
-        change.originalStartLineNumber,
-        change.originalEndLineNumber
-      );
-      const newCurrent = replaceSlice(
-        state.currentContent,
-        change.modifiedStartLineNumber,
-        change.modifiedEndLineNumber,
-        originalSlice
-      );
-      return { newOriginal: state.originalContent, newCurrent };
-    }
-
-    function extractSlice(text, startLine, endLine) {
-      if (endLine === 0 || endLine < startLine) { return []; }
-      const lines = text.split('\n');
-      return lines.slice(startLine - 1, endLine);
-    }
-
-    function replaceSlice(text, startLine, endLine, newLines) {
-      const lines = text.split('\n');
-      if (endLine === 0 || endLine < startLine) {
-        lines.splice(startLine, 0, ...newLines);
-      } else {
-        lines.splice(startLine - 1, endLine - startLine + 1, ...newLines);
-      }
-      return lines.join('\n');
+    function applyReject(hunk) {
+      const modLines = state.currentContent.split('\n');
+      const insertText = hunk.removedLines.map(r => r.text);
+      modLines.splice(hunk.modifiedStart, hunk.addedLines.length, ...insertText);
+      return { newOriginal: state.originalContent, newCurrent: modLines.join('\n') };
     }
   });
 })();
