@@ -25,6 +25,16 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "ai-cli-diff-view.diffEditor",
+        "displayName": "AI CLI Diff",
+        "selector": [
+          { "filenamePattern": "*" }
+        ],
+        "priority": "option"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -66,14 +76,6 @@
       {
         "command": "ai-cli-diff-view.revertAllHunks",
         "title": "AI CLI Diff: Revert All Changes"
-      },
-      {
-        "command": "ai-cli-diff-view.acceptHunk",
-        "title": "AI CLI Diff: Accept Hunk"
-      },
-      {
-        "command": "ai-cli-diff-view.revertHunk",
-        "title": "AI CLI Diff: Revert Hunk"
       },
       {
         "command": "ai-cli-diff-view.installHooks",
@@ -120,20 +122,7 @@
         "when": "ai-cli-diff-view.hasPendingDiff"
       }
     ],
-    "menus": {
-      "editor/title": [
-        {
-          "command": "ai-cli-diff-view.acceptAllHunks",
-          "when": "ai-cli-diff-view.hasPendingDiff",
-          "group": "navigation@1"
-        },
-        {
-          "command": "ai-cli-diff-view.revertAllHunks",
-          "when": "ai-cli-diff-view.hasPendingDiff",
-          "group": "navigation@2"
-        }
-      ]
-    }
+    "menus": {}
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -152,6 +141,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "material-icon-theme": "^5.32.0",
+    "monaco-editor": "^0.55.1",
     "node-pty": "^1.2.0-beta.13"
   }
 }

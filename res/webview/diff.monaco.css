@@ -1,0 +1,161 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  overflow: hidden;
+}
+
+body {
+  position: relative;
+}
+
+#toolbar {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.92));
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 30;
+  pointer-events: auto;
+}
+
+#toolbar-file {
+  display: none;
+}
+
+#toolbar-spacer {
+  display: none;
+}
+
+#file-counter {
+  font-size: 12px;
+  opacity: 0.85;
+  min-width: 40px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-btn {
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.15));
+  color: var(--vscode-button-secondaryForeground, inherit);
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.25));
+}
+
+.nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.toolbar-btn {
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.15));
+  color: var(--vscode-button-secondaryForeground, inherit);
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.toolbar-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.25));
+}
+
+.toolbar-btn.accept {
+  background: rgba(46, 160, 67, 0.25);
+  color: inherit;
+}
+
+.toolbar-btn.accept:hover {
+  background: rgba(46, 160, 67, 0.4);
+}
+
+.toolbar-btn.reject {
+  background: rgba(248, 81, 73, 0.2);
+  color: inherit;
+}
+
+.toolbar-btn.reject:hover {
+  background: rgba(248, 81, 73, 0.35);
+}
+
+#container {
+  position: absolute;
+  inset: 0;
+}
+
+/* ViewZone hunk bar — full-width below each hunk. */
+.hunk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px;
+  height: 100%;
+  background: var(--vscode-editorWidget-background, rgba(0, 0, 0, 0.4));
+  border-top: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.3));
+  border-bottom: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.3));
+  box-sizing: border-box;
+  font-size: 11px;
+  pointer-events: auto;
+  position: relative;
+  z-index: 20;
+}
+
+.hunk-label {
+  opacity: 0.7;
+  font-family: var(--vscode-editor-font-family, monospace);
+  margin-right: 4px;
+}
+
+.hunk-btn {
+  border: 1px solid transparent;
+  padding: 2px 10px;
+  font-size: 11px;
+  border-radius: 2px;
+  cursor: pointer;
+  color: inherit;
+  background: transparent;
+  font-family: var(--vscode-font-family);
+  pointer-events: auto;
+}
+
+.hunk-btn.accept {
+  background: rgba(46, 160, 67, 0.3);
+}
+
+.hunk-btn.accept:hover {
+  background: rgba(46, 160, 67, 0.55);
+}
+
+.hunk-btn.reject {
+  background: rgba(248, 81, 73, 0.25);
+}
+
+.hunk-btn.reject:hover {
+  background: rgba(248, 81, 73, 0.5);
+}

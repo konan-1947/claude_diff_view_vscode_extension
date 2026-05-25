@@ -86,10 +86,6 @@ export class WorkspaceWatcher {
       this.snapshots.set(filePath, doc.getText());
       this.savedFilesByVsCode.set(filePath, Date.now());
       this.pruneStaleMapEntries();
-
-      if (this.diffManager.hasPendingDiff(filePath)) {
-        this.diffManager.renderer.applyDecorations(filePath);
-      }
     });
     this.disposables.push(d);
   }

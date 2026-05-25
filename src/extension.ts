@@ -1,38 +1,38 @@
 import * as vscode from 'vscode';
 import { DiffManager } from './diff/diffManager';
+import { DiffEditorProvider, DIFF_EDITOR_VIEW_TYPE } from './diff/diffWebviewPanel';
 import { IAiRunner } from './runner/aiRunner';
 import { HookWatcher } from './watcher/hookWatcher';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
-import { HunkCodeLensProvider } from './diff/hunkCodeLensProvider';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
 
 export function activate(context: vscode.ExtensionContext): void {
-  // CodeLens buttons (Accept/Revert hunk) are suppressed in diff editors by default.
-  // Enable at workspace scope so they appear in the right (modified) pane.
-  const editorConfig = vscode.workspace.getConfiguration();
-  if (editorConfig.get<boolean>('diffEditor.codeLens') !== true) {
-    void editorConfig.update('diffEditor.codeLens', true, vscode.ConfigurationTarget.Global);
-  }
-
   const diffManager       = new DiffManager(context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);
   const fsHookWatcher     = new HookWatcher(diffManager);
   const gitBranchWatcher  = new GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
   const navigationManager = new NavigationManager(diffManager);
 
-  diffManager.renderer.setNavigationManager(navigationManager);
+  const diffEditorProvider = new DiffEditorProvider(context.extensionUri, diffManager);
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(
+      DIFF_EDITOR_VIEW_TYPE,
+      diffEditorProvider,
+      {
+        webviewOptions: { retainContextWhenHidden: true },
+        supportsMultipleEditorsPerDocument: false,
+      }
+    )
+  );
 
   const navBarPanel = new NavBarPanel(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(NavBarPanel.viewType, navBarPanel)
   );
-  diffManager.renderer.setNavUpdateCallback(() => {
-    updateNavBarState();
-  });
 
   let activeRunner: IAiRunner | undefined;
 
@@ -72,12 +72,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }, 1500);
   }
 
-  const codeLensProvider = new HunkCodeLensProvider(diffManager);
-  context.subscriptions.push(
-    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, codeLensProvider),
-    diffManager.onDidChangeDiffs(() => codeLensProvider.refresh())
-  );
-
   fsHookWatcher.start();
   workspaceWatcher.start();
   gitBranchWatcher.start();
@@ -104,61 +98,30 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   function updateNavBarState(): void {
-    const editor = vscode.window.activeTextEditor;
-    const filePath = editor?.document.uri.fsPath;
     const pendingFiles = diffManager.getPendingFiles();
-
     if (pendingFiles.length === 0) {
       navBarPanel.setActiveFile(undefined);
       navBarPanel.update(undefined);
+      void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.hasPendingDiff', false);
       return;
     }
 
-    if (filePath && diffManager.renderer.hasPending(filePath)) {
-      navBarPanel.setActiveFile(filePath);
-    } else {
-      navBarPanel.setActiveFile(undefined);
-    }
-
-    const navAnchor = filePath ?? pendingFiles[0];
+    const activePath = diffManager.getActiveFilePath();
+    navBarPanel.setActiveFile(activePath);
+    const navAnchor = activePath ?? pendingFiles[0];
     navBarPanel.update(navigationManager.getNavigationInfo(navAnchor));
+    void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.hasPendingDiff', true);
   }
-
-  let isOpeningDiff = false;
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
-      updateNavBarState();
-      if (!editor || editor.document.uri.scheme !== 'file') { return; }
-      const filePath = editor.document.uri.fsPath;
-      if (diffManager.renderer.hasPending(filePath)) {
-        if (!diffManager.renderer.isEditorInDiffView(editor) && !isOpeningDiff) {
-          isOpeningDiff = true;
-          try {
-            await diffManager.openDiff(filePath);
-          } finally {
-            setTimeout(() => { isOpeningDiff = false; }, 500);
-          }
-          return;
-        }
-        diffManager.renderer.applyDecorations(filePath);
-      }
-    })
-  );
 
   context.subscriptions.push(
     diffManager.onDidChangeDiffs(() => {
       updateNavBarState();
     })
   );
-
   context.subscriptions.push(
-    vscode.workspace.onDidChangeTextDocument((e) => {
-      const filePath = e.document.uri.fsPath;
-      if (diffManager.renderer.hasPending(filePath)) {
-        diffManager.renderer.applyDecorations(filePath);
-      }
-    })
+    vscode.window.tabGroups.onDidChangeTabs(() => updateNavBarState())
   );
+  updateNavBarState();
 }
 
 export function deactivate(): void {}

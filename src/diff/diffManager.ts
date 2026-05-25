@@ -1,19 +1,18 @@
 /**
- * diffManager.ts (đã refactor)
+ * diffManager.ts
  *
- * Quản lý snapshot nội dung file trước khi Claude sửa.
- * Delegate việc render sang InlineDiffRenderer.
- * Không còn dùng temp file hay vscode.diff.
+ * Snapshot + accept/revert state cho các file đang được AI sửa.
+ * Render delegate hoàn toàn sang DiffEditorProvider (CustomTextEditorProvider).
+ * Mỗi pending file = 1 tab webview riêng.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { InlineDiffRenderer } from './inlineDiffRenderer';
 import { calculateHunks } from './hunkCalculator';
+import { DIFF_EDITOR_VIEW_TYPE } from './diffWebviewPanel';
 import { SnapshotStore, SnapshotState } from './snapshotStore';
 
-/** Normalize về cùng định dạng mà vscode.Uri.fsPath sử dụng. */
 function normalizePath(filePath: string): string {
   const fsPath = vscode.Uri.file(path.resolve(filePath)).fsPath;
   return process.platform === 'win32' ? fsPath.toLowerCase() : fsPath;
@@ -23,71 +22,36 @@ export class DiffManager {
   private _onDidChangeDiffs = new vscode.EventEmitter<void>();
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
 
-  public readonly contentProviderEventEmitter = new vscode.EventEmitter<vscode.Uri>();
-
-  /** Lưu nội dung gốc TRƯỚC khi sửa (để tính diff) */
   private snapshots: Map<string, SnapshotState> = new Map();
-  private snapshotQueries: Map<string, string> = new Map();
   private readonly store: SnapshotStore;
-
-  public readonly renderer: InlineDiffRenderer;
+  /** filePath (normalized) -> active webview panel. */
+  private panels: Map<string, vscode.WebviewPanel> = new Map();
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.renderer = new InlineDiffRenderer(context.extensionUri);
     this.store = new SnapshotStore(context.workspaceState);
     this.snapshots = this.store.load();
-    for (const absPath of this.snapshots.keys()) {
-      this.snapshotQueries.set(absPath, Date.now().toString());
-    }
-
-    context.subscriptions.push(
-      vscode.workspace.registerTextDocumentContentProvider('ai-cli-diff', {
-        onDidChange: this.contentProviderEventEmitter.event,
-        provideTextDocumentContent: (uri: vscode.Uri) => {
-          // Xóa query (timestamp) đi để trả về đường dẫn file thật chính xác
-          const realFileUri = uri.with({ scheme: 'file', query: '' });
-          const originalPath = normalizePath(realFileUri.fsPath);
-          return this.getSnapshot(originalPath) || '';
-        }
-      })
-    );
   }
 
-  // ---- Public API ----
-
-  /**
-   * Gọi TRƯỚC khi Claude sửa file.
-   * Đọc nội dung hiện tại và lưu làm snapshot "before".
-   */
   async snapshotBefore(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
     if (this.snapshots.has(absPath)) {
-      // Đã có snapshot — giữ bản gốc nhất, không ghi đè
       return;
     }
     const fileExistedBefore = fs.existsSync(absPath);
     try {
       const content = fs.readFileSync(absPath, 'utf8');
       this.snapshots.set(absPath, { content, fileExistedBefore });
-      this.snapshotQueries.set(absPath, Date.now().toString());
     } catch {
-      // File chưa tồn tại (Claude tạo file mới)
       this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
-      this.snapshotQueries.set(absPath, Date.now().toString());
     }
     void this.store.save(this.snapshots);
   }
 
-  /**
-   * Gọi SAU khi Claude đã sửa xong file.
-   * Mở editor và render inline diff.
-   */
   async openDiff(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (snapshot === undefined) { return; }
 
-    // Đọc nội dung mới từ disk
     let modifiedContent: string;
     try {
       modifiedContent = fs.readFileSync(absPath, 'utf8');
@@ -95,311 +59,267 @@ export class DiffManager {
       return;
     }
 
-    // Nếu không có khác biệt thực sự (hunks = 0), tránh tạo/giữ trạng thái pending sai.
-    // Trường hợp này thường xảy ra khi Claude "sửa" nhưng kết quả cuối cùng y hệt bản gốc,
-    // hoặc do lỗi resolve path khiến snapshot không khớp.
     const hunks = calculateHunks(snapshot.content, modifiedContent);
     if (hunks.length === 0) {
       this.snapshots.delete(absPath);
-      this.snapshotQueries.delete(absPath);
       void this.store.save(this.snapshots);
-
-      // Vẫn gọi renderer để nó dọn decorations/nav cho editor hiện tại.
-      this.renderer.show(absPath, snapshot.content, modifiedContent);
-      // Không còn pending diff nên cũng xóa state inline diff để tránh giữ dư trạng thái.
-      this.renderer.clear(absPath);
       this._onDidChangeDiffs.fire();
       return;
     }
 
-    // Chuyển sang dùng UI chuẩn của VS Code: Diff Editor. 
-    // Dùng chung 1 query ID cho suốt quá trình Diff để khỏi bị mở đúp thành 2 tab
-    const queryId = this.snapshotQueries.get(absPath) || Date.now().toString();
-    const originalUri = vscode.Uri.file(absPath).with({ scheme: 'ai-cli-diff', query: queryId });
-    const modifiedUri = vscode.Uri.file(absPath);
-    const title = `AI CLI Diff: ${path.basename(absPath)}`;
-    
-    // Vẫn cần gọi renderer để tính toán danh sách hunks (giúp render CodeLens)
-    this.renderer.show(absPath, snapshot.content, modifiedContent);
+    const existing = this.panels.get(absPath);
+    if (existing) {
+      existing.reveal(vscode.ViewColumn.Active, false);
+      this._onDidChangeDiffs.fire();
+      return;
+    }
 
-    await vscode.commands.executeCommand('vscode.diff', originalUri, modifiedUri, title, { preview: false });
+    await vscode.commands.executeCommand(
+      'vscode.openWith',
+      vscode.Uri.file(absPath),
+      DIFF_EDITOR_VIEW_TYPE,
+      { preview: false } satisfies vscode.TextDocumentShowOptions
+    );
     this._onDidChangeDiffs.fire();
   }
 
-  /**
-   * Inject snapshot từ bên ngoài (dùng bởi HookWatcher hoặc WorkspaceWatcher).
-   */
   loadSnapshot(filePath: string, content: string, fileExistedBefore = true): void {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) {
       this.snapshots.set(absPath, { content, fileExistedBefore });
-      this.snapshotQueries.set(absPath, Date.now().toString());
       void this.store.save(this.snapshots);
       this._onDidChangeDiffs.fire();
     }
   }
 
-  async acceptHunk(filePath: string, hunkId: string): Promise<void> {
-    const absPath = normalizePath(filePath);
-    
-    const hunks = this.renderer.getHunks(absPath);
-    const hunk = hunks.find(h => h.id === hunkId);
-    let oldSnapshot = this.snapshots.get(absPath);
-
-    if (hunk && oldSnapshot !== undefined) {
-      // Patch bản snapshot nguyên thủy với nội dung của Hunk đã Accept
-      const lines = oldSnapshot.content.split('\n');
-      const deleteCount = hunk.removedLines.length;
-      const addedTexts = hunk.addedLines.map(l => l.text);
-      lines.splice(hunk.originalStart, deleteCount, ...addedTexts);
-      
-      const newSnapshot = lines.join('\n');
-      this.snapshots.set(absPath, { ...oldSnapshot, content: newSnapshot });
-      void this.store.save(this.snapshots);
-
-      // Thông báo cho VS Code nạp lại nội dung bên trái (Original) của màn hình Diff
-      const queryId = this.snapshotQueries.get(absPath) || '';
-      const originalUri = vscode.Uri.file(absPath).with({ scheme: 'ai-cli-diff', query: queryId });
-      this.contentProviderEventEmitter.fire(originalUri);
-
-      // Cập nhật lại Inline Renderer và tính lại CodeLens
-      let modifiedContent: string;
-      try {
-        modifiedContent = fs.readFileSync(absPath, 'utf8');
-      } catch {
-        modifiedContent = newSnapshot;
-      }
-      this.renderer.show(absPath, newSnapshot, modifiedContent);
-    }
-    
-    // Nếu không còn hunk nào khác, tự động cleanup và đóng Diff Editor
-    const remainingHunks = this.renderer.getHunks(absPath);
-    if (remainingHunks.length === 0) {
-      await this.cleanup(absPath);
-    }
-
-    this._onDidChangeDiffs.fire();
-  }
-
-  async revertHunk(filePath: string, hunkId: string): Promise<void> {
-    const absPath = normalizePath(filePath);
-    const isDone = await this.renderer.revertHunk(absPath, hunkId);
-    const shouldDelete = await this.shouldDeleteRejectedNewFile(absPath);
-    if (shouldDelete) {
-      await this.deleteRejectedNewFile(absPath);
-      await this.cleanup(absPath, { openNormalTextDocument: false });
-    } else if (isDone) {
-      await this.cleanup(absPath);
-    }
-    this._onDidChangeDiffs.fire();
-  }
-
   /**
-   * Chấp nhận toàn bộ thay đổi trong file — xóa snapshot.
+   * Accept toàn bộ thay đổi của 1 file: file đã sẵn trên đĩa với currentContent,
+   * chỉ cần xoá snapshot.
    */
   async accept(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
+    if (!this.snapshots.has(absPath)) { return; }
 
-    // Lưu lại thứ tự pending trước khi cleanup để biết "file tiếp theo" là gì.
     const pendingBefore = this.getPendingFiles();
     const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
-    const hasNext = pendingBefore.length > 1 && currentIdx !== -1;
-    const nextTarget = hasNext
-      ? pendingBefore[(currentIdx + 1) % pendingBefore.length]!
-      : undefined;
+    const nextTarget =
+      pendingBefore.length > 1 && currentIdx !== -1
+        ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
+        : undefined;
 
-    this.renderer.acceptAll(absPath);
-
-    // Nếu còn file pending khác, tránh "nhảy về file thường" sau khi đóng diff;
-    // thay vào đó chuyển sang diff của file tiếp theo để user tiếp tục review.
-    await this.cleanup(absPath, { openNormalTextDocument: !nextTarget });
+    this.snapshots.delete(absPath);
+    void this.store.save(this.snapshots);
+    this.closePanel(absPath);
 
     if (nextTarget) {
       await this.openDiff(nextTarget);
     }
-
     this._onDidChangeDiffs.fire();
   }
 
   /**
-   * Hoàn tác toàn bộ thay đổi trong file về nội dung gốc.
+   * Revert toàn bộ: ghi originalContent ra đĩa.
+   * Nếu file vốn không tồn tại trước đó -> xoá file.
    */
   async revert(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
-    if (snapshot === undefined) {
+    if (!snapshot) { return; }
 
-      return;
+    const pendingBefore = this.getPendingFiles();
+    const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
+    const nextTarget =
+      pendingBefore.length > 1 && currentIdx !== -1
+        ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
+        : undefined;
+
+    if (snapshot.fileExistedBefore) {
+      await this.writeFile(absPath, snapshot.content);
+    } else {
+      await this.deleteFile(absPath);
     }
 
-    const shouldDelete = !snapshot.fileExistedBefore;
-    await this.renderer.revertAll(absPath);
-    if (shouldDelete) {
-      await this.deleteRejectedNewFile(absPath);
+    this.snapshots.delete(absPath);
+    void this.store.save(this.snapshots);
+    this.closePanel(absPath);
+
+    if (nextTarget) {
+      await this.openDiff(nextTarget);
     }
-    await this.cleanup(absPath, { openNormalTextDocument: !shouldDelete });
     this._onDidChangeDiffs.fire();
   }
 
-  /**
-   * Chấp nhận toàn bộ thay đổi của tất cả file đang pending.
-   */
   async acceptAllPending(): Promise<number> {
     const pendingFiles = this.getPendingFiles();
-    for (const filePath of pendingFiles) {
-      const absPath = normalizePath(filePath);
-      this.renderer.acceptAll(absPath);
-      await this.cleanup(absPath, { openNormalTextDocument: false });
+    const count = pendingFiles.length;
+    this.snapshots.clear();
+    void this.store.save(this.snapshots);
+    for (const p of pendingFiles) {
+      this.closePanel(normalizePath(p));
     }
     this._onDidChangeDiffs.fire();
-    return pendingFiles.length;
+    return count;
   }
 
-  /**
-   * Xóa snapshot của một file (sau khi accept/revert từng hunk xong hết).
-   * Dùng khi tất cả hunks đã được xử lý thủ công.
-   */
-  forgetFile(filePath: string): void {
-    this.cleanup(normalizePath(filePath)).catch((err) => console.error(err));
-  }
-
-  /**
-   * Kiểm tra xem file có đang có pending diff không.
-   */
   hasPendingDiff(filePath: string): boolean {
     return this.snapshots.has(normalizePath(filePath));
   }
 
-  /**
-   * Lấy danh sách tất cả các file đang có pending diff.
-   */
   getPendingFiles(): string[] {
     return Array.from(this.snapshots.keys());
   }
 
-  /**
-   * Lấy snapshot gốc (dùng để so sánh sau khi edit).
-   */
   getSnapshot(filePath: string): string | undefined {
     return this.snapshots.get(normalizePath(filePath))?.content;
   }
 
-  /**
-   * Dọn dẹp tất cả pending diffs khi deactivate.
-   */
+  /** Alias dùng bởi DiffEditorProvider; trả về content của snapshot (left side). */
+  getSnapshotContent(filePath: string): string | undefined {
+    return this.getSnapshot(filePath);
+  }
+
+  getActiveFilePath(): string | undefined {
+    const active = vscode.window.tabGroups.activeTabGroup.activeTab;
+    if (active?.input instanceof vscode.TabInputCustom) {
+      if (active.input.viewType === DIFF_EDITOR_VIEW_TYPE) {
+        return normalizePath(active.input.uri.fsPath);
+      }
+    }
+    // Fallback: first panel in map.
+    const first = this.panels.keys().next();
+    return first.done ? undefined : first.value;
+  }
+
   disposeAll(): void {
-    this.renderer.disposeAll();
     this.snapshots.clear();
-    this.snapshotQueries.clear();
+    for (const panel of this.panels.values()) {
+      panel.dispose();
+    }
+    this.panels.clear();
   }
 
   /**
-   * Xoá toàn bộ pending diffs khi không còn hợp lệ (vd: đổi git branch).
-   * Khác `disposeAll` ở chỗ: cũng đóng các tab diff đang mở và xoá luôn
-   * snapshot đã persist trong workspaceState, để sau khi reload VS Code
-   * snapshot cũ không bị `SnapshotStore.load()` kéo trở lại.
+   * Xoá toàn bộ pending (vd: git branch switch). Cần persist clean state để
+   * sau reload window không bị `SnapshotStore.load()` kéo lại.
    */
   async clearAll(): Promise<void> {
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input instanceof vscode.TabInputTextDiff &&
-            tab.input.original.scheme === 'ai-cli-diff') {
-          await vscode.window.tabGroups.close(tab);
-        }
-      }
-    }
-
     this.disposeAll();
     await this.store.clear();
   }
 
-  private async cleanup(
-    absPath: string,
-    opts?: { openNormalTextDocument?: boolean }
-  ): Promise<void> {
-    const openNormalTextDocument = opts?.openNormalTextDocument ?? true;
+  // ---- Panel registry (gọi bởi DiffEditorProvider) ----
 
-    this.snapshots.delete(absPath);
-    this.snapshotQueries.delete(absPath);
+  registerPanel(filePath: string, panel: vscode.WebviewPanel): void {
+    const absPath = normalizePath(filePath);
+    const existing = this.panels.get(absPath);
+    if (existing && existing !== panel) {
+      existing.dispose();
+    }
+    this.panels.set(absPath, panel);
+  }
+
+  unregisterPanel(filePath: string, panel: vscode.WebviewPanel): void {
+    const absPath = normalizePath(filePath);
+    const existing = this.panels.get(absPath);
+    if (existing === panel) {
+      this.panels.delete(absPath);
+      this._onDidChangeDiffs.fire();
+    }
+  }
+
+  private closePanel(absPath: string): void {
+    const panel = this.panels.get(absPath);
+    if (panel) {
+      this.panels.delete(absPath);
+      panel.dispose();
+    }
+  }
+
+  // ---- Hunk-level operations (gọi bởi webview qua provider) ----
+
+  /**
+   * Accept 1 hunk: webview đã tính newOriginal (snapshot trồi lên include hunk),
+   * newCurrent giữ nguyên. Chỉ update snapshot + có thể đóng nếu hết hunk.
+   */
+  async applyHunkAcceptFromWebview(
+    filePath: string,
+    newOriginal: string,
+    newCurrent: string
+  ): Promise<void> {
+    const absPath = normalizePath(filePath);
+    const snapshot = this.snapshots.get(absPath);
+    if (!snapshot) { return; }
+
+    this.snapshots.set(absPath, { ...snapshot, content: newOriginal });
     void this.store.save(this.snapshots);
 
-    // Xóa inline diff state/decorations và cập nhật nav UI ngay.
-    this.renderer.clear(absPath);
-    
-    // Lưu lại vị trí con trỏ và scroll hiện tại trước khi đóng tab
-    let targetSelection: vscode.Selection | undefined;
-    let targetVisibleRange: vscode.Range | undefined;
-    
-    for (const editor of vscode.window.visibleTextEditors) {
-      if (normalizePath(editor.document.uri.fsPath) === absPath) {
-        targetSelection = editor.selection;
-        if (editor.visibleRanges.length > 0) {
-          targetVisibleRange = editor.visibleRanges[0];
-        }
-        if (editor === vscode.window.activeTextEditor) {
-          break; // Ưu tiên editor đang có focus nhất
-        }
-      }
-    }
-
-    // Tự động đóng tab Diff View sau khi xong hết hunks
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input instanceof vscode.TabInputTextDiff) {
-          const { modified } = tab.input;
-          if (normalizePath(modified.fsPath) === absPath) {
-            await vscode.window.tabGroups.close(tab);
-          }
-        }
-      }
-    }
-
-    // Mở lại file ở tab thường và đặt con trỏ/scroll về đúng chỗ cũ
-    // (chỉ làm khi không chuyển sang diff file pending khác)
-    if (openNormalTextDocument) {
-      try {
-        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
-        const editor = await vscode.window.showTextDocument(doc, { preview: false });
-
-        if (targetSelection) {
-          editor.selection = targetSelection;
-        }
-        if (targetVisibleRange) {
-          editor.revealRange(targetVisibleRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-        }
-      } catch {}
+    if (newOriginal === newCurrent) {
+      await this.accept(absPath);
+    } else {
+      this._onDidChangeDiffs.fire();
     }
   }
 
-  private async shouldDeleteRejectedNewFile(absPath: string): Promise<boolean> {
+  /**
+   * Reject 1 hunk: webview đã tính newCurrent (rollback hunk về original),
+   * newOriginal giữ nguyên. Ghi newCurrent ra đĩa.
+   */
+  async applyHunkRejectFromWebview(
+    filePath: string,
+    newOriginal: string,
+    newCurrent: string
+  ): Promise<void> {
+    const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
-    if (!snapshot || snapshot.fileExistedBefore) {
-      return false;
-    }
+    if (!snapshot) { return; }
 
+    await this.writeFile(absPath, newCurrent);
+
+    if (newOriginal === newCurrent) {
+      if (!snapshot.fileExistedBefore && newCurrent.length === 0) {
+        await this.deleteFile(absPath);
+      }
+      const pendingBefore = this.getPendingFiles();
+      const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
+      const nextTarget =
+        pendingBefore.length > 1 && currentIdx !== -1
+          ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
+          : undefined;
+
+      this.snapshots.delete(absPath);
+      void this.store.save(this.snapshots);
+      this.closePanel(absPath);
+
+      if (nextTarget) {
+        await this.openDiff(nextTarget);
+      }
+    }
+    this._onDidChangeDiffs.fire();
+  }
+
+  private async writeFile(absPath: string, content: string): Promise<void> {
+    const uri = vscode.Uri.file(absPath);
     const doc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === absPath);
     if (doc) {
-      return doc.getText().length === 0;
-    }
-
-    try {
-      return fs.readFileSync(absPath, 'utf8').length === 0;
-    } catch {
-      return false;
+      const edit = new vscode.WorkspaceEdit();
+      const fullRange = new vscode.Range(
+        new vscode.Position(0, 0),
+        doc.lineAt(doc.lineCount - 1).range.end
+      );
+      edit.replace(uri, fullRange, content);
+      await vscode.workspace.applyEdit(edit);
+      await doc.save();
+    } else {
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
     }
   }
 
-  private async deleteRejectedNewFile(absPath: string): Promise<void> {
-    const doc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === absPath);
-    if (doc?.isDirty) {
-      await doc.save();
-    }
-
+  private async deleteFile(absPath: string): Promise<void> {
     try {
       await vscode.workspace.fs.delete(vscode.Uri.file(absPath));
-    } catch (err) {
+    } catch {
       if (fs.existsSync(absPath)) {
-        throw err;
+        throw new Error(`Cannot delete ${absPath}`);
       }
     }
   }

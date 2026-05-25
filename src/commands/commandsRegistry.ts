@@ -18,14 +18,7 @@ export function registerAllCommands(deps: CommandDeps): void {
   const { diffManager, panel, context } = deps;
 
   function getActiveDiffFilePath(): string | undefined {
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-      const filePath = editor.document.uri.fsPath;
-      if (diffManager.renderer.hasPending(filePath)) {
-        return filePath;
-      }
-    }
-    return diffManager.getPendingFiles()[0];
+    return diffManager.getActiveFilePath() ?? diffManager.getPendingFiles()[0];
   }
 
   async function ensureRunner(): Promise<IAiRunner | undefined> {
@@ -41,24 +34,6 @@ export function registerAllCommands(deps: CommandDeps): void {
       vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
       return undefined;
     }
-  }
-
-  async function pickHunk(filePath: string, action: string): Promise<string | undefined> {
-    const hunks = diffManager.renderer.getHunks(filePath);
-    if (hunks.length === 0) {
-      return undefined;
-    }
-    if (hunks.length === 1) {
-      return hunks[0]!.id;
-    }
-
-    const items = hunks.map((h, i) => ({
-      label: `Hunk ${i + 1}`,
-      description: `${h.removedLines.length} removed, ${h.addedLines.length} added`,
-      id: h.id,
-    }));
-    const picked = await vscode.window.showQuickPick(items, { title: `${action} which hunk?` });
-    return picked?.id;
   }
 
   context.subscriptions.push(
@@ -150,36 +125,6 @@ export function registerAllCommands(deps: CommandDeps): void {
       }
       await diffManager.revert(filePath);
       vscode.window.showInformationMessage(`Reverted all changes: ${path.basename(filePath)}`);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ai-cli-diff-view.acceptHunk', async (filePath?: string, hunkId?: string) => {
-      const targetPath = filePath ?? getActiveDiffFilePath();
-      if (!targetPath) {
-        vscode.window.showWarningMessage('No active inline diff.');
-        return;
-      }
-      const resolvedHunkId = hunkId ?? (await pickHunk(targetPath, 'Accept'));
-      if (!resolvedHunkId) {
-        return;
-      }
-      await diffManager.acceptHunk(targetPath, resolvedHunkId);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ai-cli-diff-view.revertHunk', async (filePath?: string, hunkId?: string) => {
-      const targetPath = filePath ?? getActiveDiffFilePath();
-      if (!targetPath) {
-        vscode.window.showWarningMessage('No active inline diff.');
-        return;
-      }
-      const resolvedHunkId = hunkId ?? (await pickHunk(targetPath, 'Revert'));
-      if (!resolvedHunkId) {
-        return;
-      }
-      await diffManager.revertHunk(targetPath, resolvedHunkId);
     })
   );
 
