@@ -342,6 +342,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
         case 'terminalFocusState':
           this.lastTerminalFocused = !!msg.focused;
           return;
+        case 'viewTooNarrow':
+          // Webview reports its width dropped below ~1/4 of screen width.
+          // Close the auxiliary bar (where extension.ts moves the panel on first run).
+          // Best-effort: if user moved the panel elsewhere, this still tries the aux bar.
+          void vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+          return;
       }
     });
 

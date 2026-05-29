@@ -10,6 +10,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from './diffManager';
+import { calculateHunks } from './hunkCalculator';
 
 export const DIFF_EDITOR_VIEW_TYPE = 'ai-cli-diff-view.diffEditor';
 
@@ -39,6 +40,11 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
     _token: vscode.CancellationToken
   ): Promise<void> {
     const filePath = document.uri.fsPath;
+    const t0 = Date.now();
+    const tlog = (label: string): void => {
+      console.log('[ai-cli-diff TIMING ext] +' + (Date.now() - t0) + 'ms ' + label);
+    };
+    tlog('resolveCustomTextEditor entry');
     const monacoRoot = vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'monaco-editor', 'min');
     const resRoot = vscode.Uri.joinPath(this.extensionUri, 'res', 'webview');
 
@@ -47,6 +53,7 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
       localResourceRoots: [monacoRoot, resRoot],
     };
     webviewPanel.webview.html = this.buildHtml(webviewPanel.webview);
+    tlog('webview.html assigned');
 
     this.diffManager.registerPanel(filePath, webviewPanel);
 
@@ -59,13 +66,16 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
         webviewPanel.dispose();
         return;
       }
+      const currentContent = document.getText();
+      const hunks = calculateHunks(snapshot, currentContent);
       const nav = this.computeNav(filePath);
       void webviewPanel.webview.postMessage({
         type: 'set',
         filePath,
         language: detectLanguageId(filePath),
         originalContent: snapshot,
-        currentContent: document.getText(),
+        currentContent,
+        hunks,
         theme: currentMonacoTheme(),
         editorConfig: readEditorConfig(),
         nav,
@@ -79,7 +89,9 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
       webviewPanel.webview.onDidReceiveMessage(async (msg: IncomingMsg) => {
         if (msg.type === 'ready') {
           webviewReady = true;
+          tlog('received ready from webview');
           postSet();
+          tlog('postSet (set message sent) done');
           return;
         }
         switch (msg.type) {
@@ -235,6 +247,7 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
     style-src ${cspSource} 'unsafe-inline';
     font-src ${cspSource} data:;
     script-src ${cspSource} 'nonce-${nonce}' 'unsafe-eval';
+    connect-src ${cspSource};
     worker-src blob:;
     child-src blob:;
   " />
@@ -243,13 +256,27 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
 </head>
 <body>
   <div id="toolbar">
-    <button id="btn-prev-file" class="nav-btn" title="Previous file (Alt+H)">&#9664;</button>
-    <span id="file-counter">0 / 0</span>
-    <button id="btn-next-file" class="nav-btn" title="Next file (Alt+L)">&#9654;</button>
+    <div class="pill pill-hunks">
+      <button id="btn-prev-hunk" class="nav-btn" title="Previous hunk (Shift+F7)" aria-label="Previous hunk">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4"/></svg>
+      </button>
+      <span id="hunk-counter">0 / 0</span>
+      <button id="btn-next-hunk" class="nav-btn" title="Next hunk (F7)" aria-label="Next hunk">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+      </button>
+      <button id="btn-reject-file" class="toolbar-btn reject" title="Reject all changes in this file">Reject</button>
+      <button id="btn-accept-file" class="toolbar-btn accept" title="Accept all changes in this file (Ctrl+Shift+Y)">Accept</button>
+    </div>
+    <div class="pill pill-files">
+      <button id="btn-prev-file" class="nav-btn" title="Previous file (Alt+H)" aria-label="Previous file">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4l-4 4 4 4"/></svg>
+      </button>
+      <span id="file-counter">0 / 0</span>
+      <button id="btn-next-file" class="nav-btn" title="Next file (Alt+L)" aria-label="Next file">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
+      </button>
+    </div>
     <span id="toolbar-file"></span>
-    <span id="toolbar-spacer"></span>
-    <button id="btn-accept-all" class="toolbar-btn accept">Accept All</button>
-    <button id="btn-reject-all" class="toolbar-btn reject">Reject All</button>
   </div>
   <div id="container"></div>
 

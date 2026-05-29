@@ -897,6 +897,84 @@ ${FONT_OPTIONS.map((f) => {
       });
       themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
+      // Auto-close aux bar when panel narrows past ~1/4 screen width.
+      // Fires once per wide→narrow crossing; resets when width recovers or view hides.
+      (function () {
+        const MIN_VALID_WIDTH = 50;
+        let baselineWidth = null;
+        let cooldown = false;
+        function threshold() {
+          return Math.floor((window.screen.availWidth || 1920) / 4);
+        }
+        function check() {
+          const w = document.documentElement.clientWidth;
+          if (w < MIN_VALID_WIDTH) {
+            baselineWidth = null;
+            return;
+          }
+          const t = threshold();
+          if (baselineWidth === null) {
+            baselineWidth = w;
+            return;
+          }
+          if (!cooldown && baselineWidth >= t && w < t) {
+            cooldown = true;
+            vscode.postMessage({ type: 'viewTooNarrow' });
+          }
+          if (w >= t) {
+            cooldown = false;
+          }
+          baselineWidth = w;
+        }
+        const widthRO = new ResizeObserver(check);
+        widthRO.observe(document.documentElement);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') {
+            baselineWidth = null;
+            cooldown = false;
+          }
+        });
+      })();
+
+      // Auto-close aux bar when panel narrows past ~1/4 screen width. Fires once
+      // per wide→narrow transition; resets when width recovers or view hides.
+      (function () {
+        const MIN_VALID_WIDTH = 50;
+        let baselineWidth = null;
+        let cooldown = false;
+        function threshold() {
+          return Math.floor((window.screen.availWidth || 1920) / 4);
+        }
+        function check() {
+          const w = document.documentElement.clientWidth;
+          if (w < MIN_VALID_WIDTH) {
+            baselineWidth = null;
+            return;
+          }
+          const t = threshold();
+          if (baselineWidth === null) {
+            baselineWidth = w;
+            return;
+          }
+          if (!cooldown && baselineWidth >= t && w < t) {
+            cooldown = true;
+            vscode.postMessage({ type: 'viewTooNarrow' });
+          }
+          if (w >= t) {
+            cooldown = false;
+          }
+          baselineWidth = w;
+        }
+        const widthRO = new ResizeObserver(check);
+        widthRO.observe(document.documentElement);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') {
+            baselineWidth = null;
+            cooldown = false;
+          }
+        });
+      })();
+
       window.addEventListener('message', (e) => {
         const msg = e.data;
         if (!msg) return;

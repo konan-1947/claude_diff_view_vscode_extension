@@ -20,16 +20,22 @@ body {
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.92));
-  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
-  border-radius: 999px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  gap: 10px;
   z-index: 30;
   pointer-events: auto;
+}
+
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  height: 32px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
+  border-radius: 8px;
+  box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
 }
 
 #toolbar-file {
@@ -40,68 +46,79 @@ body {
   display: none;
 }
 
-#file-counter {
+#file-counter,
+#hunk-counter {
   font-size: 12px;
-  opacity: 0.85;
-  min-width: 40px;
+  color: inherit;
+  min-width: 32px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+  opacity: 0.85;
 }
 
 .nav-btn {
-  border: 1px solid var(--vscode-button-border, transparent);
-  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.15));
-  color: var(--vscode-button-secondaryForeground, inherit);
-  width: 24px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  width: 22px;
   height: 22px;
   padding: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 11px;
+  line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  opacity: 0.8;
 }
 
 .nav-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.25));
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18));
+  opacity: 1;
 }
 
 .nav-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: not-allowed;
 }
 
 .toolbar-btn {
-  border: 1px solid var(--vscode-button-border, transparent);
-  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.15));
-  color: var(--vscode-button-secondaryForeground, inherit);
-  padding: 4px 10px;
-  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0 12px;
+  height: 22px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
-}
-
-.toolbar-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.25));
+  font-weight: 500;
+  line-height: 1;
+  font-family: var(--vscode-font-family);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .toolbar-btn.accept {
-  background: rgba(46, 160, 67, 0.25);
-  color: inherit;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
 }
-
-.toolbar-btn.accept:hover {
-  background: rgba(46, 160, 67, 0.4);
+.toolbar-btn.accept:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
 }
 
 .toolbar-btn.reject {
-  background: rgba(248, 81, 73, 0.2);
+  background: transparent;
   color: inherit;
 }
+.toolbar-btn.reject:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18));
+}
 
-.toolbar-btn.reject:hover {
-  background: rgba(248, 81, 73, 0.35);
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 #container {
@@ -109,11 +126,34 @@ body {
   inset: 0;
 }
 
-/* Hunk action bar — Overlay Widget pinned to right edge of editor viewport,
- * vertical position computed in JS from hunk's anchor line. */
+/* Added line — green wash on whole line (modified side). */
+.diff-added-line {
+  background-color: rgba(46, 160, 67, 0.18);
+}
+.diff-added-gutter {
+  background-color: rgba(46, 160, 67, 0.55);
+  width: 3px !important;
+  margin-left: 3px;
+}
+
+/* Removed lines — rendered as view zones above the modified-line anchor.
+ * Each line gets red wash + strikethrough so it's clearly the old content. */
+.diff-removed-zone {
+  background-color: rgba(248, 81, 73, 0.12);
+  border-left: 3px solid rgba(248, 81, 73, 0.6);
+  font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+  font-size: var(--vscode-editor-font-size, var(--vscode-font-size));
+  white-space: pre;
+}
+.diff-removed-line {
+  padding: 0 12px;
+  color: rgba(248, 81, 73, 0.95);
+}
+
+/* Hunk action bar — Overlay Widget pinned to right edge, vertical position
+ * computed in JS to sit just below the hunk's last line. */
 .hunk-bar {
   position: absolute;
-  right: 24px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -163,4 +203,101 @@ body {
 
 .hunk-btn.reject:hover {
   background: rgba(248, 81, 73, 0.55);
+}
+
+/* ============================================================
+ * Monaco chrome theme override.
+ * Sync editor surface (background, gutter, cursor, selection, ...) with the
+ * active VS Code theme via --vscode-* CSS variables. Syntax tokens, minimap,
+ * and bracket pair colorization are intentionally out of scope — Monaco's
+ * builtin theme keeps owning those.
+ * !important is required on most rules because Monaco's builtin theme writes
+ * inline styles on these elements at render time.
+ * ============================================================ */
+
+.monaco-editor,
+.monaco-editor-background,
+.monaco-editor .inputarea.ime-input {
+  background-color: var(--vscode-editor-background) !important;
+  color: var(--vscode-editor-foreground) !important;
+}
+
+.monaco-editor .margin,
+.monaco-editor .margin-view-overlays {
+  background-color: var(--vscode-editorGutter-background, var(--vscode-editor-background)) !important;
+}
+
+.monaco-editor .margin-view-overlays .line-numbers {
+  color: var(--vscode-editorLineNumber-foreground) !important;
+}
+
+.monaco-editor .margin-view-overlays .line-numbers.active-line-number {
+  color: var(--vscode-editorLineNumber-activeForeground, var(--vscode-editorLineNumber-foreground)) !important;
+}
+
+.monaco-editor .view-overlays .current-line {
+  background-color: var(--vscode-editor-lineHighlightBackground, transparent) !important;
+  border-color: var(--vscode-editor-lineHighlightBorder, transparent) !important;
+}
+
+.monaco-editor .cursors-layer .cursor {
+  background-color: var(--vscode-editorCursor-foreground) !important;
+  color: var(--vscode-editorCursor-background, var(--vscode-editor-background)) !important;
+  box-shadow: 0 0 0 1px var(--vscode-editorCursor-foreground);
+}
+
+.monaco-editor .view-overlays .selected-text {
+  background-color: var(--vscode-editor-selectionBackground) !important;
+}
+
+.monaco-editor:not(.focused) .view-overlays .selected-text {
+  background-color: var(--vscode-editor-inactiveSelectionBackground, var(--vscode-editor-selectionBackground)) !important;
+}
+
+.monaco-editor .selectionHighlight {
+  background-color: var(--vscode-editor-selectionHighlightBackground, transparent) !important;
+}
+
+.monaco-editor .wordHighlight {
+  background-color: var(--vscode-editor-wordHighlightBackground, transparent) !important;
+}
+
+.monaco-editor .wordHighlightStrong {
+  background-color: var(--vscode-editor-wordHighlightStrongBackground, transparent) !important;
+}
+
+.monaco-editor .mtkw {
+  color: var(--vscode-editorWhitespace-foreground) !important;
+}
+
+.monaco-editor .lines-content .core-guide {
+  box-shadow: 1px 0 0 0 var(--vscode-editorIndentGuide-background1, var(--vscode-editorIndentGuide-background, transparent)) inset !important;
+}
+
+.monaco-editor .lines-content .core-guide-indent-active {
+  box-shadow: 1px 0 0 0 var(--vscode-editorIndentGuide-activeBackground1, var(--vscode-editorIndentGuide-activeBackground, transparent)) inset !important;
+}
+
+.monaco-editor .view-ruler {
+  box-shadow: 1px 0 0 0 var(--vscode-editorRuler-foreground, transparent) inset !important;
+}
+
+.monaco-editor .decorationsOverviewRuler {
+  border-left: 1px solid var(--vscode-editorOverviewRuler-border, transparent) !important;
+}
+
+.monaco-scrollable-element > .scrollbar > .slider {
+  background: var(--vscode-scrollbarSlider-background) !important;
+}
+
+.monaco-scrollable-element > .scrollbar > .slider:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background)) !important;
+}
+
+.monaco-scrollable-element > .scrollbar > .slider.active {
+  background: var(--vscode-scrollbarSlider-activeBackground, var(--vscode-scrollbarSlider-background)) !important;
+}
+
+.monaco-editor .sticky-widget {
+  background-color: var(--vscode-editorStickyScroll-background, var(--vscode-editor-background)) !important;
 }

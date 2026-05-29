@@ -30,7 +30,8 @@ export type IncomingMessage =
   | { type: 'openFile'; path: string }
   | { type: 'installHooks' }
   | { type: 'introduceSeen' }
-  | { type: 'terminalFocusState'; focused: boolean };
+  | { type: 'terminalFocusState'; focused: boolean }
+  | { type: 'viewTooNarrow' };
 
 export const DEFAULT_SETTINGS: TerminalSettings = {
   fontFamily: 'Consolas, "Courier New", monospace',
