@@ -35,6 +35,18 @@ export class WorkspaceWatcher {
    * Được set bởi GitBranchWatcher khi phát hiện .git/HEAD đổi.
    */
   private suppressUntil = 0;
+  /**
+   * Burst-detection: timestamp của các external write gần đây. Khi số write
+   * trong BURST_WINDOW_MS vượt BURST_THRESHOLD (vd: git clone, unzip, copy lớn)
+   * thì vào "bulk mode" — suppress + short-circuit để không storm diff tab.
+   */
+  private burstTimestamps: number[] = [];
+  private bulkRebuildTimer?: NodeJS.Timeout;
+  private static readonly BURST_THRESHOLD = 12;
+  private static readonly BURST_WINDOW_MS = 1500;
+  private static readonly BULK_SUPPRESS_MS = 4000;
+  /** Rebuild baseline sau khi burst lắng (kể từ write cuối). */
+  private static readonly BULK_SETTLE_MS = 1500;
 
   constructor(private readonly diffManager: DiffManager) {
     this.snapshots = new FileSnapshotStore();
@@ -53,6 +65,17 @@ export class WorkspaceWatcher {
    */
   notifyExternalBatch(windowMs = 5000): void {
     this.suppressUntil = Date.now() + windowMs;
+    this.rebuildBaseline();
+    // Bắt thêm các write đến SAU lần rebuild đầu (vd git checkout còn ghi tiếp).
+    this.armBaselineRebuild();
+  }
+
+  private isSuppressed(): boolean {
+    return Date.now() < this.suppressUntil;
+  }
+
+  /** Clear + đọc lại toàn bộ baseline từ disk hiện tại. */
+  private rebuildBaseline(): void {
     this.snapshots.clear();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       try {
@@ -63,8 +86,34 @@ export class WorkspaceWatcher {
     }
   }
 
-  private isSuppressed(): boolean {
-    return Date.now() < this.suppressUntil;
+  /**
+   * Ghi nhận một external write vào cửa sổ burst. Khi vượt ngưỡng → bulk mode.
+   */
+  private registerWriteForBurst(): void {
+    const now = Date.now();
+    this.burstTimestamps.push(now);
+    const cutoff = now - WorkspaceWatcher.BURST_WINDOW_MS;
+    while (this.burstTimestamps.length && this.burstTimestamps[0] < cutoff) {
+      this.burstTimestamps.shift();
+    }
+    if (this.burstTimestamps.length >= WorkspaceWatcher.BURST_THRESHOLD) {
+      this.enterBulkMode();
+    }
+  }
+
+  /** Vào bulk mode: kéo dài suppress + hẹn rebuild baseline sau khi lắng. */
+  private enterBulkMode(): void {
+    this.suppressUntil = Date.now() + WorkspaceWatcher.BULK_SUPPRESS_MS;
+    this.armBaselineRebuild();
+  }
+
+  /** (Re)arm timer rebuild baseline; fire sau BULK_SETTLE_MS kể từ lần gọi cuối. */
+  private armBaselineRebuild(): void {
+    if (this.bulkRebuildTimer) { clearTimeout(this.bulkRebuildTimer); }
+    this.bulkRebuildTimer = setTimeout(() => {
+      this.bulkRebuildTimer = undefined;
+      this.rebuildBaseline();
+    }, WorkspaceWatcher.BULK_SETTLE_MS);
   }
 
   private normalizePath(p: string): string {
@@ -156,6 +205,13 @@ export class WorkspaceWatcher {
       return;
     }
 
+    // Burst-detection: nhiều write dồn dập (vd git clone) → bulk mode + bỏ qua
+    // per-file work. Baseline sẽ được rebuild khi burst lắng (xem enterBulkMode).
+    this.registerWriteForBurst();
+    if (this.isSuppressed()) {
+      return;
+    }
+
     // 2. Debounce: bỏ qua nếu vừa xử lý file này trong 500ms
     const lastTime = this.lastProcessed.get(absPath) ?? 0;
     if (now - lastTime < 500) { return; }
@@ -241,6 +297,10 @@ export class WorkspaceWatcher {
       clearTimeout(timer);
     }
     this.pendingTimers.clear();
+    if (this.bulkRebuildTimer) {
+      clearTimeout(this.bulkRebuildTimer);
+      this.bulkRebuildTimer = undefined;
+    }
   }
 }
 
