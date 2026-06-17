@@ -1,86 +1,134 @@
 /**
  * hunkCalculator.ts
  *
- * Tính toán các "hunks" thay đổi giữa 2 chuỗi nội dung file.
- * Dùng thuật toán Myers diff (đơn giản hóa) theo từng dòng.
+ * Computes "hunks" (contiguous diff blocks) between an original and a modified file.
+ * Delegates the line-level diff to the well-known `diff` library (kpdecker/jsdiff),
+ * which implements the Myers diff algorithm internally.
+ *
+ * The public export `calculateHunks()` is the sole entry point, used by
+ * `DiffManager` and `DiffWebviewPanel` to produce the Hunk[] that drives
+ * both the visual diff decorations and the accept/reject logic.
  */
 
+import { diffArrays } from 'diff';
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
 export interface Hunk {
-  /** ID duy nhất cho mỗi hunk (dùng để tra cứu khi accept/revert) */
+  /** Unique hunk ID (used for accept/reject lookups) */
   id: string;
-  /** Dòng bắt đầu trong nội dung SỬA ĐỔI (0-indexed), nơi gắn gutter icon */
+  /**
+   * Start line in the MODIFIED content (0-indexed).
+   * This is where gutter icons and inline decorations are anchored.
+   */
   modifiedStart: number;
-  /** Dòng bắt đầu trong nội dung GỐC (0-indexed), nơi bắt đầu patch */
+  /**
+   * Start line in the ORIGINAL content (0-indexed).
+   * This marks where the patch begins relative to the original file.
+   */
   originalStart: number;
-  /** Các dòng bị XÓA (nội dung gốc) */
+  /** Lines that were deleted from the original file */
   removedLines: RemovedLine[];
-  /** Các dòng được THÊM (nội dung mới) */
+  /** Lines that were added (new content) */
   addedLines: AddedLine[];
 }
 
 export interface RemovedLine {
-  /** Nội dung dòng bị xóa */
+  /** The content of the deleted line */
   text: string;
-  /** Vị trí dòng trong file gốc (0-indexed) */
+  /** Its position in the original file (0-indexed) */
   originalLineIndex: number;
 }
 
 export interface AddedLine {
-  /** Nội dung dòng được thêm */
+  /** The content of the added line */
   text: string;
-  /** Vị trí dòng trong file sửa đổi (0-indexed) */
+  /** Its position in the modified file (0-indexed) */
   modifiedLineIndex: number;
 }
 
+// ---------------------------------------------------------------------------
+// Internal diff operation types
+// ---------------------------------------------------------------------------
+
+/**
+ * Internal representation of a single atomic diff operation.
+ *
+ * - `equal`:  line present unchanged in both files (both indices are meaningful)
+ * - `delete`: line only present in the original (carries origIdx only)
+ * - `insert`: line only present in the modified  (carries modIdx only;
+ *              origIdx is meaningless for an insert — the line doesn't exist
+ *              in the original, so we deliberately omit it from the type)
+ */
 type DiffOp =
   | { type: 'equal'; text: string; origIdx: number; modIdx: number }
   | { type: 'delete'; text: string; origIdx: number }
-  | { type: 'insert'; text: string; modIdx: number; origIdx: number };
+  | { type: 'insert'; text: string; modIdx: number };
+
+// ---------------------------------------------------------------------------
+// Diff computation (Myers via `diff` library)
+// ---------------------------------------------------------------------------
 
 /**
- * Tính LCS-based diff giữa 2 mảng dòng.
- * Trả về mảng DiffOp theo thứ tự.
+ * Compute a Myers diff between two line arrays using `diff.diffArrays()`.
+ *
+ * The `diff` library (kpdecker/jsdiff, 28M+ weekly downloads on npm) is a
+ * mature, well-maintained implementation of the Myers O((M+N)D) algorithm.
+ * It is used by Babel, Webpack, Mocha, and many other major tools.
+ *
+ * Compared to the previous LCS-based implementation (O(M×N) time & space),
+ * this version runs in O((M+N)D) time and O(M+N) space, where D is the
+ * edit distance.  For typical AI-assisted edits (D is small because only a
+ * few lines change per tool call) this is substantially faster.
+ *
+ * @param origLines - Original file content split by '\n'
+ * @param modLines  - Modified file content split by '\n'
+ * @returns DiffOp array in sequential (top-to-bottom) order
  */
 function computeLineDiff(origLines: string[], modLines: string[]): DiffOp[] {
-  const m = origLines.length;
-  const n = modLines.length;
-
-  // Bảng LCS: dp[i][j] = độ dài LCS của origLines[0..i-1] và modLines[0..j-1]
-  const dp: number[][] = Array.from({ length: m + 1 }, () =>
-    new Array<number>(n + 1).fill(0)
-  );
-
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (origLines[i - 1] === modLines[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-      }
-    }
-  }
-
-  // Truy vết để tạo danh sách DiffOp
+  const changes = diffArrays(origLines, modLines);
   const ops: DiffOp[] = [];
-  let i = m;
-  let j = n;
+  let origIdx = 0; // running index in the original array
+  let modIdx = 0;  // running index in the modified array
 
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && origLines[i - 1] === modLines[j - 1]) {
-      ops.push({ type: 'equal', text: origLines[i - 1]!, origIdx: i - 1, modIdx: j - 1 });
-      i--;
-      j--;
-    } else if (j > 0 && (i === 0 || (dp[i][j - 1] ?? 0) >= (dp[i - 1][j] ?? 0))) {
-      ops.push({ type: 'insert', text: modLines[j - 1]!, modIdx: j - 1, origIdx: i });
-      j--;
+  for (const change of changes) {
+    const { value, added, removed } = change;
+
+    if (added) {
+      // Block of lines only present in the modified file
+      for (let k = 0; k < value.length; k++) {
+        ops.push({ type: 'insert', text: value[k]!, modIdx: modIdx + k });
+      }
+      modIdx += value.length;
+    } else if (removed) {
+      // Block of lines only present in the original file
+      for (let k = 0; k < value.length; k++) {
+        ops.push({ type: 'delete', text: value[k]!, origIdx: origIdx + k });
+      }
+      origIdx += value.length;
     } else {
-      ops.push({ type: 'delete', text: origLines[i - 1]!, origIdx: i - 1 });
-      i--;
+      // Block of unchanged lines (present in both files)
+      for (let k = 0; k < value.length; k++) {
+        ops.push({
+          type: 'equal',
+          text: value[k]!,
+          origIdx: origIdx + k,
+          modIdx: modIdx + k,
+        });
+      }
+      origIdx += value.length;
+      modIdx += value.length;
     }
   }
 
-  return ops.reverse();
+  return ops;
 }
+
+// ---------------------------------------------------------------------------
+// Hunk construction from DiffOps
+// ---------------------------------------------------------------------------
 
 let hunkCounter = 0;
 
@@ -89,11 +137,20 @@ function makeHunkId(): string {
 }
 
 /**
- * Tính danh sách Hunk từ nội dung file gốc và file đã sửa đổi.
+ * Take the full original and modified file contents and produce a list of
+ * Hunk objects, each representing one contiguous block of changes.
  *
- * @param originalContent - Nội dung trước khi Claude sửa
- * @param modifiedContent - Nội dung sau khi Claude sửa
- * @returns Mảng Hunk, mỗi Hunk đại diện cho một khối thay đổi liên tiếp
+ * Processing pipeline:
+ *   1. Split both strings by '\n' into line arrays.
+ *   2. Run `computeLineDiff()` (Myers via the `diff` library) to get DiffOps.
+ *   3. Walk the DiffOps, grouping consecutive non-equal operations into Hunks.
+ *   4. Apply offset corrections for pure-insert / pure-delete hunks so that
+ *      modifiedStart / originalStart are correctly positioned when one side
+ *      has no lines in the hunk.
+ *
+ * @param originalContent - Full file content before edits
+ * @param modifiedContent - Full file content after edits
+ * @returns Array of Hunk objects (empty if files are identical)
  */
 export function calculateHunks(
   originalContent: string,
@@ -104,18 +161,22 @@ export function calculateHunks(
 
   const ops = computeLineDiff(origLines, modLines);
 
+  // ------------------------------------------------------------------
+  // Pass 1: group consecutive changes into hunks
+  // ------------------------------------------------------------------
   const hunks: Hunk[] = [];
   let currentHunk: Hunk | null = null;
 
   for (const op of ops) {
     if (op.type === 'equal') {
-      // Kết thúc hunk hiện tại nếu có
+      // An unchanged line ends the current hunk (if one is open)
       if (currentHunk) {
         hunks.push(currentHunk);
         currentHunk = null;
       }
     } else if (op.type === 'delete') {
       if (!currentHunk) {
+        // Start a new hunk — remember where in the original the deletion begins
         currentHunk = {
           id: makeHunkId(),
           modifiedStart: 0,
@@ -124,6 +185,9 @@ export function calculateHunks(
           addedLines: [],
         };
       }
+      // For a delete-first or mixed hunk, update originalStart every time
+      // we encounter a delete BEFORE any addedLines (i.e. the deleted region
+      // starts here in the original file).
       if (currentHunk.removedLines.length === 0) {
         currentHunk.originalStart = op.origIdx;
       }
@@ -133,15 +197,19 @@ export function calculateHunks(
       });
     } else if (op.type === 'insert') {
       if (!currentHunk) {
+        // Start a new hunk for a pure-insert block.
+        // originalStart is meaningless when the hunk has no deletions — the
+        // downstream offset-correction loop will compute the correct value.
         currentHunk = {
           id: makeHunkId(),
           modifiedStart: op.modIdx,
-          originalStart: op.origIdx,
+          originalStart: 0,
           removedLines: [],
           addedLines: [],
         };
       }
-      // Ghi nhận modifiedStart theo dòng insert đầu tiên
+      // Record the first insert's line index as the modified start,
+      // so the hunk's visual anchor in the modified file is correct
       if (currentHunk.addedLines.length === 0) {
         currentHunk.modifiedStart = op.modIdx;
       }
@@ -152,18 +220,29 @@ export function calculateHunks(
     }
   }
 
-  // Đẩy hunk cuối cùng nếu còn
+  // Push the final hunk if one is still open
   if (currentHunk) {
     hunks.push(currentHunk);
   }
 
-  // Với các hunk thuần insert/delete, cập nhật bù trừ offset
+  // ------------------------------------------------------------------
+  // Pass 2: offset correction for single-sided hunks
+  //
+  // When a hunk contains ONLY deletions (no additions), modifiedStart
+  // was set to 0 as a placeholder.  We fix it here so the hunk anchors
+  // at the correct line in the modified view, accounting for the net
+  // line-count shift introduced by preceding hunks.
+  //
+  // Conversely, when a hunk contains ONLY additions (no deletions),
+  // originalStart was set to 0 as a placeholder and is corrected here.
+  // ------------------------------------------------------------------
   let origOffset = 0;
   for (const hunk of hunks) {
     if (hunk.addedLines.length === 0 && hunk.removedLines.length > 0) {
       const firstOrigIdx = hunk.removedLines[0]!.originalLineIndex;
       hunk.modifiedStart = Math.max(0, firstOrigIdx + origOffset);
     }
+    // Net line-count delta this hunk contributes
     origOffset += hunk.addedLines.length - hunk.removedLines.length;
   }
 
@@ -178,4 +257,3 @@ export function calculateHunks(
 
   return hunks;
 }
-
