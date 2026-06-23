@@ -137,16 +137,18 @@ body {
 }
 
 /* Removed lines — rendered as view zones above the modified-line anchor.
- * Each line gets red wash + strikethrough so it's clearly the old content. */
+ * No border-left / padding-left: Monaco view zones already start at the same
+ * contentLeft as real editor lines, so leaving the text flush-left keeps the
+ * red (deleted) text aligned in the same column as the green (added) text.
+ * The red background wash + red text color are enough to mark it as removed. */
 .diff-removed-zone {
   background-color: rgba(248, 81, 73, 0.12);
-  border-left: 3px solid rgba(248, 81, 73, 0.6);
   font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
   font-size: var(--vscode-editor-font-size, var(--vscode-font-size));
   white-space: pre;
 }
 .diff-removed-line {
-  padding: 0 12px;
+  padding: 0;
   color: rgba(248, 81, 73, 0.95);
 }
 
