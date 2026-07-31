@@ -51,9 +51,7 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
       switch (msg.command) {
         case 'prev':   vscode.commands.executeCommand('ai-cli-diff-view.prevFile'); break;
         case 'next':   vscode.commands.executeCommand('ai-cli-diff-view.nextFile'); break;
-        case 'accept': vscode.commands.executeCommand('ai-cli-diff-view.acceptAllHunks'); break;
         case 'acceptAllChanges': vscode.commands.executeCommand('ai-cli-diff-view.acceptAllChanges'); break;
-        case 'revert': vscode.commands.executeCommand('ai-cli-diff-view.revertAllHunks'); break;
       }
     });
     this.render();
@@ -94,11 +92,6 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
 
     const controls = info ? `
       <div class="controls">
-        ${fileName ? `
-        <div class="line line-actions">
-          <button class="btn btn-accept" onclick="send('accept')">Accept File</button>
-          <button class="btn btn-revert" onclick="send('revert')">Reject File</button>
-        </div>` : ''}
         <div class="line line-all-changes">
           <button class="btn btn-accept-all" onclick="send('acceptAllChanges')">Accept All Changes</button>
         </div>
@@ -226,17 +219,7 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     background: transparent;
   }
 
-  .line-actions .btn { flex: 1 1 0; }
   .line-all-changes .btn { flex: 1 1 100%; }
-
-  .btn-accept {
-    color: var(--vscode-foreground);
-    background: var(--vscode-button-secondaryBackground, rgba(128,128,128,0.12));
-    border-color: var(--vscode-button-secondaryBorder, rgba(128,128,128,0.35));
-  }
-  .btn-accept:hover {
-    background: var(--vscode-button-secondaryHoverBackground, rgba(128,128,128,0.18));
-  }
 
   .btn-accept-all {
     color: var(--vscode-button-foreground);
@@ -245,14 +228,6 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   }
   .btn-accept-all:hover {
     background: var(--vscode-button-hoverBackground, rgba(76,175,80,0.2));
-  }
-
-  .btn-revert {
-    color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c);
-    border-color: var(--vscode-gitDecoration-deletedResourceForeground, rgba(241,76,76,0.4));
-  }
-  .btn-revert:hover {
-    background: rgba(241, 76, 76, 0.08);
   }
 
   .btn-nav {

@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Inline diff review for AI CLI edits, best with Claude, Codex, and Qwen",
-  "version": "3.3.2",
+  "version": "3.3.3",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
@@ -60,6 +60,37 @@
             "type": "string"
           },
           "description": "Additional filename glob patterns that AI CLI Diff View should treat as text files. Patterns match only the basename and support * and ? wildcards."
+        },
+        "ai-cli-diff-view.burstDetectionEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Advanced: when many files change within a short window (e.g. git checkout, branch switch), hold files beyond the threshold to confirm whether it's really a git operation before opening a diff, instead of opening one immediately."
+        },
+        "ai-cli-diff-view.burstDetectionWindowMs": {
+          "type": "number",
+          "default": 300,
+          "minimum": 50,
+          "maximum": 5000,
+          "description": "Advanced: sliding time window (ms) used to count how many files changed in quick succession for burst detection."
+        },
+        "ai-cli-diff-view.burstDetectionThreshold": {
+          "type": "number",
+          "default": 8,
+          "minimum": 2,
+          "maximum": 500,
+          "description": "Advanced: number of distinct files changed within the burst window that counts as a batch operation (e.g. git checkout) rather than an AI tool edit."
+        },
+        "ai-cli-diff-view.burstDetectionHoldMs": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "maximum": 10000,
+          "description": "Advanced: how long (ms) to hold files beyond the burst threshold before opening their diff, if no git branch change gets confirmed in that time."
+        },
+        "ai-cli-diff-view.soundNotificationsEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Play a sound when Claude finishes a turn or needs input (Windows only). Writes Notification/Stop hooks to ~/.claude/settings.json."
         }
       }
     },
@@ -116,11 +147,6 @@
       {
         "command": "ai-cli-diff-view.revertAllHunks",
         "title": "AI CLI Diff: Revert All Changes"
-      },
-      {
-        "command": "ai-cli-diff-view.installHooks",
-        "title": "AI CLI Diff: Install Claude CLI Hooks",
-        "icon": "$(plug)"
       },
       {
         "command": "ai-cli-diff-view.openPendingFile",

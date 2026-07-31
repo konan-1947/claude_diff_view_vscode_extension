@@ -16,9 +16,32 @@ export interface TerminalSettings {
   cursorBlink: boolean;
 }
 
-export interface TerminalSettingsPayload extends TerminalSettings {
+export interface BurstDetectionSettings {
+  burstDetectionEnabled: boolean;
+  burstDetectionWindowMs: number;
+  burstDetectionThreshold: number;
+  burstDetectionHoldMs: number;
+}
+
+export interface SoundNotificationSettings {
+  soundNotificationsEnabled: boolean;
+}
+
+export interface TerminalSettingsPayload
+  extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings {
   supportedFileExtensions: string[];
 }
+
+export const DEFAULT_BURST_DETECTION_SETTINGS: BurstDetectionSettings = {
+  burstDetectionEnabled: true,
+  burstDetectionWindowMs: 300,
+  burstDetectionThreshold: 8,
+  burstDetectionHoldMs: 2000,
+};
+
+export const DEFAULT_SOUND_NOTIFICATION_SETTINGS: SoundNotificationSettings = {
+  soundNotificationsEnabled: false,
+};
 
 export type IncomingMessage =
   | { type: 'ready' }
@@ -33,7 +56,6 @@ export type IncomingMessage =
   | { type: 'installFont'; primary: string }
   | { type: 'reloadWindow' }
   | { type: 'openFile'; path: string }
-  | { type: 'installHooks' }
   | { type: 'introduceSeen' }
   | { type: 'terminalFocusState'; focused: boolean }
   | { type: 'viewTooNarrow' };

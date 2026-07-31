@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
 import { PENDING_FILES_CSS } from './pendingFilesPage';
-import { DEFAULT_SETTINGS } from './terminalTypes';
+import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 
 interface FontOption {
   label: string;
@@ -391,6 +391,17 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .setting-help {
     color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9));
     font-size: 11px;
+    margin-bottom: 10px;
+  }
+  .settings-section-title {
+    margin: 4px 0 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.22));
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.7;
   }
 
   .install-controls { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; }
@@ -640,6 +651,11 @@ ${FONT_OPTIONS.map((f) => {
           <label for="f-cursor-blink">Cursor blink</label>
           <input id="f-cursor-blink" type="checkbox">
         </div>
+        <div class="field">
+          <label for="f-sound-notifications">Sound notifications</label>
+          <input id="f-sound-notifications" type="checkbox">
+        </div>
+        <div class="setting-help">Plays a sound when Claude finishes a turn or needs input (Windows only). Writes to <code>~/.claude/settings.json</code>.</div>
         <div class="field file-ext-field">
           <label>Custom file extensions</label>
           <div class="file-ext-controls">
@@ -658,6 +674,29 @@ ${FONT_OPTIONS.map((f) => {
             </div>
             <div class="setting-help">New accepts one extension or multiple extensions separated by commas.</div>
           </div>
+        </div>
+
+        <h3 class="settings-section-title">Advanced</h3>
+        <div class="field">
+          <label for="f-burst-enabled">Burst-write detection</label>
+          <input id="f-burst-enabled" type="checkbox">
+        </div>
+        <div class="field">
+          <label for="f-burst-window">Burst window (ms)</label>
+          <input id="f-burst-window" type="number" min="50" max="5000" step="10">
+        </div>
+        <div class="field">
+          <label for="f-burst-threshold">Burst threshold (files)</label>
+          <input id="f-burst-threshold" type="number" min="2" max="500" step="1">
+        </div>
+        <div class="field">
+          <label for="f-burst-hold">Burst hold (ms)</label>
+          <input id="f-burst-hold" type="number" min="500" max="10000" step="100">
+        </div>
+        <div class="setting-help">
+          When this many files change within the window, files beyond the threshold are held
+          for "Burst hold" ms — opened as a diff only if no git branch change is confirmed in
+          time, so a real git checkout never flashes a diff tab.
         </div>
 
         <div class="actions">
@@ -708,7 +747,7 @@ ${FONT_OPTIONS.map((f) => {
         return;
       }
 
-      const DEFAULTS = ${JSON.stringify(DEFAULT_SETTINGS)};
+      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS })};
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
       const termHost = document.getElementById('term-host');
@@ -1144,12 +1183,6 @@ ${FONT_OPTIONS.map((f) => {
             });
           });
         }
-        const btnInstallHooks = document.getElementById('btn-install');
-        if (btnInstallHooks) {
-          btnInstallHooks.addEventListener('click', () => {
-            vscode.postMessage({ type: 'installHooks' });
-          });
-        }
       }
       bindFilesPage();
 
@@ -1170,6 +1203,11 @@ ${FONT_OPTIONS.map((f) => {
       const fCursorHex = document.getElementById('f-cursor-hex');
       const fCursorStyle = document.getElementById('f-cursor-style');
       const fCursorBlink = document.getElementById('f-cursor-blink');
+      const fSoundNotifications = document.getElementById('f-sound-notifications');
+      const fBurstEnabled = document.getElementById('f-burst-enabled');
+      const fBurstWindow = document.getElementById('f-burst-window');
+      const fBurstThreshold = document.getElementById('f-burst-threshold');
+      const fBurstHold = document.getElementById('f-burst-hold');
       const fileExtBody = document.getElementById('file-ext-body');
       const btnExtNew = document.getElementById('btn-ext-new');
       const btnExtEdit = document.getElementById('btn-ext-edit');
@@ -1274,7 +1312,12 @@ ${FONT_OPTIONS.map((f) => {
         fCursorHex.textContent = s.customColors.cursor;
         fCursorStyle.value = s.cursorStyle;
         fCursorBlink.checked = s.cursorBlink;
+        fSoundNotifications.checked = s.soundNotificationsEnabled;
         setFileExtensions(s.supportedFileExtensions);
+        fBurstEnabled.checked = s.burstDetectionEnabled;
+        fBurstWindow.value = String(s.burstDetectionWindowMs);
+        fBurstThreshold.value = String(s.burstDetectionThreshold);
+        fBurstHold.value = String(s.burstDetectionHoldMs);
         toggleCustomRows();
       }
 
@@ -1285,6 +1328,9 @@ ${FONT_OPTIONS.map((f) => {
 
       function readForm() {
         const size = parseInt(fFontSize.value, 10);
+        const burstWindow = parseInt(fBurstWindow.value, 10);
+        const burstThreshold = parseInt(fBurstThreshold.value, 10);
+        const burstHold = parseInt(fBurstHold.value, 10);
         return {
           fontFamily: fFontFamily.value.trim() || DEFAULTS.fontFamily,
           fontSize: isFinite(size) ? Math.min(32, Math.max(6, size)) : DEFAULTS.fontSize,
@@ -1296,7 +1342,12 @@ ${FONT_OPTIONS.map((f) => {
           },
           cursorStyle: fCursorStyle.value,
           cursorBlink: !!fCursorBlink.checked,
+          soundNotificationsEnabled: !!fSoundNotifications.checked,
           supportedFileExtensions: fileExtensions.slice(),
+          burstDetectionEnabled: !!fBurstEnabled.checked,
+          burstDetectionWindowMs: isFinite(burstWindow) ? Math.min(5000, Math.max(50, burstWindow)) : DEFAULTS.burstDetectionWindowMs,
+          burstDetectionThreshold: isFinite(burstThreshold) ? Math.min(500, Math.max(2, burstThreshold)) : DEFAULTS.burstDetectionThreshold,
+          burstDetectionHoldMs: isFinite(burstHold) ? Math.min(10000, Math.max(500, burstHold)) : DEFAULTS.burstDetectionHoldMs,
         };
       }
 

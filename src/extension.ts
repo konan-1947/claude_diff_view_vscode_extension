@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import { DiffManager } from './diff/diffManager';
 import { DiffEditorProvider, DIFF_EDITOR_VIEW_TYPE } from './diff/diffWebviewPanel';
 import { IAiRunner } from './runner/aiRunner';
-import { HookWatcher } from './watcher/hookWatcher';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { refreshTextFileRules } from './watcher/fileSnapshotStore';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
@@ -16,7 +15,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const diffManager       = new DiffManager(context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);
-  const fsHookWatcher     = new HookWatcher(diffManager);
   const gitBranchWatcher  = new GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
   const navigationManager = new NavigationManager(diffManager);
 
@@ -41,7 +39,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     { dispose: () => diffManager.disposeAll() },
-    { dispose: () => fsHookWatcher.dispose() },
     { dispose: () => workspaceWatcher.dispose() },
     { dispose: () => gitBranchWatcher.dispose() },
     { dispose: () => activeRunner?.cancel?.() }
@@ -86,7 +83,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }, 1500);
   }
 
-  fsHookWatcher.start();
   workspaceWatcher.start();
   gitBranchWatcher.start();
 

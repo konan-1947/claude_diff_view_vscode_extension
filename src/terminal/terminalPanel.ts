@@ -9,10 +9,15 @@ import {
   SessionState,
 } from './pendingFilesPage';
 import { buildTerminalHtml } from './terminalHtml';
+import { applySoundNotifications } from '../commands/soundNotifications';
 import {
+  BurstDetectionSettings,
   CursorStyle,
+  DEFAULT_BURST_DETECTION_SETTINGS,
   DEFAULT_SETTINGS,
+  DEFAULT_SOUND_NOTIFICATION_SETTINGS,
   IncomingMessage,
+  SoundNotificationSettings,
   TerminalSettings,
   TerminalSettingsPayload,
   ThemePreset,
@@ -96,7 +101,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     }
     const html = buildPendingFilesInnerHtml({
       diffManager: this.diffManager,
-      extensionUri: this.context.extensionUri,
       iconBase: this.fileIconsBase(),
       sessionState: this.sessionState,
       lastPrompt: this.lastPrompt,
@@ -197,7 +201,78 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     return {
       ...this.loadSettings(),
       supportedFileExtensions: this.loadSupportedFileExtensions(),
+      ...this.loadBurstDetectionSettings(),
+      ...this.loadSoundNotificationSettings(),
     };
+  }
+
+  private loadSoundNotificationSettings(): SoundNotificationSettings {
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    return {
+      soundNotificationsEnabled: config.get<boolean>(
+        'soundNotificationsEnabled',
+        DEFAULT_SOUND_NOTIFICATION_SETTINGS.soundNotificationsEnabled
+      ),
+    };
+  }
+
+  private async saveSoundNotificationSettings(incoming: Partial<SoundNotificationSettings>): Promise<void> {
+    const next = this.loadSoundNotificationSettings();
+    const enabled = typeof incoming.soundNotificationsEnabled === 'boolean'
+      ? incoming.soundNotificationsEnabled
+      : next.soundNotificationsEnabled;
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    await config.update('soundNotificationsEnabled', enabled, vscode.ConfigurationTarget.Global);
+    applySoundNotifications(enabled);
+  }
+
+  private loadBurstDetectionSettings(): BurstDetectionSettings {
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    const windowMs = config.get<number>('burstDetectionWindowMs', DEFAULT_BURST_DETECTION_SETTINGS.burstDetectionWindowMs);
+    const threshold = config.get<number>('burstDetectionThreshold', DEFAULT_BURST_DETECTION_SETTINGS.burstDetectionThreshold);
+    const holdMs = config.get<number>('burstDetectionHoldMs', DEFAULT_BURST_DETECTION_SETTINGS.burstDetectionHoldMs);
+    return {
+      burstDetectionEnabled: config.get<boolean>('burstDetectionEnabled', DEFAULT_BURST_DETECTION_SETTINGS.burstDetectionEnabled),
+      burstDetectionWindowMs: Number.isFinite(windowMs)
+        ? Math.min(5000, Math.max(50, windowMs))
+        : DEFAULT_BURST_DETECTION_SETTINGS.burstDetectionWindowMs,
+      burstDetectionThreshold: Number.isFinite(threshold)
+        ? Math.min(500, Math.max(2, threshold))
+        : DEFAULT_BURST_DETECTION_SETTINGS.burstDetectionThreshold,
+      burstDetectionHoldMs: Number.isFinite(holdMs)
+        ? Math.min(10000, Math.max(500, holdMs))
+        : DEFAULT_BURST_DETECTION_SETTINGS.burstDetectionHoldMs,
+    };
+  }
+
+  private async saveBurstDetectionSettings(incoming: Partial<BurstDetectionSettings>): Promise<void> {
+    const next = this.loadBurstDetectionSettings();
+    const windowMs = incoming.burstDetectionWindowMs;
+    const threshold = incoming.burstDetectionThreshold;
+    const holdMs = incoming.burstDetectionHoldMs;
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    await Promise.all([
+      config.update(
+        'burstDetectionEnabled',
+        typeof incoming.burstDetectionEnabled === 'boolean' ? incoming.burstDetectionEnabled : next.burstDetectionEnabled,
+        vscode.ConfigurationTarget.Global
+      ),
+      config.update(
+        'burstDetectionWindowMs',
+        typeof windowMs === 'number' && Number.isFinite(windowMs) ? Math.min(5000, Math.max(50, windowMs)) : next.burstDetectionWindowMs,
+        vscode.ConfigurationTarget.Global
+      ),
+      config.update(
+        'burstDetectionThreshold',
+        typeof threshold === 'number' && Number.isFinite(threshold) ? Math.min(500, Math.max(2, threshold)) : next.burstDetectionThreshold,
+        vscode.ConfigurationTarget.Global
+      ),
+      config.update(
+        'burstDetectionHoldMs',
+        typeof holdMs === 'number' && Number.isFinite(holdMs) ? Math.min(10000, Math.max(500, holdMs)) : next.burstDetectionHoldMs,
+        vscode.ConfigurationTarget.Global
+      ),
+    ]);
   }
 
   private loadSupportedFileExtensions(): string[] {
@@ -394,6 +469,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           void Promise.all([
             this.saveSettings(sanitized),
             this.saveSupportedFileExtensions(incoming.supportedFileExtensions),
+            this.saveBurstDetectionSettings(incoming),
+            this.saveSoundNotificationSettings(incoming),
           ]).then(() => {
             this.view?.webview.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           });
@@ -403,9 +480,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           if (msg.path && typeof msg.path === 'string') {
             void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
           }
-          return;
-        case 'installHooks':
-          void vscode.commands.executeCommand('ai-cli-diff-view.installHooks');
           return;
         case 'introduceSeen':
           void this.context.globalState.update(INTRODUCE_SEEN_KEY, true);
@@ -431,7 +505,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     }
     const filesInner = buildPendingFilesInnerHtml({
       diffManager: this.diffManager,
-      extensionUri: this.context.extensionUri,
       iconBase: this.fileIconsBase(),
       sessionState: this.sessionState,
       lastPrompt: this.lastPrompt,
