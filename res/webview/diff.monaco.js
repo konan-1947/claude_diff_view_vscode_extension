@@ -63,10 +63,20 @@
       inFlight: false,
     };
 
+    function getTopLine() {
+      const ranges = state.editor && state.editor.getVisibleRanges();
+      return ranges && ranges[0] ? ranges[0].startLineNumber : undefined;
+    }
+
     function flushCursor() {
       const pos = state.editor && state.editor.getPosition();
       if (!pos) { return; }
-      vscodeApi.postMessage({ type: 'cursor', line: pos.lineNumber, column: pos.column });
+      vscodeApi.postMessage({
+        type: 'cursor',
+        line: pos.lineNumber,
+        column: pos.column,
+        topLine: getTopLine(),
+      });
     }
 
     function setInFlight(value) {
@@ -145,6 +155,7 @@
           type: 'cursor',
           line: e.position.lineNumber,
           column: e.position.column,
+          topLine: getTopLine(),
         });
       }, 150);
     });

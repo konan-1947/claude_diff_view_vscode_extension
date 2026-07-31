@@ -39,8 +39,8 @@ export class DiffManager {
   private readonly store: SnapshotStore;
   /** filePath (normalized) -> active webview panel. */
   private panels: Map<string, vscode.WebviewPanel> = new Map();
-  /** filePath (normalized) -> last cursor seen in Monaco modified editor. */
-  private lastCursors: Map<string, { line: number; column: number }> = new Map();
+  /** filePath (normalized) -> last cursor + top visible line seen in Monaco modified editor. */
+  private lastCursors: Map<string, { line: number; column: number; topLine?: number }> = new Map();
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.store = new SnapshotStore(context.workspaceState);
@@ -223,8 +223,8 @@ export class DiffManager {
     return this.getSnapshot(filePath);
   }
 
-  setLastCursor(filePath: string, line: number, column: number): void {
-    this.lastCursors.set(normalizePath(filePath), { line, column });
+  setLastCursor(filePath: string, line: number, column: number, topLine?: number): void {
+    this.lastCursors.set(normalizePath(filePath), { line, column, topLine });
   }
 
   getActiveFilePath(): string | undefined {
@@ -250,10 +250,27 @@ export class DiffManager {
   /**
    * Xoá toàn bộ pending (vd: git branch switch). Cần persist clean state để
    * sau reload window không bị `SnapshotStore.load()` kéo lại.
+   *
+   * Nếu tab đang active đúng là 1 diff tab bị xoá, mở lại nó dưới dạng text
+   * editor thường (giữ cursor/scroll) thay vì để nó biến mất đột ngột — chỉ
+   * áp dụng cho tab đang active, KHÔNG áp dụng cho mọi panel bị đóng (nếu
+   * không sẽ mở lại hàng loạt tab cho các file nền user không đang xem).
    */
   async clearAll(): Promise<void> {
+    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const activeDiffPath =
+      activeTab?.input instanceof vscode.TabInputCustom &&
+      activeTab.input.viewType === DIFF_EDITOR_VIEW_TYPE &&
+      this.panels.has(normalizePath(activeTab.input.uri.fsPath))
+        ? normalizePath(activeTab.input.uri.fsPath)
+        : undefined;
+
     this.disposeAll();
     await this.store.clear();
+
+    if (activeDiffPath) {
+      await this.reopenAsTextEditor(activeDiffPath);
+    }
   }
 
   // ---- Panel registry (gọi bởi DiffEditorProvider) ----
@@ -301,7 +318,15 @@ export class DiffManager {
       showOptions.selection = new vscode.Range(pos, pos);
     }
     try {
-      await vscode.window.showTextDocument(uri, showOptions);
+      const editor = await vscode.window.showTextDocument(uri, showOptions);
+      if (cursor?.topLine !== undefined) {
+        const lastLine = Math.max(0, editor.document.lineCount - 1);
+        const top = Math.min(lastLine, Math.max(0, cursor.topLine - 1));
+        editor.revealRange(
+          new vscode.Range(top, 0, top, 0),
+          vscode.TextEditorRevealType.AtTop
+        );
+      }
     } catch (err) {
       console.error('[ai-cli-diff] reopenAsTextEditor failed:', err);
     }

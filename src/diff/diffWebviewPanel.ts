@@ -26,7 +26,7 @@ type IncomingMsg =
   | { type: 'save' }
   | { type: 'undo' }
   | { type: 'redo' }
-  | { type: 'cursor'; line: number; column: number };
+  | { type: 'cursor'; line: number; column: number; topLine?: number };
 
 export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
   constructor(
@@ -126,7 +126,7 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
             await vscode.commands.executeCommand('redo');
             return;
           case 'cursor':
-            this.diffManager.setLastCursor(filePath, msg.line, msg.column);
+            this.diffManager.setLastCursor(filePath, msg.line, msg.column, msg.topLine);
             return;
         }
       })
