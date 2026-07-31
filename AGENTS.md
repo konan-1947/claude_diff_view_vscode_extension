@@ -17,7 +17,7 @@ No linter or formatter is configured. Use `npm run compile` as the minimum corre
 - On activate, the extension auto-enables `diffEditor.codeLens` globally so Accept/Revert buttons appear in diff editor panes.
 - Hook mechanism: `hooks/pre-tool-hook.js` snapshots files before edits; `hooks/post-tool-hook.js` writes signal files to `os.tmpdir()/ai-cli-diff-signals/`. The extension's `HookWatcher` polls for these signals. Hooks always exit 0 to never block Claude.
 - Navigation keybindings: `alt+h` / `alt+l` (prev/next file) only when `ai-cli-diff-view.hasPendingDiff` context is true.
-- Two webview views: `ai-cli-diff-view.session` (sidebar session panel) and `ai-cli-diff-view.navBar` (explorer nav bar).
+- One webview view: `ai-cli-diff-view.terminal` (terminal + pending files + hook status). Prev/next file navigation is command/keybinding-only (`alt+h`/`alt+l`), no dedicated nav-bar view.
 
 ## Coding Style
 Strict TypeScript, CommonJS modules, target ES2020. 2-space indentation, semicolons, single quotes. `PascalCase` for classes/providers, `camelCase` for functions/variables, `kebab-case` for asset filenames. Match surrounding code.

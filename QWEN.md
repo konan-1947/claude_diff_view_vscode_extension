@@ -23,7 +23,7 @@ src/
   diff/        diff state, hunks, navigation, rendering
   views/       sidebar and webview UI
   watcher/     hook and workspace file monitoring
-hooks/         CLI hook scripts
+hooks/         Claude CLI hook scripts
 media/         icons
 code_to_test/  local smoke-test files
 out/           compiled output

@@ -37,7 +37,7 @@ Ideal for workflows using Claude, Codex, or Qwen, where an AI agent edits files 
 ## Usage
 
 1. Open the `AI CLI` sidebar in VS Code.
-2. Click `Install Hooks` to connect your AI CLI workflow with the extension.
+2. Click `Install Claude CLI Hooks` to connect Claude Code with the extension. Hooks only apply to Claude — other CLIs (Codex, Qwen, …) are reviewed automatically via the workspace watcher, no hook needed.
 3. Run an AI CLI agent in the integrated terminal or an external terminal.
 4. View pending diffs in VS Code.
 5. Accept or revert changes per hunk, per file, or all pending changes at once.

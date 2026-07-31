@@ -12,13 +12,12 @@ file đó đã bị bỏ).
 
 | File | Vai trò |
 | --- | --- |
-| `src/extension.ts` | Entry point. Khởi tạo `DiffManager`, các watcher, custom editor provider, NavBar, terminal, đăng ký command, gắn auto-route tab. |
+| `src/extension.ts` | Entry point. Khởi tạo `DiffManager`, các watcher, custom editor provider, terminal, đăng ký command, gắn auto-route tab. |
 | `src/diff/diffManager.ts` | Trung tâm state. Giữ snapshot (left side), registry panel theo file, last-cursor, persistence, accept/revert ở mức file & hunk. |
 | `src/diff/diffWebviewPanel.ts` | `CustomTextEditorProvider` (viewType `ai-cli-diff-view.diffEditor`). Mỗi pending file = 1 tab webview Monaco riêng. Cầu nối message ↔ `DiffManager`. |
 | `src/diff/hunkCalculator.ts` | LCS-based line diff → mảng `Hunk { id, modifiedStart, originalStart, removedLines, addedLines }`. |
 | `src/diff/snapshotStore.ts` | Persist snapshot vào `workspaceState['ai-cli-diff.snapshots']`, có backward-compat với shape cũ (string). |
-| `src/diff/navigationManager.ts` | Tính prev/next pending file cho NavBar; chuyển file qua `DiffManager.openDiff()`. |
-| `src/views/navBarPanel.ts` | Sidebar webview hiển thị Accept/Reject File, Accept All Changes, prev/next file, counter. |
+| `src/diff/navigationManager.ts` | Tính prev/next pending file (qua command `prevFile`/`nextFile`); chuyển file qua `DiffManager.openDiff()`. |
 | `src/watcher/hookWatcher.ts` | Pipeline 1 — đọc signal JSON do `hooks/post-tool-hook.js` ghi vào temp dir. |
 | `src/watcher/workspaceWatcher.ts` | Pipeline 2 — fallback `FileSystemWatcher` + `onDidSaveTextDocument` cho mọi external write không qua hook. |
 | `src/watcher/fileSnapshotStore.ts` | Baseline content theo workspace folder để watcher có thể so sánh "before/after". |
@@ -35,16 +34,16 @@ file đó đã bị bỏ).
    bỏ entry mà file vật lý không còn).
 2. Khởi tạo `WorkspaceWatcher`, `HookWatcher`, `GitBranchWatcher`, `NavigationManager`.
 3. `registerCustomEditorProvider(DIFF_EDITOR_VIEW_TYPE, DiffEditorProvider, { retainContextWhenHidden: true, supportsMultipleEditorsPerDocument: false })`.
-4. Đăng ký `NavBarPanel` (sidebar webview) và `TerminalPanelProvider`.
+4. Đăng ký `TerminalPanelProvider`.
 5. Lần đầu chạy: di chuyển panel terminal sang auxiliary bar (best-effort, có flag
    `globalState['ai-cli-diff-view.terminal.movedToRight']`).
 6. `fsHookWatcher.start()`, `workspaceWatcher.start()`, `gitBranchWatcher.start()`.
 7. `registerAllCommands(...)` (start session, accept/revert, accept-all-pending,
    install hooks, openPendingFile).
 8. Đăng ký command `nextFile`/`prevFile`.
-9. **NavBar refresh**: lắng nghe `diffManager.onDidChangeDiffs` và
-   `vscode.window.tabGroups.onDidChangeTabs` → gọi `updateNavBarState()` (set context
-   key `ai-cli-diff-view.hasPendingDiff`, gọi `navBarPanel.update(...)`).
+9. **Pending context**: lắng nghe `diffManager.onDidChangeDiffs` và
+   `vscode.window.tabGroups.onDidChangeTabs` → gọi `updatePendingContext()` (set context
+   key `ai-cli-diff-view.hasPendingDiff` để gate keybinding prev/next).
 10. **Auto-route tab**: bất kỳ `TabInputText` nào mở mà file đó đang có pending diff
     sẽ bị close và mở lại bằng custom editor (`diffManager.openDiff`). Áp dụng cho
     cả tab đã mở sẵn lúc activate và tab mở sau (`onDidChangeTabs.opened/changed`).
@@ -263,16 +262,13 @@ khi user reject.
 
 Hai đường:
 
-1. **NavBar (sidebar)** — `NavigationManager.getNavigationInfo(activePath)` cấp
-   tên prev/next + counter. Nút bấm → execute command `nextFile`/`prevFile` →
-   `NavigationManager.navigate(±1)` → `diffManager.openDiff(target)`.
+1. **Command / keybinding** — `Alt+H`/`Alt+L` (hoặc execute command `prevFile`/`nextFile`)
+   → `NavigationManager.navigate(±1)` → `diffManager.openDiff(target)`.
 2. **Toolbar trong diff editor** — webview gửi message `nextFile`/`prevFile` →
    `DiffEditorProvider.gotoSibling()` → cũng gọi `openDiff(target)`.
 
-Cập nhật NavBar:
-- `diffManager.onDidChangeDiffs` → `updateNavBarState()`.
-- `tabGroups.onDidChangeTabs` → `updateNavBarState()` (để counter đúng khi user
-  tự đóng tab diff).
+Context key:
+- `diffManager.onDidChangeDiffs` và `tabGroups.onDidChangeTabs` → `updatePendingContext()`.
 - Context key `ai-cli-diff-view.hasPendingDiff` đồng bộ để các keybinding
   (`Alt+H/L`) chỉ active khi có pending.
 
