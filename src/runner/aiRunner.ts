@@ -30,18 +30,6 @@ export interface IAiRunner {
   ): Promise<void>;
 
   /**
-   * Trả về đường dẫn file settings.json của tool này.
-   * Dùng cho tính năng installHooks.
-   */
-  getSettingsFilePath(): string;
-
-  /**
-   * Trả về các tool name file-editing mà CLI này dùng.
-   * Dùng cho hook matcher.
-   */
-  getFileEditToolNames(): string[];
-
-  /**
    * Huỷ session đang chạy (kill child process) nếu có.
    * Dùng khi extension deactivate để tránh orphan process.
    */

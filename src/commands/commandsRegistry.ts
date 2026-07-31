@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
@@ -128,70 +127,4 @@ export function registerAllCommands(deps: CommandDeps): void {
     })
   );
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ai-cli-diff-view.installHooks', async () => {
-      const extensionPath = context.extensionUri.fsPath;
-      const preHook = path.join(extensionPath, 'hooks', 'pre-tool-hook.js');
-      const postHook = path.join(extensionPath, 'hooks', 'post-tool-hook.js');
-      const runner = await ensureRunner();
-      if (!runner) {
-        return;
-      }
-
-      const settingsPath = runner.getSettingsFilePath();
-      const settingsDir = path.dirname(settingsPath);
-      const matcher = runner.getFileEditToolNames().join('|');
-      const toolLabel = runner.toolName.charAt(0).toUpperCase() + runner.toolName.slice(1);
-
-      let settings: Record<string, unknown> = {};
-      try {
-        settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      } catch {
-        // Ignore missing or invalid settings file; we will overwrite it.
-      }
-
-      const hookConfig: Record<string, unknown> = {
-        PreToolUse: [{ matcher, hooks: [{ type: 'command', command: `node "${preHook}"` }] }],
-        PostToolUse: [{ matcher, hooks: [{ type: 'command', command: `node "${postHook}"` }] }],
-      };
-
-      if (process.platform === 'win32') {
-        hookConfig['Notification'] = [
-          {
-            hooks: [
-              {
-                type: 'command',
-                shell: 'powershell',
-                command: "(New-Object System.Media.SoundPlayer 'C:\\Windows\\Media\\Alarm10.wav').PlaySync()",
-                async: true,
-              },
-            ],
-          },
-        ];
-        hookConfig['Stop'] = [
-          {
-            hooks: [
-              {
-                type: 'command',
-                shell: 'powershell',
-                command: "(New-Object System.Media.SoundPlayer 'C:\\Windows\\Media\\tada.wav').PlaySync()",
-                async: true,
-              },
-            ],
-          },
-        ];
-      }
-
-      settings['hooks'] = hookConfig;
-
-      if (!fs.existsSync(settingsDir)) {
-        fs.mkdirSync(settingsDir, { recursive: true });
-      }
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-      panel.refresh();
-      vscode.window.showInformationMessage(
-        `${toolLabel} hooks installed. AI CLI Diff will now track \`${runner.toolName}\` edits from any terminal.`
-      );
-    })
-  );
 }

@@ -1,14 +1,11 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
-import { detectOurClaudeHooks, hooksFullyActive } from '../commands/hookInstallDetect';
 
 export type SessionState = 'idle' | 'running' | 'error';
 
 export interface PendingFilesContext {
   diffManager: DiffManager;
-  extensionUri: vscode.Uri;
   iconBase: string;
   sessionState: SessionState;
   lastPrompt: string;
@@ -53,50 +50,12 @@ export function buildPendingFilesInnerHtml(ctx: PendingFilesContext): string {
       </div>
       <div class="file-tree" id="file-tree">${pendingTreeHtml}</div>`;
 
-  const hookDet = detectOurClaudeHooks(ctx.extensionUri.fsPath);
-  const hooksOk = hooksFullyActive(hookDet);
-
-  let extVersion = '';
-  try {
-    const pkgJson = JSON.parse(
-      fs.readFileSync(path.join(ctx.extensionUri.fsPath, 'package.json'), 'utf8')
-    ) as { version?: string };
-    extVersion = pkgJson.version ?? '';
-  } catch {
-    // ignore
-  }
-  const versionTag = extVersion
-    ? `<span class="hook-version">v${escapeHtml(extVersion)}</span>`
-    : '';
-
-  let hookStatusHtml = '';
-  if (hooksOk) {
-    hookStatusHtml = `<div class="hook-status hook-ok"><span class="hook-status-text">CLI hooks: active</span>${versionTag}</div>`;
-  } else if (!hookDet.settingsFound) {
-    hookStatusHtml = `<div class="hook-status hook-no"><span class="hook-status-text">CLI hooks: <strong>not installed</strong> (no Claude settings file yet)</span>${versionTag}</div>`;
-  } else if (hookDet.preHookFound || hookDet.postHookFound) {
-    hookStatusHtml = `<div class="hook-status hook-warn"><span class="hook-status-text">CLI hooks: <strong>incomplete</strong> — pre: ${
-      hookDet.preHookFound ? 'OK' : 'missing'
-    }, post: ${hookDet.postHookFound ? 'OK' : 'missing'}</span>${versionTag}</div>`;
-  } else {
-    hookStatusHtml = `<div class="hook-status hook-no"><span class="hook-status-text">CLI hooks: <strong>not installed</strong> for this extension</span>${versionTag}</div>`;
-  }
-
-  const installLabel = hooksOk ? 'Reinstall / update CLI hooks' : 'Install CLI hooks';
-
   return `
     <div class="scroll-region">
       ${statusHtml}
       <div class="section">
         ${pendingBlock}
       </div>
-    </div>
-    <div class="bottom-stick">
-      <button type="button" class="btn-install" id="btn-install" title="Write hooks to ~/.claude/settings.json">
-        ${escapeHtml(installLabel)}
-      </button>
-      <p class="footer-note">Best with Claude, Codex, and Qwen. Hook install currently targets Claude.</p>
-      ${hookStatusHtml}
     </div>
   `;
 }
@@ -122,12 +81,6 @@ export const PENDING_FILES_CSS = `
     flex-direction: column;
     gap: 14px;
     user-select: none;
-  }
-  #files-wrap .bottom-stick {
-    flex-shrink: 0;
-    padding: 10px 14px 12px;
-    border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.28));
-    background: var(--vscode-sideBar-background);
   }
   #files-wrap .banner {
     display: flex;
@@ -236,59 +189,6 @@ export const PENDING_FILES_CSS = `
   #files-wrap .tree-row-folder .tree-label { font-weight: 400; }
   #files-wrap .tree-children { display: block; }
   #files-wrap .empty-pending { font-size: 12px; opacity: 0.45; font-style: italic; padding: 8px 0; }
-  #files-wrap .btn-install {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 100%;
-    padding: 10px 14px;
-    border-radius: 8px;
-    border: none;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--vscode-button-foreground);
-    background: var(--vscode-button-background);
-    transition: filter 0.12s;
-  }
-  #files-wrap .btn-install:hover { filter: brightness(1.08); }
-  #files-wrap .btn-install:active { filter: brightness(0.95); }
-  #files-wrap .footer-note { font-size: 10px; opacity: 0.4; line-height: 1.35; margin-top: 8px; }
-  #files-wrap .hook-status {
-    font-size: 11px;
-    line-height: 1.45;
-    padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.25));
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    margin-top: 12px;
-  }
-  #files-wrap .hook-status-text { flex: 1; min-width: 0; }
-  #files-wrap .hook-version {
-    flex-shrink: 0;
-    font-size: 10px;
-    opacity: 0.6;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.02em;
-    padding: 1px 6px;
-    border-radius: 4px;
-    border: 1px solid currentColor;
-  }
-  #files-wrap .hook-ok {
-    color: var(--vscode-testing-iconPassed, #73c991);
-    background: rgba(115, 201, 145, 0.08);
-    border-color: var(--vscode-testing-iconPassed, rgba(115,201,145,0.35));
-  }
-  #files-wrap .hook-no { opacity: 0.9; }
-  #files-wrap .hook-warn {
-    color: var(--vscode-editorWarning-foreground, #cca700);
-    background: rgba(204, 167, 0, 0.08);
-  }
 `;
 
 function escapeHtml(s: string): string {
