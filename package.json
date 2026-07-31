@@ -1,7 +1,7 @@
 {
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
-  "description": "Inline diff review for AI CLI edits, best with Claude, Codex, and Qwen",
+  "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
   "version": "3.3.3",
   "publisher": "konan1947",
   "license": "MIT",

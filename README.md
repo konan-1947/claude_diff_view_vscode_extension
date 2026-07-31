@@ -1,51 +1,55 @@
 # AI CLI Diff View
 
-A VS Code extension for reviewing file changes made by AI CLI agents using inline diffs right inside the editor.
+Cursor-like inline diff review for any AI CLI agent's file edits — right inside VS Code.
 
-Ideal for workflows using Claude, Codex, or Qwen, where an AI agent edits files in your workspace and you want to review, accept, or revert changes without leaving VS Code.
+Works with any AI CLI tool out of the box (Claude, Codex, Qwen, and more) — no setup, no hooks required. Review, accept, or revert changes without ever leaving VS Code.
 
 ## Features
 
-![Accept or revert in side panel](media/introduce/image1.png)
+![Welcome to AI CLI Diff](media/introduce/welcome.png)
 
-*Accept or revert AI changes with a single click in the side panel.*
+*Welcome to AI CLI Diff — review every AI edit before it lands.*
+
+---
+
+![Accept or reject in side panel](media/introduce/image1.png)
+
+*Accept or reject each AI change with one click in the side panel.*
 
 ---
 
 ![Integrated terminal](media/introduce/image2.png)
 
-*Run AI CLI agents directly in the extension's integrated terminal.*
+*Run an AI CLI agent right inside the embedded terminal.*
 
 ---
 
 ![Real folder structure](media/introduce/image3.png)
 
-*View changed files organized by your workspace's actual folder structure.*
+*See changed files in their real folder structure.*
 
 ---
 
 ![Review hunks in editor](media/introduce/image4.png)
 
-*Review changes hunk-by-hunk directly in the editor.*
+*Review changes hunk by hunk directly in the editor.*
 
 ---
 
 ![Terminal settings](media/introduce/image5.png)
 
-*Customize terminal font, theme, and cursor from the settings popover.*
+*Customize terminal font, theme, and cursor from the Settings popover.*
 
 ## Usage
 
 1. Open the `AI CLI` sidebar in VS Code.
-2. Click `Install Claude CLI Hooks` to connect Claude Code with the extension. Hooks only apply to Claude — other CLIs (Codex, Qwen, …) are reviewed automatically via the workspace watcher, no hook needed.
-3. Run an AI CLI agent in the integrated terminal or an external terminal.
-4. View pending diffs in VS Code.
-5. Accept or revert changes per hunk, per file, or all pending changes at once.
+2. Run an AI CLI agent — Claude, Codex, Qwen, or anything else — in the integrated terminal or an external terminal. Edits are picked up automatically, no setup needed.
+3. View pending diffs in VS Code.
+4. Accept or revert changes per hunk, per file, or all pending changes at once.
 
 ## Commands
 
 - `AI CLI Diff: Start Claude Session`
-- `AI CLI Diff: Install Claude CLI Hooks`
 - `AI CLI Diff: Accept All Changes`
 - `AI CLI Diff: Accept All Changes (All Files)`
 - `AI CLI Diff: Revert All Changes`
