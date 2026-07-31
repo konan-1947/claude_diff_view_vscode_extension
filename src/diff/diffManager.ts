@@ -42,6 +42,24 @@ export class DiffManager {
   /** filePath (normalized) -> last cursor + top visible line seen in Monaco modified editor. */
   private lastCursors: Map<string, { line: number; column: number; topLine?: number }> = new Map();
 
+  /**
+   * filePath (normalized) của tab đang active NGAY TRƯỚC khi WorkspaceWatcher
+   * bắt đầu tự động mở diff cho 1 cụm external write (checkout đổi vài file
+   * hay hàng loạt file đều tính, xem markActiveTabBeforeAutoOpen()). undefined
+   * nghĩa là không có tab file nào active lúc đó (vd: đang ở terminal/sidebar)
+   * — vẫn khác với "chưa ghi hint nào", phân biệt bằng pendingActiveTabCaptured.
+   */
+  private pendingActiveTabPath: string | undefined;
+  private pendingActiveTabCaptured = false;
+  private pendingActiveTabCapturedAt = 0;
+  /**
+   * Hint quá cũ (vd: cụm write đó rốt cuộc không phải git checkout nên
+   * clearAll() không bao giờ chạy theo sau nó) thì bỏ qua, để lần clearAll()
+   * không liên quan sau đó không lỡ dùng lại path cũ. Rộng hơn nhiều so với
+   * holdMs tối đa (10s) + debounce xác nhận HEAD (1s).
+   */
+  private static readonly PENDING_ACTIVE_TAB_TTL_MS = 15000;
+
   constructor(private readonly context: vscode.ExtensionContext) {
     this.store = new SnapshotStore(context.workspaceState);
     this.snapshots = this.store.load();
@@ -62,7 +80,7 @@ export class DiffManager {
     void this.store.save(this.snapshots);
   }
 
-  async openDiff(filePath: string): Promise<void> {
+  async openDiff(filePath: string, options?: { preserveFocus?: boolean }): Promise<void> {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (snapshot === undefined) { return; }
@@ -82,9 +100,11 @@ export class DiffManager {
       return;
     }
 
+    const preserveFocus = options?.preserveFocus === true;
+
     const existing = this.panels.get(absPath);
     if (existing) {
-      existing.reveal(vscode.ViewColumn.Active, false);
+      existing.reveal(vscode.ViewColumn.Active, preserveFocus);
       this._onDidChangeDiffs.fire();
       return;
     }
@@ -95,7 +115,7 @@ export class DiffManager {
       'vscode.openWith',
       vscode.Uri.file(canonicalCasePath(absPath)),
       DIFF_EDITOR_VIEW_TYPE,
-      { preview: false } satisfies vscode.TextDocumentShowOptions
+      { preview: false, preserveFocus } satisfies vscode.TextDocumentShowOptions
     );
     this._onDidChangeDiffs.fire();
   }
@@ -257,13 +277,10 @@ export class DiffManager {
    * không sẽ mở lại hàng loạt tab cho các file nền user không đang xem).
    */
   async clearAll(): Promise<void> {
-    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
-    const activeDiffPath =
-      activeTab?.input instanceof vscode.TabInputCustom &&
-      activeTab.input.viewType === DIFF_EDITOR_VIEW_TYPE &&
-      this.panels.has(normalizePath(activeTab.input.uri.fsPath))
-        ? normalizePath(activeTab.input.uri.fsPath)
-        : undefined;
+    const hint = this.consumePendingActiveTabHint();
+    const activeDiffPath = hint.captured
+      ? (hint.path !== undefined && this.snapshots.has(hint.path) ? hint.path : undefined)
+      : this.getLiveActiveDiffPath();
 
     this.disposeAll();
     await this.store.clear();
@@ -273,10 +290,70 @@ export class DiffManager {
     }
   }
 
+  private getLiveActiveDiffPath(): string | undefined {
+    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    return activeTab?.input instanceof vscode.TabInputCustom &&
+      activeTab.input.viewType === DIFF_EDITOR_VIEW_TYPE &&
+      this.panels.has(normalizePath(activeTab.input.uri.fsPath))
+        ? normalizePath(activeTab.input.uri.fsPath)
+        : undefined;
+  }
+
+  /**
+   * Gọi bởi WorkspaceWatcher ở write ĐẦU TIÊN của 1 cụm external write sắp tự
+   * động mở diff (xem WorkspaceWatcher.resolveOrHold — áp dụng cho cả mở ngay
+   * lẫn hold-rồi-dump, không riêng burst). Ghi lại tab đang active THẬT SỰ tại
+   * thời điểm đó — trước khi các openDiff() không đồng bộ trong cụm chạy đua
+   * khiến activeTab trở nên ngẫu nhiên. clearAll() (khi git xác nhận branch
+   * đổi đến sau đó) sẽ ưu tiên dùng giá trị này thay vì tab thắng cuộc đua.
+   */
+  markActiveTabBeforeAutoOpen(): void {
+    this.pendingActiveTabPath = this.getCurrentTabFsPath();
+    this.pendingActiveTabCaptured = true;
+    this.pendingActiveTabCapturedAt = Date.now();
+  }
+
+  private getCurrentTabFsPath(): string | undefined {
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const uri =
+      tab?.input instanceof vscode.TabInputText ? tab.input.uri :
+      tab?.input instanceof vscode.TabInputCustom ? tab.input.uri :
+      tab?.input instanceof vscode.TabInputNotebook ? tab.input.uri :
+      undefined;
+    return uri ? normalizePath(uri.fsPath) : undefined;
+  }
+
+  /** Dùng 1 lần: đọc xong luôn reset state, để lần clearAll() sau (không có
+   *  cụm auto-open nào xảy ra trước đó) không vô tình dùng lại hint cũ. */
+  private consumePendingActiveTabHint(): { captured: boolean; path: string | undefined } {
+    const captured = this.pendingActiveTabCaptured;
+    const path = this.pendingActiveTabPath;
+    const capturedAt = this.pendingActiveTabCapturedAt;
+    this.pendingActiveTabCaptured = false;
+    this.pendingActiveTabPath = undefined;
+    this.pendingActiveTabCapturedAt = 0;
+    if (!captured || Date.now() - capturedAt > DiffManager.PENDING_ACTIVE_TAB_TTL_MS) {
+      return { captured: false, path: undefined };
+    }
+    return { captured, path };
+  }
+
   // ---- Panel registry (gọi bởi DiffEditorProvider) ----
 
   registerPanel(filePath: string, panel: vscode.WebviewPanel): void {
     const absPath = normalizePath(filePath);
+
+    // openDiff() là async (await vscode.openWith) — nếu clearAll()/disposeAll()
+    // chạy xong TRƯỚC khi tab này kịp mở (vd: git branch confirm ngay giữa lúc
+    // đang mở), snapshot đã bị xoá nhưng panel này chưa kịp đăng ký nên không
+    // bị đóng theo. Không có gì để diff nữa — đóng luôn ở đây (đồng bộ, sớm
+    // hơn nhiều so với việc chờ webview Monaco load xong rồi tự đóng qua
+    // postSet()).
+    if (!this.snapshots.has(absPath)) {
+      panel.dispose();
+      return;
+    }
+
     const existing = this.panels.get(absPath);
     if (existing && existing !== panel) {
       existing.dispose();

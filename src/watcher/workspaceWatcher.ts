@@ -42,6 +42,10 @@ export class WorkspaceWatcher {
   /** File vượt ngưỡng burst, đang chờ xác nhận git (xem resolveOrHold/scheduleHoldResolve). */
   private readonly heldWrites = new Map<string, { originalContent: string; newContent: string; fileExistedBefore: boolean }>();
   private holdResolveTimer: NodeJS.Timeout | undefined;
+  /** Mốc thời gian write-triggered diff-open gần nhất — dùng để nhận biết "write đầu cụm" trong resolveOrHold(). */
+  private lastAutoOpenActivityAt = 0;
+  /** Khoảng cách tối thiểu giữa 2 write để coi là 2 cụm khác nhau (và ghi lại hint activeTab mới). */
+  private static readonly ACTIVE_TAB_CAPTURE_GAP_MS = 500;
 
   constructor(private readonly diffManager: DiffManager) {
     this.snapshots = new FileSnapshotStore();
@@ -263,9 +267,15 @@ export class WorkspaceWatcher {
     this.pendingTimers.add(timer);
   }
 
-  private triggerDiff(filePath: string, originalContent: string, newContent: string, fileExistedBefore: boolean): void {
+  private triggerDiff(
+    filePath: string,
+    originalContent: string,
+    newContent: string,
+    fileExistedBefore: boolean,
+    fromBurstDump = false
+  ): void {
     this.diffManager.loadSnapshot(filePath, originalContent, fileExistedBefore);
-    this.diffManager.openDiff(filePath).catch((err: unknown) => {
+    this.diffManager.openDiff(filePath, fromBurstDump ? { preserveFocus: true } : undefined).catch((err: unknown) => {
       console.error('[ai-cli-diff-view] workspaceWatcher openDiff failed:', err);
     });
   }
@@ -283,6 +293,20 @@ export class WorkspaceWatcher {
     fileExistedBefore: boolean,
     hold: boolean
   ): void {
+    // Ghi lại tab đang active THẬT SỰ trước khi mở diff — chỉ ở write ĐẦU
+    // TIÊN của 1 cụm (cách write gần nhất > ACTIVE_TAB_CAPTURE_GAP_MS), để
+    // không ghi đè bằng activeTab đã bị các openDiff() không đồng bộ trước đó
+    // trong cùng cụm làm ngẫu nhiên. Áp dụng cho cả nhánh mở ngay (checkout
+    // đổi ít file, dưới ngưỡng burst nhưng vẫn ghi gần như đồng thời) lẫn
+    // nhánh hold-rồi-dump — không chỉ riêng burst. DiffManager.clearAll() sẽ
+    // dùng hint này thay vì activeTab tại thời điểm clear (đã có thể bị hỏng
+    // bởi race) nếu git branch đổi ngay sau đó.
+    const now = Date.now();
+    if (now - this.lastAutoOpenActivityAt > WorkspaceWatcher.ACTIVE_TAB_CAPTURE_GAP_MS) {
+      this.diffManager.markActiveTabBeforeAutoOpen();
+    }
+    this.lastAutoOpenActivityAt = now;
+
     if (!hold) {
       this.triggerDiff(filePath, originalContent, newContent, fileExistedBefore);
       return;
@@ -301,7 +325,7 @@ export class WorkspaceWatcher {
       const entries = Array.from(this.heldWrites.entries());
       this.heldWrites.clear();
       for (const [filePath, w] of entries) {
-        this.triggerDiff(filePath, w.originalContent, w.newContent, w.fileExistedBefore);
+        this.triggerDiff(filePath, w.originalContent, w.newContent, w.fileExistedBefore, true);
       }
     }, this.holdMs);
   }
