@@ -16,6 +16,7 @@ import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
 import { FileSnapshotStore, isTextFile } from './fileSnapshotStore';
 import { isExcludedPathSegment } from './pathExclusions';
+import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
 
 export class WorkspaceWatcher {
   private disposables: vscode.Disposable[] = [];
@@ -35,6 +36,12 @@ export class WorkspaceWatcher {
    * Được set bởi GitBranchWatcher khi phát hiện .git/HEAD đổi.
    */
   private suppressUntil = 0;
+  private readonly burstMeter = new WriteBurstMeter();
+  /** Thời gian giữ file vượt ngưỡng burst chờ xác nhận git trước khi mở diff bình thường. */
+  private holdMs = 2000;
+  /** File vượt ngưỡng burst, đang chờ xác nhận git (xem resolveOrHold/scheduleHoldResolve). */
+  private readonly heldWrites = new Map<string, { originalContent: string; newContent: string; fileExistedBefore: boolean }>();
+  private holdResolveTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly diffManager: DiffManager) {
     this.snapshots = new FileSnapshotStore();
@@ -43,6 +50,34 @@ export class WorkspaceWatcher {
   start(): void {
     this.watchVscodeEvents();
     this.watchWorkspaceFolders();
+    this.applyBurstConfig();
+    const d = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('ai-cli-diff-view.burstDetectionEnabled') ||
+          e.affectsConfiguration('ai-cli-diff-view.burstDetectionWindowMs') ||
+          e.affectsConfiguration('ai-cli-diff-view.burstDetectionThreshold') ||
+          e.affectsConfiguration('ai-cli-diff-view.burstDetectionHoldMs')) {
+        this.applyBurstConfig();
+      }
+    });
+    this.disposables.push(d);
+  }
+
+  private applyBurstConfig(): void {
+    this.burstMeter.updateConfig(this.loadBurstMeterConfig());
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    const holdMs = config.get<number>('burstDetectionHoldMs', 2000);
+    this.holdMs = Number.isFinite(holdMs) ? Math.min(10000, Math.max(500, holdMs)) : 2000;
+  }
+
+  private loadBurstMeterConfig(): BurstMeterConfig {
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    const windowMs = config.get<number>('burstDetectionWindowMs', 300);
+    const threshold = config.get<number>('burstDetectionThreshold', 8);
+    return {
+      enabled: config.get<boolean>('burstDetectionEnabled', true),
+      windowMs: Number.isFinite(windowMs) ? Math.min(5000, Math.max(50, windowMs)) : 300,
+      threshold: Number.isFinite(threshold) ? Math.min(500, Math.max(2, threshold)) : 8,
+    };
   }
 
   /**
@@ -50,10 +85,17 @@ export class WorkspaceWatcher {
    * - Wipe baseline trong RAM để rebuild từ disk hiện tại.
    * - Set suppress window để các fs event đến sau (kể cả từ setTimeout 200ms
    *   đã pending) không tạo diff nữa, chỉ ghi đè baseline.
+   * - Xác nhận git thật đã xảy ra: bỏ toàn bộ file đang bị giữ (heldWrites) —
+   *   không mở diff cho chúng nữa, đúng như baseline vừa rebuild.
    */
   notifyExternalBatch(windowMs = 5000): void {
     this.suppressUntil = Date.now() + windowMs;
     this.snapshots.clear();
+    if (this.holdResolveTimer) {
+      clearTimeout(this.holdResolveTimer);
+      this.holdResolveTimer = undefined;
+    }
+    this.heldWrites.clear();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       try {
         this.snapshots.buildInitialSnapshots(folder.uri.fsPath);
@@ -143,6 +185,12 @@ export class WorkspaceWatcher {
   private handleExternalWrite(filePath: string): void {
     const absPath = this.normalizePath(filePath);
 
+    // Đo tốc độ ghi TRƯỚC mọi filter bên dưới — xem writeBurstMeter.ts. Capture
+    // quyết định NGAY tại thời điểm raw event tới (chính xác nhất so với cửa
+    // sổ trượt), mang theo qua debounce/setTimeout bên dưới tới lúc quyết định
+    // triggerDiff — không gọi record() lần 2 để tránh đếm trùng.
+    const burstHold = this.burstMeter.record(absPath);
+
     // Bỏ qua dependency / build output / tooling (dotnet bin/obj, node_modules, …)
     if (isExcludedPathSegment(absPath)) {
       return;
@@ -194,7 +242,7 @@ export class WorkspaceWatcher {
         if (oldContent === undefined) {
           this.snapshots.set(absPath, newContentRaw);
           if (newContent.trim()) {
-            this.triggerDiff(absPath, '', newContentRaw, false);
+            this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
           }
           return;
         }
@@ -206,7 +254,7 @@ export class WorkspaceWatcher {
         this.snapshots.set(absPath, newContentRaw);
 
         if (!this.diffManager.hasPendingDiff(absPath)) {
-          this.triggerDiff(absPath, oldContentRaw!, newContentRaw, true);
+          this.resolveOrHold(absPath, oldContentRaw!, newContentRaw, true, burstHold);
         }
       } catch {
         // file đang bị lock hoặc xóa — bỏ qua
@@ -220,6 +268,42 @@ export class WorkspaceWatcher {
     this.diffManager.openDiff(filePath).catch((err: unknown) => {
       console.error('[ai-cli-diff-view] workspaceWatcher openDiff failed:', err);
     });
+  }
+
+  /**
+   * File dưới ngưỡng burst: mở diff ngay như trước. File vượt ngưỡng: giữ lại
+   * chờ `holdMs` — nếu trong lúc chờ git branch được xác nhận đổi thật
+   * (`notifyExternalBatch()` chạy), file bị bỏ âm thầm; nếu không, mở diff
+   * bình thường sau khi hết giờ chờ, như chưa từng bị giữ.
+   */
+  private resolveOrHold(
+    filePath: string,
+    originalContent: string,
+    newContent: string,
+    fileExistedBefore: boolean,
+    hold: boolean
+  ): void {
+    if (!hold) {
+      this.triggerDiff(filePath, originalContent, newContent, fileExistedBefore);
+      return;
+    }
+    this.heldWrites.set(filePath, { originalContent, newContent, fileExistedBefore });
+    this.scheduleHoldResolve();
+  }
+
+  /** Debounce dùng chung cho cả cụm burst: mỗi file mới vào hàng chờ sẽ reset lại. */
+  private scheduleHoldResolve(): void {
+    if (this.holdResolveTimer) {
+      clearTimeout(this.holdResolveTimer);
+    }
+    this.holdResolveTimer = setTimeout(() => {
+      this.holdResolveTimer = undefined;
+      const entries = Array.from(this.heldWrites.entries());
+      this.heldWrites.clear();
+      for (const [filePath, w] of entries) {
+        this.triggerDiff(filePath, w.originalContent, w.newContent, w.fileExistedBefore);
+      }
+    }, this.holdMs);
   }
 
   private isInWorkspace(filePath: string): boolean {
@@ -241,6 +325,11 @@ export class WorkspaceWatcher {
       clearTimeout(timer);
     }
     this.pendingTimers.clear();
+    if (this.holdResolveTimer) {
+      clearTimeout(this.holdResolveTimer);
+      this.holdResolveTimer = undefined;
+    }
+    this.heldWrites.clear();
   }
 }
 
