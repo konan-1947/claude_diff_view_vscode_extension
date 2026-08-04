@@ -69,7 +69,7 @@ There used to be a third, hook-based pipeline (`PreToolUse`/`PostToolUse` hooks 
 
 ### Git branch watcher
 
-`src/watcher/gitBranchWatcher.ts` watches each workspace root's `.git/HEAD` (resolving `gitdir:` for worktrees/submodules). On a HEAD ref change (branch switch / checkout / detached) it clears all pending diffs so stale snapshots aren't compared against a different branch's working tree. It deliberately does **not** react to pull/rebase/reset on the same branch (those change `refs/heads/<branch>`, not HEAD) to avoid wiping pending state on every commit.
+`src/watcher/gitBranchWatcher.ts` watches each workspace root's `.git/HEAD` (resolving `gitdir:` for worktrees/submodules). On a HEAD ref change (branch switch / checkout / detached) it clears all pending diffs so stale snapshots aren't compared against a different branch's working tree. That content-compare path deliberately does **not** react to pull/rebase/reset on the same branch (those change `refs/heads/<branch>`, not HEAD's content) to avoid wiping pending state on every commit. Instead, `pull`/`merge`/`rebase`/`reset` on the same branch are confirmed via a second, narrower source: the same watcher also tails `.git/logs/HEAD` (reflog) and matches the action label git appends to the last line (`pull:`, `merge …`, `rebase (finish): …`, `reset: …`); on a match it calls `workspaceWatcher.notifyExternalBatch()` — silently dropping burst-held writes and rebuilding the baseline — **without** clearing already-open pending diffs, since those are unaffected by a same-branch pull/rebase/reset. `commit`/`checkout` are excluded from that regex on purpose (commit shouldn't suppress anything; checkout-to-another-ref is already handled by the HEAD-content path above).
 
 ### Integrated terminal
 

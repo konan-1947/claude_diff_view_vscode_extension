@@ -77,11 +77,25 @@ hưởng — mở diff ngay như trước, không delay.
   được qua mục **Advanced** trong Settings popover của terminal panel
   (`src/terminal/terminalHtml.ts`), backed bởi đúng config trên, không phải
   storage riêng.
+- **Đã làm:** xác nhận `pull`/`merge`/`rebase`/`reset` trên **cùng branch** —
+  các thao tác này không đổi nội dung `HEAD` nên đường so-nội-dung-`HEAD`
+  không bắt được. `gitBranchWatcher.ts` theo dõi thêm `.git/logs/HEAD`
+  (reflog); mỗi ref update git append 1 dòng gắn nhãn hành động
+  (`pull: Fast-forward`, `merge …`, `rebase (finish): …`, `reset: …`). Khi
+  dòng cuối khớp `/^(pull|merge|rebase|reset)\b/i`, coi là batch-op git đã xác
+  nhận → gọi `notifyExternalBatch()` (bỏ âm thầm `heldWrites`, rebuild
+  baseline) nhưng **không** `clearPendingDiffs()`, vì các diff đang mở khác
+  không liên quan tới file bị pull. `commit`/`checkout` bị loại khỏi regex có
+  chủ đích (xem comment đầu `gitBranchWatcher.ts`). Caveat: format message
+  reflog là convention lâu năm của git, không phải API cam kết ổn định tuyệt
+  đối — đây là lưới xác nhận phụ, lưới chính vẫn là burst detection; nếu
+  message không khớp, hành vi rơi về đúng như trước khi có tính năng này.
+
 - **Chưa làm (vẫn tồn đọng):** watcher cho `.git/index`/`index.lock` (mở rộng
-  `gitBranchWatcher.ts`) để có tín hiệu xác nhận sớm hơn `HEAD` — hiện tại
-  hoàn toàn dựa vào xác nhận `HEAD` sẵn có, vốn luôn trễ hơn lúc file thật sự
-  bị ghi (xem phần đầu tài liệu). Nếu `burstDetectionHoldMs` không đủ dài so
-  với độ trễ xác nhận `HEAD` thực tế trên máy user (vd. checkout rất lớn),
-  hàng chờ sẽ hết giờ trước khi xác nhận tới và mở diff như thể không phải
-  git — không phải lỗi mới, chỉ là quay lại đúng hành vi trước khi có tính
-  năng này cho riêng những file đó.
+  `gitBranchWatcher.ts`) để có tín hiệu xác nhận sớm hơn `HEAD`/reflog — hiện
+  tại vẫn hoàn toàn dựa vào xác nhận `HEAD`/reflog sẵn có, vốn luôn trễ hơn
+  lúc file thật sự bị ghi (xem phần đầu tài liệu). Nếu `burstDetectionHoldMs`
+  không đủ dài so với độ trễ xác nhận thực tế trên máy user (vd. checkout/pull
+  rất lớn), hàng chờ sẽ hết giờ trước khi xác nhận tới và mở diff như thể
+  không phải git — không phải lỗi mới, chỉ là quay lại đúng hành vi trước khi
+  có tính năng này cho riêng những file đó.

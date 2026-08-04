@@ -6,10 +6,31 @@
  * ref khác / commit detached), clear toàn bộ pending diffs để snapshot cũ
  * không bị so sánh với working tree của branch khác.
  *
- * KHÔNG detect pull/rebase/reset trên cùng branch — những thao tác đó đổi
- * `refs/heads/<branch>` chứ không đổi HEAD. Giữ scope hẹp vì watch branch
- * ref cũng sẽ kích hoạt khi user `git commit`, làm mất pending state ngoài
- * ý muốn.
+ * KHÔNG dùng đường so-nội-dung-HEAD này cho pull/rebase/reset trên cùng
+ * branch — những thao tác đó đổi `refs/heads/<branch>` chứ không đổi nội
+ * dung HEAD (vẫn là `ref: refs/heads/<branch>`). Rebase là ngoại lệ tạm thời:
+ * HEAD có detach giữa chừng nhưng tự trả về đúng nội dung cũ trước khi debounce
+ * ở dưới kịp đọc, nên tự nhiên không bị coi nhầm là branch switch — nhưng
+ * cũng vì vậy không được xác nhận qua đường này.
+ *
+ * Để bắt được pull/merge/rebase/reset cùng branch, watcher này theo dõi thêm
+ * `.git/logs/HEAD` (reflog) — mỗi ref update git append 1 dòng gắn nhãn hành
+ * động (`pull: ...`, `merge ...`, `rebase (finish): ...`, `reset: ...`,
+ * `commit: ...`, `checkout: ...`). Khi dòng cuối khớp pull/merge/rebase/reset,
+ * coi là batch operation của git đã xác nhận — chỉ gọi
+ * `workspaceWatcher.notifyExternalBatch()` (bỏ âm thầm các write đang bị giữ
+ * vì burst detection, rebuild baseline) mà KHÔNG `clearPendingDiffs()`, vì
+ * pull/rebase/reset cùng branch không làm baseline của các diff đang mở khác
+ * (không liên quan) trở nên sai. `commit`/`checkout` bị loại khỏi regex này
+ * có chủ đích: `commit` không nên trigger gì (git add/commit không đổi
+ * working tree), `checkout` sang ref khác vẫn do đường so-nội-dung-HEAD ở
+ * trên xử lý (kèm `clearPendingDiffs()`), tránh 2 đường xử lý trùng nhau.
+ *
+ * Lưu ý: format message reflog là convention lâu năm của git, không phải API
+ * cam kết ổn định tuyệt đối. Vì vậy đây chỉ là lưới xác nhận PHỤ — lưới
+ * chính vẫn là burst detection (`WriteBurstMeter`); nếu message không khớp vì
+ * lý do gì đó, hành vi rơi về đúng như trước khi có tính năng này (mở diff
+ * sau khi hết `burstDetectionHoldMs`), không có gì vỡ.
  */
 
 import * as fs from 'fs';
@@ -20,11 +41,16 @@ import { WorkspaceWatcher } from './workspaceWatcher';
 
 const STORED_HEAD_KEY = 'ai-cli-diff.lastHeadByFolder';
 
+/** Nhãn hành động reflog coi là git batch-op cùng branch cần xác nhận (xem comment đầu file). */
+const REFLOG_CONFIRM_ACTION = /^(pull|merge|rebase|reset)\b/i;
+
 export class GitBranchWatcher {
   private disposables: vscode.Disposable[] = [];
   private fsWatchers: Map<string, fs.FSWatcher> = new Map();
   private headContents: Map<string, string> = new Map();
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private reflogWatchers: Map<string, fs.FSWatcher> = new Map();
+  private reflogDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(
     private readonly diffManager: DiffManager,
@@ -103,6 +129,19 @@ export class GitBranchWatcher {
     });
 
     this.fsWatchers.set(folderPath, watcher);
+
+    // Reflog (xem comment đầu file): repo mới chưa commit lần nào sẽ chưa có
+    // file này — bỏ qua, không coi là lỗi.
+    const reflogPath = path.join(path.dirname(gitHead), 'logs', 'HEAD');
+    if (fs.existsSync(reflogPath)) {
+      const reflogWatcher = fs.watch(path.dirname(reflogPath), () => {
+        this.onReflogChange(folderPath, reflogPath);
+      });
+      reflogWatcher.on('error', () => {
+        // Ignore — folder may have been removed
+      });
+      this.reflogWatchers.set(folderPath, reflogWatcher);
+    }
   }
 
   private unwatchRoot(folderPath: string): void {
@@ -119,6 +158,18 @@ export class GitBranchWatcher {
     }
 
     this.headContents.delete(folderPath);
+
+    const reflogWatcher = this.reflogWatchers.get(folderPath);
+    if (reflogWatcher) {
+      try { reflogWatcher.close(); } catch { /* ignore */ }
+      this.reflogWatchers.delete(folderPath);
+    }
+
+    const reflogTimer = this.reflogDebounceTimers.get(folderPath);
+    if (reflogTimer) {
+      clearTimeout(reflogTimer);
+      this.reflogDebounceTimers.delete(folderPath);
+    }
   }
 
   private onHeadChange(folderPath: string, gitHead: string): void {
@@ -148,6 +199,40 @@ export class GitBranchWatcher {
     this.debounceTimers.set(folderPath, timer);
   }
 
+  /**
+   * Đọc dòng cuối của reflog, xác nhận pull/merge/rebase/reset cùng branch
+   * (xem comment đầu file). Debounce riêng khỏi `onHeadChange` vì theo dõi
+   * file khác (`logs/HEAD` thay vì `HEAD`).
+   */
+  private onReflogChange(folderPath: string, reflogPath: string): void {
+    const existing = this.reflogDebounceTimers.get(folderPath);
+    if (existing) { clearTimeout(existing); }
+
+    const timer = setTimeout(() => {
+      this.reflogDebounceTimers.delete(folderPath);
+
+      let content: string;
+      try {
+        content = fs.readFileSync(reflogPath, 'utf8');
+      } catch {
+        return;
+      }
+
+      const lines = content.split('\n').filter(line => line.trim().length > 0);
+      const lastLine = lines[lines.length - 1];
+      if (!lastLine) { return; }
+
+      const tabIndex = lastLine.indexOf('\t');
+      const message = tabIndex >= 0 ? lastLine.slice(tabIndex + 1).trim() : '';
+      if (!REFLOG_CONFIRM_ACTION.test(message)) { return; }
+
+      // Chỉ xác nhận batch-op, KHÔNG clearPendingDiffs() — xem comment đầu file.
+      this.workspaceWatcher.notifyExternalBatch();
+    }, this.debounceMs);
+
+    this.reflogDebounceTimers.set(folderPath, timer);
+  }
+
   private async clearPendingDiffs(): Promise<void> {
     const count = this.diffManager.getPendingFiles().length;
     if (count === 0) { return; }
@@ -164,6 +249,12 @@ export class GitBranchWatcher {
 
     for (const watcher of this.fsWatchers.values()) { watcher.close(); }
     this.fsWatchers.clear();
+
+    for (const timer of this.reflogDebounceTimers.values()) { clearTimeout(timer); }
+    this.reflogDebounceTimers.clear();
+
+    for (const watcher of this.reflogWatchers.values()) { watcher.close(); }
+    this.reflogWatchers.clear();
 
     for (const d of this.disposables) { d.dispose(); }
     this.disposables = [];
