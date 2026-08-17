@@ -1,7 +1,7 @@
 # Bug #15 — Diff ít mà hiển thị thay cả file: điều tra đầy đủ
 
 > Issue: `#15 — diff ít mà thay cả file (diff sai)` · Người báo: konan-1947
-> Điều tra: 2026-08-16 → 2026-08-17 · Trạng thái: **đã vá** (§8.3), chờ kiểm thủ công (§9)
+> Điều tra: 2026-08-16 → 2026-08-17 · Trạng thái: **đã vá và đã kiểm chạy thật** (§8.3, §9.1)
 >
 > Tài liệu này thay thế bản ghi nhận triệu chứng ban đầu. Các giả thuyết đã được
 > kiểm chứng bằng đo đạc thật; phần nào bị bác bỏ vẫn được giữ lại kèm lý do.
@@ -356,6 +356,22 @@ toLf -> fromLf round-trip giữ nguyên byte: ok
 
 ---
 
+## 9.1. Kết quả kiểm chạy thật (2026-08-17)
+
+Kiểm bằng mắt trong VS Code với extension đã cài, không phải harness offline:
+
+| Ca | Kỳ vọng | Kết quả |
+| --- | --- | --- |
+| **Đường A** — công cụ ghi lại file bằng LF trong khi baseline là CRLF, kèm sửa 1 dòng | 1 hunk nhỏ | ✅ trước bản vá là 206 dòng đỏ/xanh |
+| **Đường B** — đổi EOL LF→CRLF (không đổi nội dung), lưu | **không** mở diff | ✅ không có tab nào |
+| **Đường B** — sau đó sửa đúng 1 dòng | 1 hunk nhỏ | ✅ `1 / 1`, 198 dòng còn lại trắng |
+| Hồi quy — đổi thật cả 206 dòng | vẫn hiện đủ cả 206 | ✅ |
+| Toàn vẹn — reject rồi đối chiếu byte | khôi phục byte-chuẩn, EOL nguyên vẹn | ✅ `CRLF=199, loneLF=0` |
+
+Đường B là đường khớp nhất với ảnh trong issue: Claude Code đã được đo là **giữ
+nguyên EOL** khi sửa file, nên bug không thể đến từ đường A. Repo bật
+`core.autocrlf=true` là đủ điều kiện để baseline trôi EOL.
+
 ## 9. Cách tái hiện
 
 Tài sản đã tạo sẵn trong `code_to_test/`:
@@ -410,7 +426,7 @@ Các script đo nằm ngoài repo (scratchpad). Cách dựng lại:
 
 ## 11. Việc còn mở
 
-- [ ] **Kiểm thủ công bản vá trong Extension Development Host theo §9** — chưa chạy.
+- [x] ~~Kiểm thủ công bản vá theo §9~~ — đã chạy, kết quả ở §9.1.
 - [ ] Đo xem Codex / Qwen có giữ EOL khi ghi file không (Claude đã xác nhận là có).
 - [x] ~~Quyết định điểm 4 §8.3: migrate snapshot cũ hay bỏ~~ — không cần nữa, xem §8.3.
 - [ ] Cân nhắc riêng việc đổi sang `LegacyLinesDiffComputer` vì độ bền (§7.3) —
