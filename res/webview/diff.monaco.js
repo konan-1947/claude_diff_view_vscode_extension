@@ -53,11 +53,15 @@
       filePath: null,
       originalContent: '',
       currentContent: '',
+      // `hunks` chỉ phục vụ decoration + view zone (một hunk = một cặp dòng đã
+      // căn nhau). Mọi thứ liên quan tới thao tác — hit-test, nút, phím tắt —
+      // đi qua `groups`, tức khối thay đổi liền kề trước khi bị tách để hiển thị.
       hunks: [],
-      hunkWidgets: [],
+      groups: [],
+      groupWidgets: [],
       decorationIds: [],
       viewZoneIds: [],
-      hoveredHunkIdx: -1,
+      hoveredGroupIdx: -1,
       didAutoReveal: false,
       currentTheme: null,
       inFlight: false,
@@ -88,26 +92,28 @@
       if (rejectBtn) { rejectBtn.disabled = value; }
     }
 
-    function currentHunkIdx() {
-      if (state.hoveredHunkIdx >= 0 && state.hoveredHunkIdx < state.hunks.length) {
-        return state.hoveredHunkIdx;
+    function currentGroupIdx() {
+      if (state.hoveredGroupIdx >= 0 && state.hoveredGroupIdx < state.groups.length) {
+        return state.hoveredGroupIdx;
       }
       const pos = state.editor && state.editor.getPosition();
       if (pos) {
-        const idx = findHunkIdxAtLine(pos.lineNumber);
+        const idx = findGroupIdxAtLine(pos.lineNumber);
         if (idx !== -1) { return idx; }
       }
-      return state.hunks.length > 0 ? 0 : -1;
+      return state.groups.length > 0 ? 0 : -1;
     }
 
+    // Pill đếm KHỐI thay đổi, không đếm hunk con: nó phải khớp với thứ mà F7 /
+    // Shift+F7 nhảy qua và thứ mà một cặp nút điều khiển.
     function updateHunkCounter() {
       const el = document.getElementById('hunk-counter');
       if (!el) { return; }
-      const total = state.hunks.length;
+      const total = state.groups.length;
       if (total === 0) {
         el.textContent = '0 / 0';
       } else {
-        const idx = currentHunkIdx();
+        const idx = currentGroupIdx();
         el.textContent = ((idx >= 0 ? idx + 1 : 1) + ' / ' + total);
       }
       const prev = document.getElementById('btn-prev-hunk');
@@ -165,11 +171,11 @@
     state.editor.onMouseMove((e) => {
       const line = e.target && e.target.position && e.target.position.lineNumber;
       if (!line) { return; }
-      const idx = findHunkIdxAtLine(line);
-      if (idx !== -1) { setHoveredHunk(idx); }
+      const idx = findGroupIdxAtLine(line);
+      if (idx !== -1) { setHoveredGroup(idx); }
     });
-    state.editor.onMouseLeave(() => { updateHoveredHunkFromCursor(); });
-    state.editor.onDidChangeCursorPosition(() => { updateHoveredHunkFromCursor(); });
+    state.editor.onMouseLeave(() => { updateHoveredGroupFromCursor(); });
+    state.editor.onDidChangeCursorPosition(() => { updateHoveredGroupFromCursor(); });
 
     registerActions();
 
@@ -223,6 +229,10 @@
       state.originalContent = msg.originalContent || '';
       state.currentContent = msg.currentContent || '';
       state.hunks = msg.hunks || [];
+      // Gán ngay cạnh `hunks` chứ không đợi tới lúc render: `maybeAutoReveal()`
+      // và `updateHunkCounter()` bên dưới cũng đọc `groups`, nên để hai thứ luôn
+      // được thay cùng lúc thì không thể có cửa sổ đọc phải group cũ.
+      state.groups = buildGroups(state.hunks);
 
       document.getElementById('toolbar-file').textContent = msg.filePath;
       applyNav(msg.nav);
@@ -249,7 +259,7 @@
       }
 
       renderDiffDecorations();
-      renderHunkWidgets();
+      renderGroupWidgets();
       maybeAutoReveal();
       updateHunkCounter();
       tlog('applySet render done');
@@ -353,93 +363,146 @@
       });
     }
 
-    function renderHunkWidgets() {
-      for (const w of state.hunkWidgets) {
+    /**
+     * Gom các hunk liên tiếp cùng `groupId` thành khối thay đổi liền kề ban đầu.
+     *
+     * Phía extension tách khối ra theo từng cặp dòng để dòng cũ render đúng ngay
+     * trên dòng mới (Pass 3 trong hunkCalculator.ts). Ở đây gom lại thành đơn vị
+     * thao tác — mỗi khối một cặp nút Accept/Reject — theo hai điều kiện cắt:
+     *
+     *   1. `groupId` đổi  -> đã có DÒNG TRẮNG (dòng không đổi) xen giữa.
+     *   2. hunk con này có DÒNG ĐỎ trong khi khối đang gom đã có DÒNG XANH
+     *      -> tức mọi chuyển tiếp xanh -> đỏ đều mở khối mới.
+     *
+     * Hệ quả của (2): mỗi dòng bị thay thế có nút riêng, còn dòng xanh thêm mới
+     * không có dòng đỏ đối ứng thì dính vào cặp ngay phía trên nó. Vài hình dạng
+     * đáng nhớ: `R G R G` -> 2 khối; `R G G` -> 1 khối; `R R G` -> 1 khối (lúc
+     * gặp đỏ thứ hai khối chưa có xanh nào); xoá thuần / thêm thuần -> 1 khối.
+     *
+     * Điều kiện (2) là PHÂN KỲ CÓ CHỦ ĐÍCH khỏi quy ước git: `git add -p` từ chối
+     * tách khi giữa hai thay đổi không có dòng context. Ở đây cố ý mịn hơn.
+     *
+     * Gom theo run liên tiếp chứ không gom bằng Map: thứ tự trên-xuống vốn đã
+     * được đảm bảo, và làm thế biến nó thành ràng buộc cấu trúc thay vì tình cờ.
+     * Vì mỗi khối vẫn là một dải con LIÊN TIẾP của cùng một groupId, nó vẫn liền
+     * kề trong cả hai không gian chỉ số — bất biến mà applyAccept/applyReject
+     * dựa vào để gộp cả khối bằng một slice().concat().
+     *
+     * Mọi thứ đường nóng cần đều được tính sẵn ở đây, để hover và cuộn chỉ còn
+     * là đọc field.
+     */
+    function buildGroups(hunks) {
+      const groups = [];
+      let cur = null;
+      for (const h of hunks) {
+        const sameBlock = cur
+          && cur.groupId === h.groupId
+          && !(h.removedLines.length > 0 && cur.addedTexts.length > 0);
+        if (!sameBlock) {
+          cur = {
+            // Không còn 1-1 với groupId: một groupId có thể sinh nhiều khối, do
+            // điều kiện cắt (2). Giữ lại để so ranh giới dòng trắng.
+            groupId: h.groupId,
+            hunks: [h],
+            // Của hunk con ĐẦU TIÊN, không phải min/max: hunk con chỉ-thêm và cặp
+            // ngay sau nó có thể trùng originalStart, nên max() không phải điểm cuối.
+            originalStart: h.originalStart,
+            modifiedStart: h.modifiedStart,
+            removedTexts: h.removedLines.map(r => r.text),
+            addedTexts: h.addedLines.map(a => a.text),
+          };
+          groups.push(cur);
+        } else {
+          cur.hunks.push(h);
+          for (const r of h.removedLines) { cur.removedTexts.push(r.text); }
+          for (const a of h.addedLines) { cur.addedTexts.push(a.text); }
+        }
+      }
+      for (const g of groups) {
+        g.removedCount = g.removedTexts.length;
+        g.addedCount = g.addedTexts.length;
+        g.anchorLine = Math.max(1, g.modifiedStart + 1);
+        if (g.addedCount > 0) {
+          // Các dòng thêm của một group luôn liền nhau kể từ modifiedStart, kể cả
+          // khi giữa group có hunk con chỉ-xoá (nó không sinh dòng phía modified).
+          g.startLine = g.modifiedStart + 1;
+          g.endLine = g.modifiedStart + g.addedCount;
+        } else {
+          g.startLine = g.modifiedStart;
+          g.endLine = Math.max(1, g.modifiedStart + 1);
+        }
+      }
+      return groups;
+    }
+
+    function renderGroupWidgets() {
+      for (const w of state.groupWidgets) {
         state.editor.removeOverlayWidget(w);
       }
-      state.hunkWidgets = [];
-      state.hoveredHunkIdx = -1;
+      state.groupWidgets = [];
+      state.hoveredGroupIdx = -1;
 
-      state.hunks.forEach((hunk, idx) => {
-        const dom = makeHunkBar(hunk, idx);
+      state.groups.forEach((group, idx) => {
+        const dom = makeGroupBar(group, idx);
         const widget = {
           _idx: idx,
-          _hunk: hunk,
+          _group: group,
           _dom: dom,
           getId: () => 'ai-cli-diff.hunkBar.' + idx,
           getDomNode: () => dom,
           getPosition: () => null,
         };
         state.editor.addOverlayWidget(widget);
-        state.hunkWidgets.push(widget);
+        state.groupWidgets.push(widget);
       });
       repositionVisibleBar();
-      updateHoveredHunkFromCursor();
+      updateHoveredGroupFromCursor();
     }
 
     /**
      * Chỉ định vị đúng thanh ĐANG hiện. Các thanh khác có opacity 0 nên định vị
-     * chúng là công vô ích — và đây là đường nóng: nó chạy trên mỗi sự kiện cuộn.
-     * Một hunk = một dòng nghĩa là file sửa 200 dòng có 200 thanh, tức 200 lần
-     * getBottomForLineNumber mỗi khung hình nếu quét hết.
+     * chúng là công vô ích — và đây là đường nóng: nó chạy trên mỗi sự kiện cuộn
+     * và mỗi lần layout đổi. Một khối thay đổi = một thanh, nhưng một file lớn
+     * vẫn có thể có hàng chục khối rời rạc.
      */
     function repositionVisibleBar() {
-      const w = state.hunkWidgets[state.hoveredHunkIdx];
+      const w = state.groupWidgets[state.hoveredGroupIdx];
       if (!w) { return; }
       const layout = state.editor.getLayoutInfo();
       const minimapW = (layout && layout.minimap && layout.minimap.minimapWidth) || 0;
       const scrollbarW = (layout && layout.verticalScrollbarWidth) || 0;
-      const top = state.editor.getBottomForLineNumber(hunkLastLine(w._hunk)) - state.editor.getScrollTop();
+      const top = state.editor.getBottomForLineNumber(w._group.endLine) - state.editor.getScrollTop();
       w._dom.style.top = top + 'px';
       w._dom.style.right = (minimapW + scrollbarW + 8) + 'px';
     }
 
-    /** 1-indexed Monaco line that the hunk widget anchors UNDER (its bottom edge). */
-    function hunkLastLine(hunk) {
-      if (hunk.addedLines.length > 0) {
-        return hunk.modifiedStart + hunk.addedLines.length;
-      }
-      return Math.max(1, hunk.modifiedStart + 1);
-    }
-
     function maybeAutoReveal() {
-      if (state.didAutoReveal || state.hunks.length === 0) { return; }
+      if (state.didAutoReveal || state.groups.length === 0) { return; }
       state.didAutoReveal = true;
-      const line = hunkAnchorLine(state.hunks[0]);
+      const line = state.groups[0].anchorLine;
       state.editor.revealLineInCenter(line);
       state.editor.setPosition({ lineNumber: line, column: 1 });
     }
 
-    /** 1-indexed Monaco line that the hunk widget anchors to. */
-    function hunkAnchorLine(hunk) {
-      return Math.max(1, hunk.modifiedStart + 1);
-    }
-
-    /** Hunk index covering modified-side `line` (1-indexed). */
-    function findHunkIdxAtLine(line) {
+    /** Group index covering modified-side `line` (1-indexed). */
+    function findGroupIdxAtLine(line) {
       if (!line || line < 1) { return -1; }
-      for (let i = 0; i < state.hunks.length; i++) {
-        const h = state.hunks[i];
-        if (h.addedLines.length > 0) {
-          const start = h.modifiedStart + 1;
-          const end = h.modifiedStart + h.addedLines.length;
-          if (line >= start && line <= end) { return i; }
-        } else {
-          // Pure deletion: anchor on the single line at modifiedStart+1.
-          if (line === h.modifiedStart + 1 || line === h.modifiedStart) { return i; }
-        }
+      for (let i = 0; i < state.groups.length; i++) {
+        const g = state.groups[i];
+        if (line >= g.startLine && line <= g.endLine) { return i; }
       }
       return -1;
     }
 
-    function setHoveredHunk(idx) {
-      if (idx === state.hoveredHunkIdx) { return; }
-      // Chỉ đụng vào thanh cũ và thanh mới, không quét cả danh sách: với "một
-      // hunk một dòng" thì danh sách có thể lên tới hàng trăm phần tử.
-      const prev = state.hunkWidgets[state.hoveredHunkIdx];
+    function setHoveredGroup(idx) {
+      if (idx === state.hoveredGroupIdx) { return; }
+      // Chỉ đụng vào thanh cũ và thanh mới, không quét cả danh sách: hàm này chạy
+      // từ onMouseMove, tức mỗi lần di chuột, nên chi phí phải là hằng số bất kể
+      // file có bao nhiêu khối thay đổi.
+      const prev = state.groupWidgets[state.hoveredGroupIdx];
       if (prev) { prev.getDomNode().classList.remove('visible'); }
-      state.hoveredHunkIdx = idx;
-      const next = state.hunkWidgets[idx];
+      state.hoveredGroupIdx = idx;
+      const next = state.groupWidgets[idx];
       if (next) {
         next.getDomNode().classList.add('visible');
         // Định vị ngay lúc hiện: repositionVisibleBar() chỉ xử lý thanh đang hiện,
@@ -449,35 +512,35 @@
       updateHunkCounter();
     }
 
-    function updateHoveredHunkFromCursor() {
+    function updateHoveredGroupFromCursor() {
       const pos = state.editor.getPosition();
-      setHoveredHunk(pos ? findHunkIdxAtLine(pos.lineNumber) : -1);
+      setHoveredGroup(pos ? findGroupIdxAtLine(pos.lineNumber) : -1);
     }
 
-    function makeHunkBar(hunk, idx) {
+    function makeGroupBar(group, idx) {
       const node = document.createElement('div');
       node.className = 'hunk-bar';
-      node.dataset.hunkIdx = String(idx);
-      node.addEventListener('mouseenter', () => setHoveredHunk(idx));
+      node.dataset.groupIdx = String(idx);
+      node.addEventListener('mouseenter', () => setHoveredGroup(idx));
 
       const acceptBtn = document.createElement('button');
       acceptBtn.className = 'hunk-btn accept';
       acceptBtn.textContent = 'Accept';
-      acceptBtn.title = 'Accept this hunk (Ctrl+Y)';
+      acceptBtn.title = 'Accept this change block (Ctrl+Y)';
       acceptBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); });
       acceptBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        acceptHunk(hunk);
+        acceptGroup(group);
       });
 
       const rejectBtn = document.createElement('button');
       rejectBtn.className = 'hunk-btn reject';
       rejectBtn.textContent = 'Reject';
-      rejectBtn.title = 'Reject this hunk (Ctrl+N)';
+      rejectBtn.title = 'Reject this change block (Ctrl+N)';
       rejectBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); });
       rejectBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        rejectHunk(hunk);
+        rejectGroup(group);
       });
 
       node.appendChild(acceptBtn);
@@ -485,16 +548,16 @@
       return node;
     }
 
-    function acceptHunk(hunk) {
+    function acceptGroup(group) {
       if (state.inFlight) { return; }
-      const { newOriginal, newCurrent } = applyAccept(hunk);
+      const { newOriginal, newCurrent } = applyAccept(group);
       setInFlight(true);
       vscodeApi.postMessage({ type: 'acceptHunk', newOriginal, newCurrent });
     }
 
-    function rejectHunk(hunk) {
+    function rejectGroup(group) {
       if (state.inFlight) { return; }
-      const { newOriginal, newCurrent } = applyReject(hunk);
+      const { newOriginal, newCurrent } = applyReject(group);
       setInFlight(true);
       vscodeApi.postMessage({ type: 'rejectHunk', newOriginal, newCurrent });
     }
@@ -505,8 +568,8 @@
         label: 'AI CLI Diff: Accept Current Hunk',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY],
         run: () => {
-          const h = findHunkAtCursor();
-          if (h) { acceptHunk(h); }
+          const g = findGroupAtCursor();
+          if (g) { acceptGroup(g); }
         },
       });
       state.editor.addAction({
@@ -514,8 +577,8 @@
         label: 'AI CLI Diff: Reject Current Hunk',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyN],
         run: () => {
-          const h = findHunkAtCursor();
-          if (h) { rejectHunk(h); }
+          const g = findGroupAtCursor();
+          if (g) { rejectGroup(g); }
         },
       });
       state.editor.addAction({
@@ -567,67 +630,74 @@
       });
     }
 
-    function findHunkAtCursor() {
+    function findGroupAtCursor() {
       const pos = state.editor.getPosition();
       if (!pos) { return null; }
-      const idx = findHunkIdxAtLine(pos.lineNumber);
-      if (idx !== -1) { return state.hunks[idx]; }
-      // Nearest hunk fallback.
+      const idx = findGroupIdxAtLine(pos.lineNumber);
+      if (idx !== -1) { return state.groups[idx]; }
+      // Nearest group fallback.
       let best = null;
       let bestDist = Infinity;
-      for (const h of state.hunks) {
-        const anchor = hunkAnchorLine(h);
-        const d = Math.abs(pos.lineNumber - anchor);
-        if (d < bestDist) { best = h; bestDist = d; }
+      for (const g of state.groups) {
+        const d = Math.abs(pos.lineNumber - g.anchorLine);
+        if (d < bestDist) { best = g; bestDist = d; }
       }
       return best;
     }
 
     function gotoHunk(direction) {
-      if (state.hunks.length === 0) { return; }
+      if (state.groups.length === 0) { return; }
       const pos = state.editor.getPosition();
       const line = pos ? pos.lineNumber : 1;
-      const sorted = state.hunks.slice().sort(
-        (a, b) => hunkAnchorLine(a) - hunkAnchorLine(b)
-      );
+      const sorted = state.groups.slice().sort((a, b) => a.anchorLine - b.anchorLine);
       let target = null;
       if (direction > 0) {
-        target = sorted.find(h => hunkAnchorLine(h) > line) || sorted[0];
+        target = sorted.find(g => g.anchorLine > line) || sorted[0];
       } else {
         for (let i = sorted.length - 1; i >= 0; i--) {
-          if (hunkAnchorLine(sorted[i]) < line) { target = sorted[i]; break; }
+          if (sorted[i].anchorLine < line) { target = sorted[i]; break; }
         }
         target = target || sorted[sorted.length - 1];
       }
       if (target) {
-        const targetLine = hunkAnchorLine(target);
-        state.editor.revealLineInCenter(targetLine);
-        state.editor.setPosition({ lineNumber: targetLine, column: 1 });
+        state.editor.revealLineInCenter(target.anchorLine);
+        state.editor.setPosition({ lineNumber: target.anchorLine, column: 1 });
       }
     }
 
     /**
-     * Accept hunk: bake modified slice INTO the original baseline.
-     * newOriginal: splice removedLines.length entries at originalStart, replace with addedLines text.
-     * newCurrent: unchanged.
+     * Accept cả khối: gộp phần modified VÀO baseline bên trái.
+     * newOriginal: thay `removedCount` dòng kể từ `originalStart` bằng `addedTexts`.
+     * newCurrent: không đổi.
+     *
+     * Một splice cho cả khối tương đương từng byte với splice của hunk cha trước
+     * khi Pass 3 tách — xem bất biến I2/C1/C2 trong hunkCalculator.ts. Không được
+     * lặp từng hunk con: splice đầu tiên sẽ dịch mọi chỉ số phía sau.
+     *
+     * Dùng slice().concat() chứ không phải splice(...spread): một khối có thể lớn
+     * bằng cả file, và spread hàng chục nghìn phần tử làm nổ giới hạn số đối số.
      */
-    function applyAccept(hunk) {
+    function applyAccept(group) {
       const origLines = state.originalContent.split('\n');
-      const insertText = hunk.addedLines.map(a => a.text);
-      origLines.splice(hunk.originalStart, hunk.removedLines.length, ...insertText);
-      return { newOriginal: origLines.join('\n'), newCurrent: state.currentContent };
+      const newOriginal = origLines
+        .slice(0, group.originalStart)
+        .concat(group.addedTexts, origLines.slice(group.originalStart + group.removedCount))
+        .join('\n');
+      return { newOriginal, newCurrent: state.currentContent };
     }
 
     /**
-     * Reject hunk: rollback modified slice back to original.
-     * newCurrent: splice addedLines.length entries at modifiedStart, replace with removedLines text.
-     * newOriginal: unchanged.
+     * Reject cả khối: trả phần modified về đúng nguyên bản.
+     * newCurrent: thay `addedCount` dòng kể từ `modifiedStart` bằng `removedTexts`.
+     * newOriginal: không đổi.
      */
-    function applyReject(hunk) {
+    function applyReject(group) {
       const modLines = state.currentContent.split('\n');
-      const insertText = hunk.removedLines.map(r => r.text);
-      modLines.splice(hunk.modifiedStart, hunk.addedLines.length, ...insertText);
-      return { newOriginal: state.originalContent, newCurrent: modLines.join('\n') };
+      const newCurrent = modLines
+        .slice(0, group.modifiedStart)
+        .concat(group.removedTexts, modLines.slice(group.modifiedStart + group.addedCount))
+        .join('\n');
+      return { newOriginal: state.originalContent, newCurrent };
     }
   });
 })();
