@@ -160,8 +160,8 @@
       }, 150);
     });
 
-    state.editor.onDidScrollChange(() => repositionAllBars());
-    state.editor.onDidLayoutChange(() => repositionAllBars());
+    state.editor.onDidScrollChange(() => repositionVisibleBar());
+    state.editor.onDidLayoutChange(() => repositionVisibleBar());
     state.editor.onMouseMove((e) => {
       const line = e.target && e.target.position && e.target.position.lineNumber;
       if (!line) { return; }
@@ -353,22 +353,25 @@
         state.editor.addOverlayWidget(widget);
         state.hunkWidgets.push(widget);
       });
-      repositionAllBars();
+      repositionVisibleBar();
       updateHoveredHunkFromCursor();
     }
 
-    function repositionAllBars() {
-      const scrollTop = state.editor.getScrollTop();
+    /**
+     * Chỉ định vị đúng thanh ĐANG hiện. Các thanh khác có opacity 0 nên định vị
+     * chúng là công vô ích — và đây là đường nóng: nó chạy trên mỗi sự kiện cuộn.
+     * Một hunk = một dòng nghĩa là file sửa 200 dòng có 200 thanh, tức 200 lần
+     * getBottomForLineNumber mỗi khung hình nếu quét hết.
+     */
+    function repositionVisibleBar() {
+      const w = state.hunkWidgets[state.hoveredHunkIdx];
+      if (!w) { return; }
       const layout = state.editor.getLayoutInfo();
       const minimapW = (layout && layout.minimap && layout.minimap.minimapWidth) || 0;
       const scrollbarW = (layout && layout.verticalScrollbarWidth) || 0;
-      const rightPx = minimapW + scrollbarW + 8;
-      for (const w of state.hunkWidgets) {
-        const lastLine = hunkLastLine(w._hunk);
-        const top = state.editor.getBottomForLineNumber(lastLine) - scrollTop;
-        w._dom.style.top = top + 'px';
-        w._dom.style.right = rightPx + 'px';
-      }
+      const top = state.editor.getBottomForLineNumber(hunkLastLine(w._hunk)) - state.editor.getScrollTop();
+      w._dom.style.top = top + 'px';
+      w._dom.style.right = (minimapW + scrollbarW + 8) + 'px';
     }
 
     /** 1-indexed Monaco line that the hunk widget anchors UNDER (its bottom edge). */
@@ -411,12 +414,18 @@
 
     function setHoveredHunk(idx) {
       if (idx === state.hoveredHunkIdx) { return; }
+      // Chỉ đụng vào thanh cũ và thanh mới, không quét cả danh sách: với "một
+      // hunk một dòng" thì danh sách có thể lên tới hàng trăm phần tử.
+      const prev = state.hunkWidgets[state.hoveredHunkIdx];
+      if (prev) { prev.getDomNode().classList.remove('visible'); }
       state.hoveredHunkIdx = idx;
-      state.hunkWidgets.forEach((w, i) => {
-        const dom = w.getDomNode();
-        if (i === idx) { dom.classList.add('visible'); }
-        else { dom.classList.remove('visible'); }
-      });
+      const next = state.hunkWidgets[idx];
+      if (next) {
+        next.getDomNode().classList.add('visible');
+        // Định vị ngay lúc hiện: repositionVisibleBar() chỉ xử lý thanh đang hiện,
+        // nên thanh vừa bật lên sẽ chưa có toạ độ nếu không gọi ở đây.
+        repositionVisibleBar();
+      }
       updateHunkCounter();
     }
 

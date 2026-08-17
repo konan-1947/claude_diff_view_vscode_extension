@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
 import { PENDING_FILES_CSS } from './pendingFilesPage';
-import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
+import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 
 interface FontOption {
   label: string;
@@ -699,6 +699,25 @@ ${FONT_OPTIONS.map((f) => {
           time, so a real git checkout never flashes a diff tab.
         </div>
 
+        <div class="field">
+          <label for="f-max-file-lines">Max file lines</label>
+          <input id="f-max-file-lines" type="number" min="0" max="200000" step="500">
+        </div>
+        <div class="setting-help">
+          Files longer than this are ignored completely — no baseline is kept and no diff tab
+          ever opens for them. <strong>0 turns the limit off.</strong>
+          <br><br>
+          Why there is a limit: diff cost grows with the <em>square</em> of how many lines
+          differ, so a large file that gets largely rewritten can block VS Code for seconds.
+          Files that big are also almost always generated code, bundles or lock files rather
+          than something you review hunk by hunk.
+          <br><br>
+          Why 5000: measured across microsoft/vscode, 99.8% of source files are under it
+          (median ~112 lines, p99 ~1980). Raise it if you genuinely review very large
+          hand-written files — the TypeScript compiler's <code>checker.ts</code> is 54,433
+          lines — and accept that opening such a diff may stall the editor.
+        </div>
+
         <div class="actions">
           <button id="btn-reset" class="btn btn-secondary" type="button">Reset</button>
           <button id="btn-apply" class="btn btn-primary" type="button">Apply</button>
@@ -747,7 +766,7 @@ ${FONT_OPTIONS.map((f) => {
         return;
       }
 
-      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS })};
+      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS })};
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
       const termHost = document.getElementById('term-host');
@@ -1208,6 +1227,7 @@ ${FONT_OPTIONS.map((f) => {
       const fBurstWindow = document.getElementById('f-burst-window');
       const fBurstThreshold = document.getElementById('f-burst-threshold');
       const fBurstHold = document.getElementById('f-burst-hold');
+      const fMaxFileLines = document.getElementById('f-max-file-lines');
       const fileExtBody = document.getElementById('file-ext-body');
       const btnExtNew = document.getElementById('btn-ext-new');
       const btnExtEdit = document.getElementById('btn-ext-edit');
@@ -1318,6 +1338,7 @@ ${FONT_OPTIONS.map((f) => {
         fBurstWindow.value = String(s.burstDetectionWindowMs);
         fBurstThreshold.value = String(s.burstDetectionThreshold);
         fBurstHold.value = String(s.burstDetectionHoldMs);
+        fMaxFileLines.value = String(s.maxFileLines);
         toggleCustomRows();
       }
 
@@ -1331,6 +1352,7 @@ ${FONT_OPTIONS.map((f) => {
         const burstWindow = parseInt(fBurstWindow.value, 10);
         const burstThreshold = parseInt(fBurstThreshold.value, 10);
         const burstHold = parseInt(fBurstHold.value, 10);
+        const maxFileLines = parseInt(fMaxFileLines.value, 10);
         return {
           fontFamily: fFontFamily.value.trim() || DEFAULTS.fontFamily,
           fontSize: isFinite(size) ? Math.min(32, Math.max(6, size)) : DEFAULTS.fontSize,
@@ -1348,6 +1370,8 @@ ${FONT_OPTIONS.map((f) => {
           burstDetectionWindowMs: isFinite(burstWindow) ? Math.min(5000, Math.max(50, burstWindow)) : DEFAULTS.burstDetectionWindowMs,
           burstDetectionThreshold: isFinite(burstThreshold) ? Math.min(500, Math.max(2, burstThreshold)) : DEFAULTS.burstDetectionThreshold,
           burstDetectionHoldMs: isFinite(burstHold) ? Math.min(10000, Math.max(500, burstHold)) : DEFAULTS.burstDetectionHoldMs,
+          // 0 = tắt giới hạn, nên chặn dưới là 0 chứ không phải một mức tối thiểu.
+          maxFileLines: isFinite(maxFileLines) ? Math.min(200000, Math.max(0, maxFileLines)) : DEFAULTS.maxFileLines,
         };
       }
 

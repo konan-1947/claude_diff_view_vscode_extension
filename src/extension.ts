@@ -4,6 +4,7 @@ import { DiffEditorProvider, DIFF_EDITOR_VIEW_TYPE } from './diff/diffWebviewPan
 import { IAiRunner } from './runner/aiRunner';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { refreshTextFileRules } from './watcher/fileSnapshotStore';
+import { refreshFileSizeLimit } from './watcher/fileSizeLimit';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
@@ -12,6 +13,7 @@ import { TerminalPanelProvider } from './terminal/terminalPanel';
 
 export function activate(context: vscode.ExtensionContext): void {
   refreshTextFileRules();
+  refreshFileSizeLimit();
 
   const diffManager       = new DiffManager(context);
   const workspaceWatcher  = new WorkspaceWatcher(diffManager);
@@ -51,6 +53,9 @@ export function activate(context: vscode.ExtensionContext): void {
           e.affectsConfiguration('ai-cli-diff-view.supportedFilenames') ||
           e.affectsConfiguration('ai-cli-diff-view.supportedFilenamePatterns')) {
         refreshTextFileRules();
+      }
+      if (e.affectsConfiguration('ai-cli-diff-view.maxFileLines')) {
+        refreshFileSizeLimit();
       }
     })
   );

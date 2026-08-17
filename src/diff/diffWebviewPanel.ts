@@ -11,6 +11,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from './diffManager';
 import { calculateHunks } from './hunkCalculator';
+import { fromLf, toLf } from './eol';
 
 export const DIFF_EDITOR_VIEW_TYPE = 'ai-cli-diff-view.diffEditor';
 
@@ -66,14 +67,18 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
         webviewPanel.dispose();
         return;
       }
-      const currentContent = document.getText();
-      const hunks = calculateHunks(snapshot, currentContent);
+      // Webview sống hoàn toàn trong LF: nó splice/join lại nội dung bằng '\n'
+      // (diff.monaco.js) rồi gửi ngược về, nên hai vế phải cùng ở LF thuần.
+      // EOL thật được khôi phục ở applyModifiedEdit() / DiffManager.writeFile().
+      const originalContent = toLf(snapshot);
+      const currentContent = toLf(document.getText());
+      const hunks = calculateHunks(originalContent, currentContent);
       const nav = this.computeNav(filePath);
       void webviewPanel.webview.postMessage({
         type: 'set',
         filePath,
         language: detectLanguageId(filePath),
-        originalContent: snapshot,
+        originalContent,
         currentContent,
         hunks,
         theme: currentMonacoTheme(),
@@ -192,13 +197,19 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private async applyModifiedEdit(document: vscode.TextDocument, newCurrent: string): Promise<void> {
-    if (document.getText() === newCurrent) { return; }
+    // newCurrent từ webview luôn ở LF -> khôi phục EOL của document trước khi so
+    // sánh lẫn khi ghi, nếu không file CRLF sẽ bị viết lại thành LF.
+    const expanded = fromLf(
+      newCurrent,
+      document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
+    );
+    if (document.getText() === expanded) { return; }
     const edit = new vscode.WorkspaceEdit();
     const fullRange = new vscode.Range(
       new vscode.Position(0, 0),
       document.lineAt(document.lineCount - 1).range.end
     );
-    edit.replace(document.uri, fullRange, newCurrent);
+    edit.replace(document.uri, fullRange, expanded);
     await vscode.workspace.applyEdit(edit);
   }
 

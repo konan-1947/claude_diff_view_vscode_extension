@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
-  "version": "3.4.2",
+  "version": "3.5.0",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
@@ -60,6 +60,12 @@
             "type": "string"
           },
           "description": "Additional filename glob patterns that AI CLI Diff View should treat as text files. Patterns match only the basename and support * and ? wildcards."
+        },
+        "ai-cli-diff-view.maxFileLines": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 0,
+          "markdownDescription": "Advanced: ignore files longer than this many lines — no baseline is kept and no diff tab ever opens for them. Set to `0` to disable the limit.\n\nDiff cost grows with the **square** of how many lines differ, so a large file that gets largely rewritten can block VS Code for seconds. Files that big are also almost always generated code, bundles or lock files rather than something reviewed hunk by hunk.\n\nWhy 5000: measured across `microsoft/vscode`, 99.8% of source files fall under it (median ~112 lines, p99 ~1980). Raise it if you genuinely review very large hand-written files — the TypeScript compiler's `checker.ts` is 54,433 lines — and accept that opening such a diff may stall the editor."
         },
         "ai-cli-diff-view.burstDetectionEnabled": {
           "type": "boolean",
