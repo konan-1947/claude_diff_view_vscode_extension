@@ -16,6 +16,7 @@ import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
 import { FileSnapshotStore, isTextFile } from './fileSnapshotStore';
 import { isExcludedPathSegment } from './pathExclusions';
+import { exceedsLineLimit } from './fileSizeLimit';
 import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
 
 export class WorkspaceWatcher {
@@ -129,7 +130,16 @@ export class WorkspaceWatcher {
   private watchVscodeEvents(): void {
     const d = vscode.workspace.onDidSaveTextDocument((doc) => {
       const filePath = this.normalizePath(doc.uri.fsPath);
-      this.snapshots.set(filePath, doc.getText());
+      // File quá lớn thì không giữ baseline — nhưng phải ĐÁNH DẤU, không chỉ bỏ
+      // qua: nếu sau này nó tụt xuống dưới ngưỡng, "không có baseline" sẽ bị hiểu
+      // là file mới và Revert all sẽ xoá mất file. Vẫn ghi nhận VS Code vừa lưu
+      // để fs.watch không hiểu nhầm đây là external write.
+      const text = doc.getText();
+      if (exceedsLineLimit(text)) {
+        this.snapshots.markSizeSkipped(filePath);
+      } else {
+        this.snapshots.set(filePath, text);
+      }
       this.savedFilesByVsCode.set(filePath, Date.now());
       this.pruneStaleMapEntries();
     });
@@ -231,6 +241,14 @@ export class WorkspaceWatcher {
 
         const newContentRaw = fs.readFileSync(absPath, 'utf8');
 
+        // File vượt giới hạn số dòng -> coi như không tồn tại với extension:
+        // không giữ baseline, không mở diff. Xoá cả baseline cũ phòng khi file
+        // vừa vượt ngưỡng (hoặc user vừa hạ setting xuống).
+        if (exceedsLineLimit(newContentRaw)) {
+          this.snapshots.markSizeSkipped(absPath);
+          return;
+        }
+
         // Trong window external batch (vd: git checkout): chỉ refresh baseline,
         // không tạo diff. Tránh việc so working tree mới với baseline branch cũ.
         if (this.isSuppressed()) {
@@ -245,13 +263,25 @@ export class WorkspaceWatcher {
 
         if (oldContent === undefined) {
           this.snapshots.set(absPath, newContentRaw);
+          // File từng bị bỏ qua vì quá lớn và giờ vừa lọt xuống dưới ngưỡng:
+          // nó KHÔNG phải file mới. Không có baseline cũ để so, nên chỉ nhận nội
+          // dung hiện tại làm baseline rồi thôi. Mở diff ở đây sẽ hiện cả file là
+          // "thêm mới", và Revert all trên diff đó sẽ xoá mất file.
+          if (this.snapshots.consumeSizeSkipped(absPath)) { return; }
           if (newContent.trim()) {
             this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
           }
           return;
         }
 
-        if (oldContent === newContent) { return; }
+        if (oldContent === newContent) {
+          // normalizeContent() bỏ qua EOL, nên nhánh này còn nuốt cả trường hợp
+          // file chỉ đổi CRLF <-> LF. Phải refresh baseline raw trước khi thoát,
+          // nếu không snapshot giữ EOL cũ vĩnh viễn và lần sửa 1 dòng kế tiếp sẽ
+          // bị so lệch EOL -> diff phủ cả file (bug #15).
+          this.snapshots.set(absPath, newContentRaw);
+          return;
+        }
 
         // Trước khi trigger diff mới, cập nhật baseline vào snapshot store của watcher
         // để lần save kế tiếp không bị trigger lại.

@@ -14,8 +14,11 @@ import {
   BurstDetectionSettings,
   CursorStyle,
   DEFAULT_BURST_DETECTION_SETTINGS,
+  DEFAULT_FILE_LIMIT_SETTINGS,
   DEFAULT_SETTINGS,
   DEFAULT_SOUND_NOTIFICATION_SETTINGS,
+  FileLimitSettings,
+  MAX_FILE_LINES_CEILING,
   IncomingMessage,
   SoundNotificationSettings,
   TerminalSettings,
@@ -203,7 +206,31 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       supportedFileExtensions: this.loadSupportedFileExtensions(),
       ...this.loadBurstDetectionSettings(),
       ...this.loadSoundNotificationSettings(),
+      ...this.loadFileLimitSettings(),
     };
+  }
+
+  private loadFileLimitSettings(): FileLimitSettings {
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    const value = config.get<number>('maxFileLines', DEFAULT_FILE_LIMIT_SETTINGS.maxFileLines);
+    return {
+      maxFileLines: Number.isFinite(value)
+        ? Math.min(MAX_FILE_LINES_CEILING, Math.max(0, Math.floor(value)))
+        : DEFAULT_FILE_LIMIT_SETTINGS.maxFileLines,
+    };
+  }
+
+  private async saveFileLimitSettings(incoming: Partial<FileLimitSettings>): Promise<void> {
+    const next = this.loadFileLimitSettings();
+    const value = incoming.maxFileLines;
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    await config.update(
+      'maxFileLines',
+      typeof value === 'number' && Number.isFinite(value)
+        ? Math.min(MAX_FILE_LINES_CEILING, Math.max(0, Math.floor(value)))
+        : next.maxFileLines,
+      vscode.ConfigurationTarget.Global
+    );
   }
 
   private loadSoundNotificationSettings(): SoundNotificationSettings {
@@ -471,6 +498,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.saveSupportedFileExtensions(incoming.supportedFileExtensions),
             this.saveBurstDetectionSettings(incoming),
             this.saveSoundNotificationSettings(incoming),
+            this.saveFileLimitSettings(incoming),
           ]).then(() => {
             this.view?.webview.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           });

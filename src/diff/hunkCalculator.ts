@@ -156,8 +156,27 @@ export function calculateHunks(
   originalContent: string,
   modifiedContent: string
 ): Hunk[] {
-  const origLines = originalContent.split('\n');
-  const modLines = modifiedContent.split('\n');
+  // Cắt dòng bằng /\r?\n/ chứ không phải '\n': với split('\n') thì `\r` của file
+  // CRLF còn dính đuôi mỗi dòng, và khi hai vế lệch EOL thì 100% số dòng "khác
+  // nhau" -> diff phủ cả file (bug #15). Số phần tử mảng không đổi nên toàn bộ
+  // logic chỉ số dòng bên dưới giữ nguyên; chỉ text trong hunk là không còn mang
+  // ký tự EOL. Caller vẫn nên `toLf()` trước (xem eol.ts) — đây là lớp phòng thủ.
+  const origLines = originalContent.split(/\r?\n/);
+  const modLines = modifiedContent.split(/\r?\n/);
+
+  // Nội dung kết thúc bằng newline sinh ra một phần tử rỗng ở cuối mảng. Nó
+  // giống hệt nhau ở hai bên nên không mang thông tin gì — nhưng Myers có thể
+  // đem nó khớp với một DÒNG TRỐNG nằm giữa file bên kia. Cặp khớp đó hợp lệ về
+  // edit distance nhưng vô nghĩa về nội dung, và nó cắt đôi một khối thay đổi
+  // liền mạch (vd: đổi cả 200 dòng ra "-9 +200" rồi "-191 +0" thay vì "-200 +200").
+  // Bỏ nó đi khi CẢ HAI bên đều có; chỉ một bên có nghĩa là newline cuối vừa
+  // được thêm/bớt — đó là thay đổi thật, phải giữ lại để diff nhìn thấy.
+  const lastOrig = origLines.length - 1;
+  const lastMod = modLines.length - 1;
+  if (lastOrig >= 0 && lastMod >= 0 && origLines[lastOrig] === '' && modLines[lastMod] === '') {
+    origLines.pop();
+    modLines.pop();
+  }
 
   const ops = computeLineDiff(origLines, modLines);
 
@@ -255,5 +274,39 @@ export function calculateHunks(
     modOffset += hunk.removedLines.length - hunk.addedLines.length;
   }
 
-  return hunks;
+  // ------------------------------------------------------------------
+  // Pass 3: tách khối "sửa tại chỗ" thành từng cặp dòng
+  // ------------------------------------------------------------------
+  return hunks.flatMap(splitInPlaceEdit);
+}
+
+/**
+ * Một hunk có SỐ DÒNG XOÁ BẰNG SỐ DÒNG THÊM là dấu hiệu của "sửa tại chỗ":
+ * `removedLines[i]` thật sự là bản cũ của `addedLines[i]`. Tách nó thành từng
+ * cặp một dòng, để mỗi dòng sửa được vẽ liền kề bản cũ của nó (đỏ ngay trên
+ * xanh) và có nút accept/reject riêng.
+ *
+ * Lệch số dòng nghĩa là có chèn hoặc xoá thêm, và chỉ nhìn số thứ tự thì không
+ * biết dòng nào ứng dòng nào — khi đó giữ nguyên nguyên khối.
+ *
+ * Chạy SAU hai pass hiệu chỉnh offset là an toàn: hunk cân bằng đóng góp 0 vào
+ * độ lệch dòng, nên tách hay không cũng cho cùng kết quả hiệu chỉnh.
+ */
+function splitInPlaceEdit(hunk: Hunk): Hunk[] {
+  const n = hunk.removedLines.length;
+  if (n < 2 || n !== hunk.addedLines.length) { return [hunk]; }
+
+  const out: Hunk[] = [];
+  for (let i = 0; i < n; i++) {
+    const removed = hunk.removedLines[i]!;
+    const added = hunk.addedLines[i]!;
+    out.push({
+      id: makeHunkId(),
+      modifiedStart: added.modifiedLineIndex,
+      originalStart: removed.originalLineIndex,
+      removedLines: [removed],
+      addedLines: [added],
+    });
+  }
+  return out;
 }

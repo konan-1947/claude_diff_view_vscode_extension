@@ -100,13 +100,14 @@ Pending-file navigation logic lives in `src/diff/navigationManager.ts`, reachabl
 | `ai-cli-diff-view.supportedFileExtensions` | Extra extensions to treat as text (dot optional) |
 | `ai-cli-diff-view.supportedFilenames` | Extra exact filenames to treat as text |
 | `ai-cli-diff-view.supportedFilenamePatterns` | Extra basename globs (`*`, `?`) to treat as text |
+| `ai-cli-diff-view.maxFileLines` | Advanced: ignore files above this many lines — no baseline, no diff (default 5000; `0` disables). Enforced in `src/watcher/fileSizeLimit.ts`, applied by `fileSnapshotStore.snapshotDir()` and both write paths in `workspaceWatcher`. Skipped files are recorded in `FileSnapshotStore.sizeSkipped` so that one later dropping below the limit is not mistaken for a brand-new file (which would make Revert all delete it) |
 | `ai-cli-diff-view.burstDetectionEnabled` | Advanced: hold files beyond the burst threshold to confirm a git branch change before opening their diff, instead of opening immediately (see `docs/GIT_VS_AI_EDIT_DETECTION.md`) |
 | `ai-cli-diff-view.burstDetectionWindowMs` | Advanced: sliding window (ms) used to count file changes for burst detection (default 300) |
 | `ai-cli-diff-view.burstDetectionThreshold` | Advanced: number of distinct files changed within the window that counts as a burst (default 8) |
 | `ai-cli-diff-view.burstDetectionHoldMs` | Advanced: how long (ms) to hold burst-threshold-exceeding files before opening their diff if no git branch change is confirmed (default 2000) |
 | `ai-cli-diff-view.soundNotificationsEnabled` | Play a sound when Claude finishes a turn or needs input (Windows only, default off) — unrelated to diff detection |
 
-The four burst-detection settings and the sound-notification toggle are all also editable via the terminal panel's Settings popover (`src/terminal/terminalHtml.ts`) — burst detection under "Advanced", sound notifications in the general section — backed by the same `ai-cli-diff-view.*` configuration, not a separate storage. `.git/index`-based early confirmation is a known gap — the hold mechanism currently relies solely on `GitBranchWatcher`'s existing `HEAD`-change confirmation (see `docs/GIT_VS_AI_EDIT_DETECTION.md`).
+The four burst-detection settings, `maxFileLines`, and the sound-notification toggle are all also editable via the terminal panel's Settings popover (`src/terminal/terminalHtml.ts`) — burst detection and `maxFileLines` under "Advanced", sound notifications in the general section — backed by the same `ai-cli-diff-view.*` configuration, not a separate storage. `.git/index`-based early confirmation is a known gap — the hold mechanism currently relies solely on `GitBranchWatcher`'s existing `HEAD`-change confirmation (see `docs/GIT_VS_AI_EDIT_DETECTION.md`).
 
 ## Registered Commands and Keybindings
 

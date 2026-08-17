@@ -141,6 +141,10 @@ body {
  * contentLeft as real editor lines, so leaving the text flush-left keeps the
  * red (deleted) text aligned in the same column as the green (added) text.
  * The red background wash + red text color are enough to mark it as removed. */
+/* font-family / font-size / line-height / tab-size được set bằng JS từ fontInfo
+ * thật của editor (xem renderDiffDecorations) — chiều cao view zone tính theo
+ * lineHeight của Monaco nên nội dung phải khớp chính xác, không đoán qua biến CSS.
+ * Các giá trị dưới đây chỉ là dự phòng nếu fontInfo chưa sẵn sàng. */
 .diff-removed-zone {
   background-color: rgba(248, 81, 73, 0.12);
   font-family: var(--vscode-editor-font-family, var(--vscode-font-family));

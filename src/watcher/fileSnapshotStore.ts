@@ -9,10 +9,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { isExcludedPathSegment } from './pathExclusions';
+import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 
 export class FileSnapshotStore {
   /** filePath -> nội dung baseline trước khi external process ghi đè */
   private snapshots = new Map<string, string>();
+  /**
+   * Các file bị bỏ qua vì vượt giới hạn kích thước.
+   *
+   * Cần nhớ riêng, vì "không có baseline" một mình là mơ hồ: nó vừa có nghĩa
+   * file mới toanh, vừa có nghĩa file cũ nhưng từng bị bỏ qua. Phân biệt sai thì
+   * WorkspaceWatcher sẽ gắn `fileExistedBefore = false`, và khi đó Revert all
+   * sẽ XOÁ file thay vì khôi phục nội dung.
+   */
+  private sizeSkipped = new Set<string>();
 
   private normalizePath(p: string): string {
     const fsPath = vscode.Uri.file(path.resolve(p)).fsPath;
@@ -31,9 +41,27 @@ export class FileSnapshotStore {
     return this.snapshots.has(this.normalizePath(filePath));
   }
 
+  /** Bỏ theo dõi 1 file vì nó vượt giới hạn kích thước. */
+  markSizeSkipped(filePath: string): void {
+    const key = this.normalizePath(filePath);
+    this.snapshots.delete(key);
+    this.sizeSkipped.add(key);
+  }
+
+  /**
+   * File này từng bị bỏ qua vì kích thước? Dùng để phân biệt "file mới" với
+   * "file cũ vừa lọt xuống dưới ngưỡng". Trả về true thì đồng thời xoá cờ, vì
+   * caller sẽ dựng lại baseline ngay sau đó.
+   */
+  consumeSizeSkipped(filePath: string): boolean {
+    const key = this.normalizePath(filePath);
+    return this.sizeSkipped.delete(key);
+  }
+
   /** Xoá toàn bộ baseline trong RAM. Dùng khi branch switch để rebuild lại từ disk. */
   clear(): void {
     this.snapshots.clear();
+    this.sizeSkipped.clear();
   }
 
   /**
@@ -63,7 +91,16 @@ export class FileSnapshotStore {
         this.snapshotDir(fullPath, depth + 1);
       } else if (entry.isFile() && isTextFile(entry.name)) {
         try {
+          // Lọc thô theo byte trước, để file vài MB không bị đọc lên chỉ để loại.
+          if (exceedsSizeLimitByBytes(fs.statSync(fullPath).size)) {
+            this.markSizeSkipped(fullPath);
+            continue;
+          }
           const content = fs.readFileSync(fullPath, 'utf8');
+          if (exceedsLineLimit(content)) {
+            this.markSizeSkipped(fullPath);
+            continue;
+          }
           this.snapshots.set(this.normalizePath(fullPath), content);
         } catch {
           // binary hoặc file đang bị lock — bỏ qua

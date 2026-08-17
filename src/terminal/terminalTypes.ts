@@ -27,8 +27,13 @@ export interface SoundNotificationSettings {
   soundNotificationsEnabled: boolean;
 }
 
+/** Giới hạn kích thước file được theo dõi. Xem `src/watcher/fileSizeLimit.ts`. */
+export interface FileLimitSettings {
+  maxFileLines: number;
+}
+
 export interface TerminalSettingsPayload
-  extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings {
+  extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings, FileLimitSettings {
   supportedFileExtensions: string[];
 }
 
@@ -42,6 +47,13 @@ export const DEFAULT_BURST_DETECTION_SETTINGS: BurstDetectionSettings = {
 export const DEFAULT_SOUND_NOTIFICATION_SETTINGS: SoundNotificationSettings = {
   soundNotificationsEnabled: false,
 };
+
+export const DEFAULT_FILE_LIMIT_SETTINGS: FileLimitSettings = {
+  maxFileLines: 5000,
+};
+
+/** 0 = tắt giới hạn. Trần trên chỉ để chặn nhập nhầm, không phải khuyến nghị. */
+export const MAX_FILE_LINES_CEILING = 200000;
 
 export type IncomingMessage =
   | { type: 'ready' }

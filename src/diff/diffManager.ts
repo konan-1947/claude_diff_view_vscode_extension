@@ -10,6 +10,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { calculateHunks } from './hunkCalculator';
+import { detectEol, fromLf, toLf } from './eol';
+import { exceedsLineLimit } from '../watcher/fileSizeLimit';
 import { DIFF_EDITOR_VIEW_TYPE } from './diffWebviewPanel';
 import { SnapshotStore, SnapshotState } from './snapshotStore';
 
@@ -73,6 +75,10 @@ export class DiffManager {
     const fileExistedBefore = fs.existsSync(absPath);
     try {
       const content = fs.readFileSync(absPath, 'utf8');
+      // Đường built-in runner cũng phải tôn trọng maxFileLines, nếu không setting
+      // chỉ đúng với đường workspace watcher. Không snapshot -> openDiff() thoát
+      // sớm vì không có snapshot -> file lớn không mở diff, đúng như mong đợi.
+      if (exceedsLineLimit(content)) { return; }
       this.snapshots.set(absPath, { content, fileExistedBefore });
     } catch {
       this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
@@ -92,7 +98,10 @@ export class DiffManager {
       return;
     }
 
-    const hunks = calculateHunks(snapshot.content, modifiedContent);
+    // So trên LF thuần: thay đổi thuần EOL (git checkout, đổi setting files.eol,
+    // formatter...) cho ra 0 hunk và rơi vào nhánh dọn dẹp bên dưới, thay vì mở
+    // một diff phủ cả file.
+    const hunks = calculateHunks(toLf(snapshot.content), toLf(modifiedContent));
     if (hunks.length === 0) {
       this.snapshots.delete(absPath);
       void this.store.save(this.snapshots);
@@ -424,7 +433,12 @@ export class DiffManager {
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return; }
 
-    this.snapshots.set(absPath, { ...snapshot, content: newOriginal });
+    // newOriginal từ webview ở LF -> trả về đúng EOL của snapshot cũ, để snapshot
+    // luôn giữ nguyên dạng byte gốc của file và revert() khôi phục chuẩn xác.
+    this.snapshots.set(absPath, {
+      ...snapshot,
+      content: fromLf(newOriginal, detectEol(snapshot.content)),
+    });
     void this.store.save(this.snapshots);
 
     if (newOriginal === newCurrent) {
@@ -447,7 +461,8 @@ export class DiffManager {
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return; }
 
-    await this.writeFile(absPath, newCurrent);
+    // newCurrent từ webview ở LF -> writeFile khôi phục EOL thật của file.
+    await this.writeFile(absPath, newCurrent, { fromLf: true });
 
     if (newOriginal === newCurrent) {
       if (!snapshot.fileExistedBefore && newCurrent.length === 0) {
@@ -471,20 +486,47 @@ export class DiffManager {
     this._onDidChangeDiffs.fire();
   }
 
-  private async writeFile(absPath: string, content: string): Promise<void> {
+  /**
+   * @param opts.fromLf `content` đang ở LF thuần (đến từ webview) và cần khôi phục
+   *   EOL thật của file trước khi ghi. Bỏ trống khi content đã đúng dạng byte gốc
+   *   (vd: revert() ghi thẳng snapshot).
+   */
+  private async writeFile(
+    absPath: string,
+    content: string,
+    opts?: { fromLf?: boolean }
+  ): Promise<void> {
     const uri = vscode.Uri.file(absPath);
     const doc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === absPath);
+
+    let payload = content;
+    if (opts?.fromLf) {
+      // Document đang mở là nguồn đáng tin nhất — đó chính là EOL VS Code sẽ ghi.
+      // Không mở thì suy từ nội dung hiện có trên đĩa.
+      let eol: '\r\n' | '\n';
+      if (doc) {
+        eol = doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+      } else {
+        try {
+          eol = detectEol(fs.readFileSync(absPath, 'utf8'));
+        } catch {
+          eol = '\n';
+        }
+      }
+      payload = fromLf(content, eol);
+    }
+
     if (doc) {
       const edit = new vscode.WorkspaceEdit();
       const fullRange = new vscode.Range(
         new vscode.Position(0, 0),
         doc.lineAt(doc.lineCount - 1).range.end
       );
-      edit.replace(uri, fullRange, content);
+      edit.replace(uri, fullRange, payload);
       await vscode.workspace.applyEdit(edit);
       await doc.save();
     } else {
-      await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(payload, 'utf8'));
     }
   }
 
