@@ -275,38 +275,177 @@ export function calculateHunks(
   }
 
   // ------------------------------------------------------------------
-  // Pass 3: tách khối "sửa tại chỗ" thành từng cặp dòng
+  // Pass 3: tách khối thành từng cặp dòng khi ghép cặp được
   // ------------------------------------------------------------------
-  return hunks.flatMap(splitInPlaceEdit);
+  return hunks.flatMap(splitAlignedLines);
+}
+
+
+// ---------------------------------------------------------------------------
+// Pass 3 — ghép cặp dòng cũ với dòng mới tương ứng
+// ---------------------------------------------------------------------------
+
+/**
+ * Ngưỡng độ giống để coi hai dòng là "cùng một dòng, đã sửa".
+ *
+ * Dưới ngưỡng thì KHÔNG ghép — thà hiển thị khối thô còn hơn khẳng định một cặp
+ * mà thuật toán không tin. Đặt thấp vừa phải vì dòng ngắn (`}`, `{`) bị dìm điểm
+ * một cách giả tạo: `'}'` so với `'} // ghi chú'` chỉ ra 0.11 dù rõ ràng là cùng
+ * một dòng.
+ */
+const LINE_PAIR_THRESHOLD = 0.35;
+
+/**
+ * Độ giống rẻ giữa hai dòng: (tiền tố chung + hậu tố chung) / độ dài dòng dài hơn.
+ *
+ * O(độ dài dòng), không cấp phát, không đụng tới Myers. Đây chỉ là phép đo đủ
+ * dùng để trả lời "hai dòng này có phải cùng một dòng đã bị sửa không", không
+ * phải một phép diff.
+ */
+function lineSimilarity(a: string, b: string): number {
+  if (a === b) { return 1; }
+  const max = a.length > b.length ? a.length : b.length;
+  if (max === 0) { return 1; }
+  const min = a.length < b.length ? a.length : b.length;
+
+  let prefix = 0;
+  while (prefix < min && a.charCodeAt(prefix) === b.charCodeAt(prefix)) { prefix++; }
+
+  let suffix = 0;
+  while (
+    suffix < min - prefix &&
+    a.charCodeAt(a.length - 1 - suffix) === b.charCodeAt(b.length - 1 - suffix)
+  ) {
+    suffix++;
+  }
+
+  return (prefix + suffix) / max;
 }
 
 /**
- * Một hunk có SỐ DÒNG XOÁ BẰNG SỐ DÒNG THÊM là dấu hiệu của "sửa tại chỗ":
- * `removedLines[i]` thật sự là bản cũ của `addedLines[i]`. Tách nó thành từng
- * cặp một dòng, để mỗi dòng sửa được vẽ liền kề bản cũ của nó (đỏ ngay trên
- * xanh) và có nút accept/reject riêng.
+ * Tách một hunk thành các hunk nhỏ hơn sao cho mỗi dòng cũ nằm cạnh đúng dòng
+ * mới của nó — để diff đọc theo từng dòng và mỗi thay đổi có nút accept/reject
+ * riêng, thay vì một khối đỏ chồng lên một khối xanh.
  *
- * Lệch số dòng nghĩa là có chèn hoặc xoá thêm, và chỉ nhìn số thứ tự thì không
- * biết dòng nào ứng dòng nào — khi đó giữ nguyên nguyên khối.
+ * Hai chế độ:
  *
- * Chạy SAU hai pass hiệu chỉnh offset là an toàn: hunk cân bằng đóng góp 0 vào
- * độ lệch dòng, nên tách hay không cũng cho cùng kết quả hiệu chỉnh.
+ * 1. SỐ DÒNG BẰNG NHAU -> ghép theo chỉ số, không cần đo gì. Vào bao nhiêu ra
+ *    bấy nhiêu là dấu hiệu chắc chắn của "sửa tại chỗ".
+ *
+ * 2. LỆCH SỐ DÒNG -> đi dọc hai danh sách, dùng `lineSimilarity` để quyết định
+ *    ghép cặp hay bỏ qua một dòng ở một bên (dòng đó là chèn/xoá thuần).
+ *
+ * Khi không đủ tự tin, các dòng được dồn vào bộ đệm và cuối cùng phát ra thành
+ * một khối gộp — tức là quay về đúng hành vi cũ cho riêng đoạn đó. Thuật toán
+ * không bao giờ khẳng định một cặp mà nó không tin.
+ *
+ * Chạy SAU hai pass hiệu chỉnh offset là an toàn: các hunk con cộng lại đóng góp
+ * đúng bằng hunk gốc vào độ lệch dòng.
+ *
+ * Chỉ ảnh hưởng cách hiển thị và độ mịn của accept/reject — nội dung diff không đổi.
  */
-function splitInPlaceEdit(hunk: Hunk): Hunk[] {
-  const n = hunk.removedLines.length;
-  if (n < 2 || n !== hunk.addedLines.length) { return [hunk]; }
+function splitAlignedLines(hunk: Hunk): Hunk[] {
+  const removed = hunk.removedLines;
+  const added = hunk.addedLines;
+
+  // Chỉ thêm hoặc chỉ xoá: không có gì để ghép cặp.
+  if (removed.length === 0 || added.length === 0) { return [hunk]; }
+  // Đã là một đổi một: nhỏ nhất có thể rồi.
+  if (removed.length === 1 && added.length === 1) { return [hunk]; }
+
+  if (removed.length === added.length) {
+    const out: Hunk[] = [];
+    for (let i = 0; i < removed.length; i++) {
+      out.push(makeHunk([removed[i]!], [added[i]!], hunk, i + 1, i + 1));
+    }
+    return out;
+  }
 
   const out: Hunk[] = [];
-  for (let i = 0; i < n; i++) {
-    const removed = hunk.removedLines[i]!;
-    const added = hunk.addedLines[i]!;
-    out.push({
-      id: makeHunkId(),
-      modifiedStart: added.modifiedLineIndex,
-      originalStart: removed.originalLineIndex,
-      removedLines: [removed],
-      addedLines: [added],
-    });
+  let bufRemoved: RemovedLine[] = [];
+  let bufAdded: AddedLine[] = [];
+  let i = 0;
+  let j = 0;
+
+  const flush = (): void => {
+    if (bufRemoved.length === 0 && bufAdded.length === 0) { return; }
+    out.push(makeHunk(bufRemoved, bufAdded, hunk, i, j));
+    bufRemoved = [];
+    bufAdded = [];
+  };
+
+  while (i < removed.length && j < added.length) {
+    if (lineSimilarity(removed[i]!.text, added[j]!.text) >= LINE_PAIR_THRESHOLD) {
+      flush();
+      i++;
+      j++;
+      out.push(makeHunk([removed[i - 1]!], [added[j - 1]!], hunk, i, j));
+      continue;
+    }
+
+    // Không giống nhau: thử bỏ qua một dòng ở một bên xem có khớp lại không.
+    const skipRemoved = i + 1 < removed.length
+      ? lineSimilarity(removed[i + 1]!.text, added[j]!.text)
+      : -1;
+    const skipAdded = j + 1 < added.length
+      ? lineSimilarity(removed[i]!.text, added[j + 1]!.text)
+      : -1;
+
+    if (skipRemoved >= LINE_PAIR_THRESHOLD && skipRemoved >= skipAdded) {
+      bufRemoved.push(removed[i]!);   // dòng này bị xoá hẳn
+      i++;
+    } else if (skipAdded >= LINE_PAIR_THRESHOLD) {
+      bufAdded.push(added[j]!);       // dòng này là thêm mới
+      j++;
+    } else {
+      // Bí hoàn toàn. Dồn cả hai vào đệm để cuối cùng thành một khối gộp, thay
+      // vì bịa ra một cặp không có cơ sở.
+      bufRemoved.push(removed[i]!);
+      bufAdded.push(added[j]!);
+      i++;
+      j++;
+    }
   }
+
+  while (i < removed.length) { bufRemoved.push(removed[i++]!); }
+  while (j < added.length) { bufAdded.push(added[j++]!); }
+  flush();
+
   return out;
+}
+
+/**
+ * Dựng một hunk con từ các dòng đã gom.
+ *
+ * `nextRemovedIdx` / `nextAddedIdx` là vị trí chưa tiêu thụ trong hunk gốc, dùng
+ * để neo phía KHÔNG có dòng nào: một hunk chỉ-thêm vẫn cần `originalStart` trỏ
+ * đúng chỗ nó được chèn vào bản gốc, và ngược lại.
+ */
+function makeHunk(
+  removedLines: RemovedLine[],
+  addedLines: AddedLine[],
+  parent: Hunk,
+  nextRemovedIdx: number,
+  nextAddedIdx: number
+): Hunk {
+  const parentRemoved = parent.removedLines;
+  const parentAdded = parent.addedLines;
+
+  const originalStart = removedLines.length > 0
+    ? removedLines[0]!.originalLineIndex
+    : nextRemovedIdx < parentRemoved.length
+      ? parentRemoved[nextRemovedIdx]!.originalLineIndex
+      : parentRemoved.length > 0
+        ? parentRemoved[parentRemoved.length - 1]!.originalLineIndex + 1
+        : parent.originalStart;
+
+  const modifiedStart = addedLines.length > 0
+    ? addedLines[0]!.modifiedLineIndex
+    : nextAddedIdx < parentAdded.length
+      ? parentAdded[nextAddedIdx]!.modifiedLineIndex
+      : parentAdded.length > 0
+        ? parentAdded[parentAdded.length - 1]!.modifiedLineIndex + 1
+        : parent.modifiedStart;
+
+  return { id: makeHunkId(), originalStart, modifiedStart, removedLines, addedLines };
 }

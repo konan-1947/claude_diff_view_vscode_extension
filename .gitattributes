@@ -1,0 +1,6 @@
+# File mẫu để tái hiện bug #15 (diff phủ cả file do lệch line ending).
+# Cặp này chỉ có tác dụng khi MỖI file giữ đúng EOL của tên nó — nếu để git tự
+# quyết thì trên máy bật core.autocrlf=true cả hai đều được checkout thành CRLF,
+# và bản LF mất luôn ý nghĩa. Xem docs/BUG_ISSUE_15_FULL_FILE_DIFF.md §9.
+code_to_test/long_sample_lf.js    text eol=lf
+code_to_test/long_sample_crlf.js  text eol=crlf
