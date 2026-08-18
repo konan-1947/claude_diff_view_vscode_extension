@@ -20,6 +20,17 @@ export interface Hunk {
   /** Unique hunk ID (used for accept/reject lookups) */
   id: string;
   /**
+   * Id của KHỐI thay đổi liền kề mà hunk này thuộc về — tức khối do Pass 1 gom,
+   * TRƯỚC khi Pass 3 tách nó ra theo từng cặp dòng.
+   *
+   * Các hunk cùng `groupId` luôn nằm liền nhau và không có dòng không đổi xen
+   * giữa. Đây là ranh giới NGOÀI mà UI dùng để gom nút Accept/Reject; bên trong
+   * một `groupId`, webview còn cắt thêm ở mỗi chuyển tiếp dòng-thêm → dòng-xoá
+   * (xem `buildGroups()` trong res/webview/diff.monaco.js). Hunk không bị tách
+   * mang `groupId` bằng chính `id` của nó.
+   */
+  groupId: string;
+  /**
    * Start line in the MODIFIED content (0-indexed).
    * This is where gutter icons and inline decorations are anchored.
    */
@@ -195,9 +206,13 @@ export function calculateHunks(
       }
     } else if (op.type === 'delete') {
       if (!currentHunk) {
-        // Start a new hunk — remember where in the original the deletion begins
+        // Start a new hunk — remember where in the original the deletion begins.
+        // Đây là nơi "khối thay đổi liền kề" thực sự tồn tại, nên nó cũng là nơi
+        // đặt groupId; Pass 3 tách ra bao nhiêu hunk con thì tất cả vẫn mang id này.
+        const id = makeHunkId();
         currentHunk = {
-          id: makeHunkId(),
+          id,
+          groupId: id,
           modifiedStart: 0,
           originalStart: op.origIdx,
           removedLines: [],
@@ -219,8 +234,10 @@ export function calculateHunks(
         // Start a new hunk for a pure-insert block.
         // originalStart is meaningless when the hunk has no deletions — the
         // downstream offset-correction loop will compute the correct value.
+        const id = makeHunkId();
         currentHunk = {
-          id: makeHunkId(),
+          id,
+          groupId: id,
           modifiedStart: op.modIdx,
           originalStart: 0,
           removedLines: [],
@@ -276,6 +293,11 @@ export function calculateHunks(
 
   // ------------------------------------------------------------------
   // Pass 3: tách khối thành từng cặp dòng khi ghép cặp được
+  //
+  // Việc tách CHỈ phục vụ hiển thị: nó cho phép view zone của dòng cũ nằm đúng
+  // ngay trên dòng mới thay thế nó. Nó KHÔNG có nghĩa mỗi hunk con là một đơn vị
+  // thao tác riêng — `flatMap` làm mất danh tính khối liền kề, và `groupId` là
+  // thứ giữ lại danh tính đó để UI dựng lại một nút cho cả khối.
   // ------------------------------------------------------------------
   return hunks.flatMap(splitAlignedLines);
 }
@@ -324,8 +346,12 @@ function lineSimilarity(a: string, b: string): number {
 
 /**
  * Tách một hunk thành các hunk nhỏ hơn sao cho mỗi dòng cũ nằm cạnh đúng dòng
- * mới của nó — để diff đọc theo từng dòng và mỗi thay đổi có nút accept/reject
- * riêng, thay vì một khối đỏ chồng lên một khối xanh.
+ * mới của nó — để diff đọc theo từng dòng, thay vì một khối đỏ chồng lên một
+ * khối xanh.
+ *
+ * Tách là chuyện HIỂN THỊ, không phải chuyện thao tác: mọi hunk con vẫn mang
+ * `groupId` của hunk cha, và UI gom chúng lại thành một nút Accept/Reject duy
+ * nhất cho cả khối.
  *
  * Hai chế độ:
  *
@@ -342,7 +368,22 @@ function lineSimilarity(a: string, b: string): number {
  * Chạy SAU hai pass hiệu chỉnh offset là an toàn: các hunk con cộng lại đóng góp
  * đúng bằng hunk gốc vào độ lệch dòng.
  *
- * Chỉ ảnh hưởng cách hiển thị và độ mịn của accept/reject — nội dung diff không đổi.
+ * Chỉ ảnh hưởng cách hiển thị — nội dung diff không đổi.
+ *
+ * BẤT BIẾN mà accept/reject theo group dựa vào (webview gộp cả khối bằng MỘT
+ * splice, nên nếu phá một trong ba điều dưới đây thì accept/reject sẽ âm thầm
+ * ghi sai nội dung, không có lỗi biên dịch nào bắt được):
+ *
+ *   (I2) Đây là một PHÂN HOẠCH GIỮ THỨ TỰ: mỗi dòng của `removed`/`added` rơi
+ *        vào đúng một hunk con, và nối các hunk con lại theo thứ tự phát ra thì
+ *        được đúng mảng của hunk cha, phần tử một phần tử. (`flush()` luôn chạy
+ *        TRƯỚC khi phát ra một cặp, nên khối đệm ra trước cặp kết thúc nó.)
+ *   (C1) `subs[0].originalStart === parent.originalStart` và tương tự cho
+ *        `modifiedStart` — xem `makeHunk` bên dưới.
+ *   (C2) Tổng `removedLines.length` / `addedLines.length` của các hunk con bằng
+ *        đúng của hunk cha.
+ *
+ * => TUYỆT ĐỐI không sắp xếp lại, không khử trùng lặp, không bỏ bớt hunk con.
  */
 function splitAlignedLines(hunk: Hunk): Hunk[] {
   const removed = hunk.removedLines;
@@ -420,6 +461,13 @@ function splitAlignedLines(hunk: Hunk): Hunk[] {
  * `nextRemovedIdx` / `nextAddedIdx` là vị trí chưa tiêu thụ trong hunk gốc, dùng
  * để neo phía KHÔNG có dòng nào: một hunk chỉ-thêm vẫn cần `originalStart` trỏ
  * đúng chỗ nó được chèn vào bản gốc, và ngược lại.
+ *
+ * Nhờ ba nhánh của `originalStart` đều quy về "vị trí gốc + số dòng đã tiêu thụ
+ * trước đó", hunk con ĐẦU TIÊN luôn có `originalStart` bằng của hunk cha — đó là
+ * bất biến (C1) mà accept theo group dựa vào. (Nhánh fallback cuối cùng là bất
+ * khả đạt trong đường tách: `removed.length === 0` đã early-return từ trước.)
+ *
+ * `groupId` kế thừa từ cha để cả khối vẫn là một đơn vị thao tác duy nhất.
  */
 function makeHunk(
   removedLines: RemovedLine[],
@@ -447,5 +495,12 @@ function makeHunk(
         ? parentAdded[parentAdded.length - 1]!.modifiedLineIndex + 1
         : parent.modifiedStart;
 
-  return { id: makeHunkId(), originalStart, modifiedStart, removedLines, addedLines };
+  return {
+    id: makeHunkId(),
+    groupId: parent.groupId,
+    originalStart,
+    modifiedStart,
+    removedLines,
+    addedLines,
+  };
 }

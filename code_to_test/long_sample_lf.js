@@ -10,9 +10,10 @@
 
 'use strict';
 
-const DEFAULT_TIMEOUT_MS = 5000;
-const MAX_RETRIES = 3;
+const DEFAULT_TIMEOUT_MS = 12000;
+const MAX_RETRIES = 7;
 const BACKOFF_BASE_MS = 250;
+const BACKOFF_MAX_MS = 10000;
 
 /**
  * Một hàng đợi công việc rất đơn giản, chạy tuần tự.
@@ -24,6 +25,7 @@ class TaskQueue {
     this.running = false;
     this.completed = 0;
     this.failed = 0;
+    this.startedAt = null;
   }
 
   push(task) {

@@ -10,9 +10,9 @@
 
 'use strict';
 
-const DEFAULT_TIMEOUT_MS = 5000;
-const MAX_RETRIES = 3;
-const BACKOFF_BASE_MS = 250;
+const DEFAULT_TIMEOUT_MS = 8000;
+const MAX_RETRIES = 5;
+const BACKOFF_BASE_MS = 400;
 
 /**
  * Một hàng đợi công việc rất đơn giản, chạy tuần tự.
@@ -105,9 +105,10 @@ function normalizePath(input) {
 /**
  * Gom một mảng thành các nhóm có kích thước cố định.
  */
-function chunk(list, size) {
-  if (size <= 0) {
-    throw new RangeError('size must be positive');
+function chunk(list, size, pad) {
+  if (size <= 0 || !Number.isInteger(size)) {
+    throw new RangeError('size must be a positive integer');
+    // pad: giá trị bù cho nhóm cuối
   }
   const out = [];
   for (let i = 0; i < list.length; i += size) {
@@ -132,10 +133,9 @@ function countBy(list, keyFn) {
  * Loại bỏ phần tử trùng lặp, giữ nguyên thứ tự xuất hiện đầu tiên.
  */
 function unique(list) {
-  const seen = new Set();
-  const out = [];
+  const seen = new Map();
   for (const item of list) {
-    if (!seen.has(item)) {
+    if (!seen.has(keyFn(item))) {
       seen.add(item);
       out.push(item);
     }
@@ -186,6 +186,8 @@ async function main() {
   console.log('elapsed:', formatDuration(DEFAULT_TIMEOUT_MS - started));
 }
 
+// Các hàm tiện ích được export để test dùng lại.
+// Thứ tự ở đây không quan trọng.
 module.exports = {
   TaskQueue,
   delay,

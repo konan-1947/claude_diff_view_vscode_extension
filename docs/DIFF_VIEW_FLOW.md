@@ -15,7 +15,7 @@ file đó đã bị bỏ).
 | `src/extension.ts` | Entry point. Khởi tạo `DiffManager`, các watcher, custom editor provider, terminal, đăng ký command, gắn auto-route tab. |
 | `src/diff/diffManager.ts` | Trung tâm state. Giữ snapshot (left side), registry panel theo file, last-cursor, persistence, accept/revert ở mức file & hunk. |
 | `src/diff/diffWebviewPanel.ts` | `CustomTextEditorProvider` (viewType `ai-cli-diff-view.diffEditor`). Mỗi pending file = 1 tab webview Monaco riêng. Cầu nối message ↔ `DiffManager`. |
-| `src/diff/hunkCalculator.ts` | LCS-based line diff → mảng `Hunk { id, modifiedStart, originalStart, removedLines, addedLines }`. |
+| `src/diff/hunkCalculator.ts` | Line diff Myers (qua thư viện `diff`) → mảng `Hunk { id, groupId, modifiedStart, originalStart, removedLines, addedLines }`. `groupId` = id của khối thay đổi liền kề trước khi Pass 3 tách theo cặp dòng. |
 | `src/diff/snapshotStore.ts` | Persist snapshot vào `workspaceState['ai-cli-diff.snapshots']`, có backward-compat với shape cũ (string). |
 | `src/diff/navigationManager.ts` | Tính prev/next pending file (qua command `prevFile`/`nextFile`); chuyển file qua `DiffManager.openDiff()`. |
 | `src/watcher/hookWatcher.ts` | Pipeline 1 — đọc signal JSON do `hooks/post-tool-hook.js` ghi vào temp dir. |
@@ -170,7 +170,7 @@ Payload `set`:
   language,           // detectLanguageId từ extension
   originalContent,    // snapshot
   currentContent,     // document.getText()
-  hunks,              // Hunk[]
+  hunks,              // Hunk[] — đã tách theo cặp dòng; gom lại bằng `groupId`
   theme,              // 'vs' | 'vs-dark' | 'hc-black' | 'hc-light'
   editorConfig,       // fontFamily, fontSize, tabSize, wordWrap, minimap...
   nav: { currentIdx, total }
@@ -183,13 +183,32 @@ Payload `set`:
 
 - Tạo `monaco.editor.create()` thường (không phải DiffEditor) — model = current
   content, decorations + view-zones tự render từ `hunks`.
-- `renderDiffDecorations()`:
+**Hai trục khác nhau — đây là chỗ dễ nhầm:** hiển thị chạy theo `hunks` (mịn tới
+từng cặp dòng, để dòng đỏ nằm đúng trên dòng xanh thay thế nó), còn thao tác chạy
+theo `groups` (khối, dựng bằng `buildGroups()`). `state.groups` được dựng ngay khi
+nhận `set`; sau đó **không** đường hover/nav/command nào còn đụng `state.hunks`.
+
+Một khối kết thúc ở **một trong hai** ranh giới:
+
+1. `groupId` đổi — tức đã có dòng trắng (dòng không đổi) xen giữa;
+2. hunk con mang dòng đỏ trong khi khối đang gom đã có dòng xanh — tức mọi chuyển
+   tiếp xanh → đỏ.
+
+Luật (2) cố ý **mịn hơn git** (`add -p` từ chối tách khi thiếu dòng context): mỗi
+dòng bị thay thế có nút riêng, còn dòng xanh thêm mới không có dòng đỏ đối ứng thì
+dính vào cặp ngay phía trên.
+
+- `renderDiffDecorations()` — theo **hunk**:
   - Mỗi `addedLine` → decoration whole-line class `diff-added-line` (xanh).
   - Mỗi hunk có `removedLines` → view-zone phía trên `modifiedStart`,
     `heightInLines = removedLines.length`, mỗi dòng class `diff-removed-line` (đỏ).
-- `renderHunkWidgets()` → các nút overlay "Accept hunk / Reject hunk" cạnh hunk.
+- `renderGroupWidgets()` — theo **khối**: MỘT cặp nút overlay "Accept / Reject" cho
+  cả khối (ranh giới như trên). `applyAccept`/`applyReject` gộp cả khối bằng một
+  `slice().concat()`; khối luôn liền kề trong cả hai không gian chỉ số nên một
+  splice là đủ và đúng.
 - Toolbar:
-  - Prev/Next hunk: di chuyển cursor + reveal.
+  - Prev/Next hunk (F7 / Shift+F7) và pill "n / N": đếm và nhảy theo **khối**, không
+    theo hunk con.
   - Reject/Accept (toàn file) → message `rejectAll`/`acceptAll`.
   - Prev/Next file → `prevFile`/`nextFile`.
 - Edit nội dung: debounce 200ms → gửi `editModified { newCurrent }`.
@@ -230,7 +249,10 @@ việc dọn state:
 `DiffManager.acceptAllPending()` — clear toàn bộ snapshots và đóng mọi panel,
 trả về `count` cho command toast.
 
-### 7.2 Mức hunk (gọi từ webview)
+### 7.2 Mức khối thay đổi (gọi từ webview)
+
+Đơn vị thao tác là **khối liền kề** (`groupId`), không phải hunk con — tên message
+vẫn là `acceptHunk`/`rejectHunk` vì protocol không đổi.
 
 Webview tự compute `newOriginal` + `newCurrent` (vì chỉ webview biết text Monaco
 đang giữ, có thể đã edit thêm) rồi gửi message:
