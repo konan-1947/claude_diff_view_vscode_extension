@@ -1,10 +1,16 @@
 # Diff View — Luồng hoạt động hiện tại
 
+> **Cập nhật lần cuối:** 2026-08-18. **Nguồn sự thật về kiến trúc là [CLAUDE.md](../CLAUDE.md)** —
+> nếu tài liệu này mâu thuẫn với CLAUDE.md hoặc với code, tin CLAUDE.md/code.
+>
+> **Lưu ý lịch sử:** từng có một pipeline thứ ba dựa trên hook (`hookWatcher.ts`,
+> `pre-tool-hook.js`/`post-tool-hook.js`, command `installHooks`). Pipeline đó **đã bị xoá**;
+> mọi AI CLI — kể cả Claude — nay được phát hiện đồng nhất qua **workspace watcher**.
+> Chỉ còn hook `Notification`/`Stop` (âm thanh, Windows) tồn tại và **không** đóng vai trò
+> phát hiện diff.
+
 Mô tả luồng thực tế của phần diff view sau khi đã refactor sang Monaco webview
 (commit `d38e209` "bản mới 3.0.0 thay hoàn toàn diff view" và `5639ef4`).
-Tài liệu này phản ánh code đang có trong repo, không phải kiến trúc cũ trong `CLAUDE.md`
-(có nhắc tới `inlineDiffRenderer`, `hunkCodeLensProvider`, `sessionPanel` — những
-file đó đã bị bỏ).
 
 ---
 
@@ -18,8 +24,8 @@ file đó đã bị bỏ).
 | `src/diff/hunkCalculator.ts` | Line diff Myers (qua thư viện `diff`) → mảng `Hunk { id, groupId, modifiedStart, originalStart, removedLines, addedLines }`. `groupId` = id của khối thay đổi liền kề trước khi Pass 3 tách theo cặp dòng. |
 | `src/diff/snapshotStore.ts` | Persist snapshot vào `workspaceState['ai-cli-diff.snapshots']`, có backward-compat với shape cũ (string). |
 | `src/diff/navigationManager.ts` | Tính prev/next pending file (qua command `prevFile`/`nextFile`); chuyển file qua `DiffManager.openDiff()`. |
-| `src/watcher/hookWatcher.ts` | Pipeline 1 — đọc signal JSON do `hooks/post-tool-hook.js` ghi vào temp dir. |
-| `src/watcher/workspaceWatcher.ts` | Pipeline 2 — fallback `FileSystemWatcher` + `onDidSaveTextDocument` cho mọi external write không qua hook. |
+| `src/watcher/workspaceWatcher.ts` | **Đường phát hiện edit duy nhất** — `FileSystemWatcher('**/*')` + `onDidSaveTextDocument` bắt mọi external write, bất kể AI CLI nào. |
+| `src/watcher/writeBurstMeter.ts` | Đo burst (nhiều file đổi nhanh = nghi git checkout) để hold/drop diff giả. |
 | `src/watcher/fileSnapshotStore.ts` | Baseline content theo workspace folder để watcher có thể so sánh "before/after". |
 | `src/watcher/gitBranchWatcher.ts` | Quan sát `.git/HEAD`, set suppress window trên `WorkspaceWatcher` khi đổi branch để không nổ diff giả. |
 | `res/webview/diff.monaco.{js,css}` | Frontend webview: load Monaco từ `node_modules/monaco-editor/min`, render decorations + view-zones, toolbar buttons, gửi message accept/reject/edit. |
@@ -32,14 +38,14 @@ file đó đã bị bỏ).
 
 1. Khởi tạo `DiffManager` (đọc snapshot persistent qua `SnapshotStore.load()` —
    bỏ entry mà file vật lý không còn).
-2. Khởi tạo `WorkspaceWatcher`, `HookWatcher`, `GitBranchWatcher`, `NavigationManager`.
+2. Khởi tạo `WorkspaceWatcher`, `GitBranchWatcher`, `NavigationManager`.
 3. `registerCustomEditorProvider(DIFF_EDITOR_VIEW_TYPE, DiffEditorProvider, { retainContextWhenHidden: true, supportsMultipleEditorsPerDocument: false })`.
 4. Đăng ký `TerminalPanelProvider`.
 5. Lần đầu chạy: di chuyển panel terminal sang auxiliary bar (best-effort, có flag
    `globalState['ai-cli-diff-view.terminal.movedToRight']`).
-6. `fsHookWatcher.start()`, `workspaceWatcher.start()`, `gitBranchWatcher.start()`.
+6. `workspaceWatcher.start()`, `gitBranchWatcher.start()`.
 7. `registerAllCommands(...)` (start session, accept/revert, accept-all-pending,
-   install hooks, openPendingFile).
+   openPendingFile).
 8. Đăng ký command `nextFile`/`prevFile`.
 9. **Pending context**: lắng nghe `diffManager.onDidChangeDiffs` và
    `vscode.window.tabGroups.onDidChangeTabs` → gọi `updatePendingContext()` (set context
@@ -50,30 +56,12 @@ file đó đã bị bỏ).
 
 ---
 
-## 3. Hai pipeline phát hiện edit
+## 3. Pipeline phát hiện edit (workspace watcher)
 
-### 3.1 Hook pipeline (AI CLI bên ngoài, ví dụ `claude` chạy trong terminal khác)
-
-```
-pre-tool-hook.js   → snapshot file vào tmpdir/ai-cli-diff-snapshots/
-post-tool-hook.js  → ghi signal JSON vào tmpdir/ai-cli-diff-signals/
-HookWatcher (fs.watch tmpdir/ai-cli-diff-signals/)
-   → debounce 150ms → processSignal()
-   → bỏ qua nếu filePath không thuộc workspaceFolders hiện tại
-     (không unlink — để VS Code window khác đọc)
-   → đọc snapshot content (+ optional meta { fileExistedBefore, timestamp })
-   → diffManager.loadSnapshot(filePath, content, fileExistedBefore)
-   → diffManager.openDiff(filePath)
-```
-
-- `start()` còn `pruneOldSignals()` (xóa signal cũ > 24h) và `drainExisting()`
-  (xử lý các signal còn sót từ lần chạy trước).
-- Cài hooks: command `ai-cli-diff-view.installHooks` ghi `~/.claude/settings.json`
-  (path lấy từ `runner.getSettingsFilePath()` của `claudeRunner`) với
-  `PreToolUse`/`PostToolUse` matcher = `Write|Edit|MultiEdit|...`. Trên Windows
-  còn cài thêm `Notification` + `Stop` để phát âm thanh.
-
-### 3.2 Workspace watcher (fallback)
+Chỉ còn **một** đường phát hiện: `WorkspaceWatcher`. Mọi AI CLI (Claude/Codex/Qwen/…)
+đều đi qua đây — không còn phân biệt "trong terminal tích hợp" hay "terminal ngoài",
+và không còn hook nào tham gia. `ClaudeRunner` (đường `startSession`) cũng chỉ
+`snapshotBefore()` rồi `openDiff()` trực tiếp, không qua signal file.
 
 ```
 WorkspaceWatcher.start()
@@ -98,8 +86,15 @@ WorkspaceWatcher.start()
 ```
 
 `GitBranchWatcher` gọi `workspaceWatcher.notifyExternalBatch(5000)` khi
-`.git/HEAD` thay đổi: clear baseline + set `suppressUntil = now + 5s`. Trong window
-này mọi fs event chỉ rebuild baseline, không nổ diff.
+`.git/HEAD` thay đổi: clear baseline + set `suppressUntil = now + 5s` + drop toàn bộ
+`heldWrites`. Trong window này mọi fs event chỉ rebuild baseline, không nổ diff.
+
+**Burst detection** (khi `burstDetectionEnabled`): nếu `WriteBurstMeter` thấy quá
+nhiều file đổi trong `burstDetectionWindowMs` (nghi git checkout), các write vượt
+ngưỡng không mở diff ngay mà bị giữ trong `heldWrites` thêm `burstDetectionHoldMs`.
+Trong thời gian giữ: nếu `GitBranchWatcher` xác nhận branch đổi (`notifyExternalBatch()`)
+thì các write này bị **âm thầm bỏ**; nếu không, hết hạn giữ chúng mở diff bình thường.
+Xem [GIT_VS_AI_EDIT_DETECTION.md](GIT_VS_AI_EDIT_DETECTION.md).
 
 ---
 
@@ -304,9 +299,8 @@ Context key:
   (`fs.existsSync(absPath)`), normalize backward-compat.
 - Tuy nhiên: chỉ snapshot là persistent, **không tự reopen diff tab** sau reload.
   Tab diff được mở khi:
-  - Có signal hook mới đến, hoặc
-  - Watcher phát hiện ghi mới, hoặc
-  - User tự mở file (auto-route trong `extension.ts:125-148` sẽ thấy
+  - `WorkspaceWatcher` phát hiện ghi mới, hoặc
+  - User tự mở file (auto-route trong `extension.ts` sẽ thấy
     `hasPendingDiff` và chuyển sang custom editor).
 - `gitBranchWatcher` có thể gọi `diffManager.clearAll()` (qua `SnapshotStore.clear()`)
   để xóa cả persistent state khi đổi branch.
@@ -316,21 +310,18 @@ Context key:
 ## 10. Sơ đồ luồng tổng quát
 
 ```
-                         AI CLI (Claude bên ngoài)
+                    AI CLI (Claude/Codex/Qwen…) ghi file ra disk
                                  │
                                  ▼
-              hooks/pre-tool-hook.js  → snapshot vào tmpdir
-              hooks/post-tool-hook.js → signal JSON
-                                 │
-                                 ▼
-                  HookWatcher.processSignal()
+              WorkspaceWatcher (onDidSaveTextDocument + fs.watch '**/*')
+                 ─ lọc excluded / VS Code save / non-text / suppress window
+                 ─ burst? → giữ trong heldWrites, chờ xác nhận git
                                  │
                                  ▼
               ┌──────────────────────────────────────┐
               │  DiffManager                          │
               │    .loadSnapshot(path, content, ex)   │
-              │    .openDiff(path)                    │◀── WorkspaceWatcher
-              │                                       │   (fallback fs event)
+              │    .openDiff(path)                    │
               └──────────────────────────────────────┘
                                  │
               vscode.openWith → DIFF_EDITOR_VIEW_TYPE

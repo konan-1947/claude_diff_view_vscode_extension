@@ -16,7 +16,7 @@ import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
 import { FileSnapshotStore, isTextFile } from './fileSnapshotStore';
 import { isExcludedPathSegment } from './pathExclusions';
-import { exceedsLineLimit } from './fileSizeLimit';
+import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
 
 export class WorkspaceWatcher {
@@ -238,6 +238,14 @@ export class WorkspaceWatcher {
 
       try {
         if (!fs.existsSync(absPath)) { return; }
+
+        // Lọc thô theo byte TRƯỚC khi đọc, giống snapshotDir(): một file vài
+        // trăm MB (vd dump dữ liệu JSON) mà đọc thẳng vào string sẽ ngốn RAM và
+        // giết luôn extension host, trước cả khi exceedsLineLimit() kịp chạy.
+        if (exceedsSizeLimitByBytes(fs.statSync(absPath).size)) {
+          this.snapshots.markSizeSkipped(absPath);
+          return;
+        }
 
         const newContentRaw = fs.readFileSync(absPath, 'utf8');
 
