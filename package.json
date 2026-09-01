@@ -67,6 +67,13 @@
           "minimum": 0,
           "markdownDescription": "Advanced: ignore files longer than this many lines — no baseline is kept and no diff tab ever opens for them. Set to `0` to disable the limit.\n\nDiff cost grows with the **square** of how many lines differ, so a large file that gets largely rewritten can block VS Code for seconds. Files that big are also almost always generated code, bundles or lock files rather than something reviewed hunk by hunk.\n\nWhy 5000: measured across `microsoft/vscode`, 99.8% of source files fall under it (median ~112 lines, p99 ~1980). Raise it if you genuinely review very large hand-written files — the TypeScript compiler's `checker.ts` is 54,433 lines — and accept that opening such a diff may stall the editor."
         },
+        "ai-cli-diff-view.baselineScanConcurrency": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Advanced: maximum number of files read concurrently during the initial baseline scan. Lower this for very large or remote workspaces."
+        },
         "ai-cli-diff-view.burstDetectionEnabled": {
           "type": "boolean",
           "default": true,

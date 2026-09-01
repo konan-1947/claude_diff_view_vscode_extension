@@ -41,6 +41,9 @@ export class WorkspaceWatcher {
    */
   private suppressUntil = 0;
   private readonly burstMeter = new WriteBurstMeter();
+  /** Giữ external write đến khi initial baseline scan hoàn tất. */
+  private baselineScansInProgress = 0;
+  private readonly queuedExternalWrites = new Map<string, boolean>();
   /** Thời gian giữ file vượt ngưỡng burst chờ xác nhận git trước khi mở diff bình thường. */
   private holdMs = 2000;
   /** File vượt ngưỡng burst, đang chờ xác nhận git (xem resolveOrHold/scheduleHoldResolve). */
@@ -106,11 +109,9 @@ export class WorkspaceWatcher {
     }
     this.heldWrites.clear();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      try {
-        this.baselineScanner.buildInitialSnapshots(folder.uri.fsPath);
-      } catch {
+      void this.watchFolder(folder.uri.fsPath).catch(() => {
         // ignore — sẽ tự rebuild dần qua các event sau
-      }
+      });
     }
   }
 
@@ -168,17 +169,6 @@ export class WorkspaceWatcher {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders) { return; }
 
-    for (const folder of folders) {
-      this.watchFolder(folder.uri.fsPath);
-    }
-
-    const d = vscode.workspace.onDidChangeWorkspaceFolders((e) => {
-      for (const added of e.added) {
-        this.watchFolder(added.uri.fsPath);
-      }
-    });
-    this.disposables.push(d);
-
     // Sử dụng FileSystemWatcher native của VS Code thay vì fs.watch để tránh kẹt event loop
     // khi tạo mới project có hàng ngàn file (VD: node_modules trong Next.js)
     const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*');
@@ -190,24 +180,46 @@ export class WorkspaceWatcher {
     fileWatcher.onDidCreate(handleUri);
     
     this.disposables.push(fileWatcher);
+
+    for (const folder of folders) {
+      void this.watchFolder(folder.uri.fsPath);
+    }
+
+    const d = vscode.workspace.onDidChangeWorkspaceFolders((e) => {
+      for (const added of e.added) {
+        void this.watchFolder(added.uri.fsPath);
+      }
+    });
+    this.disposables.push(d);
   }
 
-  private watchFolder(folderPath: string): void {
+  private async watchFolder(folderPath: string): Promise<void> {
+    this.baselineScansInProgress++;
     try {
-      this.baselineScanner.buildInitialSnapshots(folderPath);
+      await this.baselineScanner.buildInitialSnapshots(folderPath);
     } catch (err) {
       console.error('[ai-cli-diff-view] workspaceWatcher buildInitialSnapshots error:', err);
+    } finally {
+      this.baselineScansInProgress--;
+      if (this.baselineScansInProgress === 0) {
+        const queued = Array.from(this.queuedExternalWrites.entries());
+        this.queuedExternalWrites.clear();
+        for (const [filePath, burstHold] of queued) {
+          this.lastProcessed.delete(filePath);
+          this.handleExternalWrite(filePath, burstHold);
+        }
+      }
     }
   }
 
-  private handleExternalWrite(filePath: string): void {
+  private handleExternalWrite(filePath: string, burstHoldOverride?: boolean): void {
     const absPath = this.normalizePath(filePath);
 
     // Đo tốc độ ghi TRƯỚC mọi filter bên dưới — xem writeBurstMeter.ts. Capture
     // quyết định NGAY tại thời điểm raw event tới (chính xác nhất so với cửa
     // sổ trượt), mang theo qua debounce/setTimeout bên dưới tới lúc quyết định
     // triggerDiff — không gọi record() lần 2 để tránh đếm trùng.
-    const burstHold = this.burstMeter.record(absPath);
+    const burstHold = burstHoldOverride ?? this.burstMeter.record(absPath);
 
     // Bỏ qua dependency / build output / tooling (dotnet bin/obj, node_modules, …)
     if (isExcludedPathSegment(absPath)) {
@@ -230,6 +242,11 @@ export class WorkspaceWatcher {
 
     if (!isTextFile(path.basename(absPath))) { return; }
     if (!this.isInWorkspace(absPath)) { return; }
+
+    if (this.baselineScansInProgress > 0) {
+      this.queuedExternalWrites.set(absPath, burstHold);
+      return;
+    }
 
     // Đọc nội dung mới từ disk sau một chút để đảm bảo write xong
     const timer = setTimeout(() => {
@@ -396,5 +413,6 @@ export class WorkspaceWatcher {
       this.holdResolveTimer = undefined;
     }
     this.heldWrites.clear();
+    this.queuedExternalWrites.clear();
   }
 }

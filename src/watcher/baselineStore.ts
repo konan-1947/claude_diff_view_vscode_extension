@@ -31,6 +31,12 @@ export class BaselineStore {
     return this.snapshots.has(this.normalizePath(filePath));
   }
 
+  /** Trả về true nếu file đã có baseline hoặc đã được đánh dấu bỏ qua. */
+  hasState(filePath: string): boolean {
+    const key = this.normalizePath(filePath);
+    return this.snapshots.has(key) || this.sizeSkipped.has(key);
+  }
+
   /** Bỏ theo dõi 1 file vì nó vượt giới hạn kích thước. */
   markSizeSkipped(filePath: string): void {
     const key = this.normalizePath(filePath);
