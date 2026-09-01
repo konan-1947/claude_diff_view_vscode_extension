@@ -59,7 +59,7 @@ Truy từ đĩa tới thuật toán:
 
 | Bước | Vị trí | Nội dung mang theo |
 | --- | --- | --- |
-| Dựng baseline lần đầu | `fileSnapshotStore.ts:66` | `fs.readFileSync(fullPath, 'utf8')` — **raw, giữ nguyên EOL trên đĩa** |
+| Dựng baseline lần đầu | `baselineScanner.ts` | `fs.readFileSync(fullPath, 'utf8')` — **raw, giữ nguyên EOL trên đĩa** |
 | Phát hiện thay đổi | `workspaceWatcher.ts:232` | `newContentRaw` — raw |
 | Cổng "có đổi không" | `workspaceWatcher.ts:243-254` | so bản **đã normalize** (`trim` + CRLF→LF) |
 | Lưu baseline | `workspaceWatcher.ts:237/247/258` | lưu bản **raw**, không normalize |

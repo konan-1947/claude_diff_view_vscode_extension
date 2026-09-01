@@ -14,7 +14,9 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
-import { FileSnapshotStore, isTextFile } from './fileSnapshotStore';
+import { BaselineScanner } from './baselineScanner';
+import { BaselineStore } from './baselineStore';
+import { isTextFile } from './fileTypeRules';
 import { isExcludedPathSegment } from './pathExclusions';
 import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
@@ -25,7 +27,8 @@ export class WorkspaceWatcher {
   private lastProcessed = new Map<string, number>();
   /** Lưu thời điểm VS Code vừa Save file (để bỏ qua fs.watch trigger từ chính VS Code) */
   private savedFilesByVsCode = new Map<string, number>();
-  private readonly snapshots: FileSnapshotStore;
+  private readonly snapshots: BaselineStore;
+  private readonly baselineScanner: BaselineScanner;
   private readonly pendingTimers = new Set<NodeJS.Timeout>();
   /** Debounce window is 500ms — keep entries an order of magnitude longer for safety, then drop. */
   private static readonly LAST_PROCESSED_TTL_MS = 60_000;
@@ -49,7 +52,8 @@ export class WorkspaceWatcher {
   private static readonly ACTIVE_TAB_CAPTURE_GAP_MS = 500;
 
   constructor(private readonly diffManager: DiffManager) {
-    this.snapshots = new FileSnapshotStore();
+    this.snapshots = new BaselineStore();
+    this.baselineScanner = new BaselineScanner(this.snapshots);
   }
 
   start(): void {
@@ -103,7 +107,7 @@ export class WorkspaceWatcher {
     this.heldWrites.clear();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       try {
-        this.snapshots.buildInitialSnapshots(folder.uri.fsPath);
+        this.baselineScanner.buildInitialSnapshots(folder.uri.fsPath);
       } catch {
         // ignore — sẽ tự rebuild dần qua các event sau
       }
@@ -190,7 +194,7 @@ export class WorkspaceWatcher {
 
   private watchFolder(folderPath: string): void {
     try {
-      this.snapshots.buildInitialSnapshots(folderPath);
+      this.baselineScanner.buildInitialSnapshots(folderPath);
     } catch (err) {
       console.error('[ai-cli-diff-view] workspaceWatcher buildInitialSnapshots error:', err);
     }
@@ -394,4 +398,3 @@ export class WorkspaceWatcher {
     this.heldWrites.clear();
   }
 }
-

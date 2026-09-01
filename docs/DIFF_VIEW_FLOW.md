@@ -26,7 +26,7 @@ Mô tả luồng thực tế của phần diff view sau khi đã refactor sang M
 | `src/diff/navigationManager.ts` | Tính prev/next pending file (qua command `prevFile`/`nextFile`); chuyển file qua `DiffManager.openDiff()`. |
 | `src/watcher/workspaceWatcher.ts` | **Đường phát hiện edit duy nhất** — `FileSystemWatcher('**/*')` + `onDidSaveTextDocument` bắt mọi external write, bất kể AI CLI nào. |
 | `src/watcher/writeBurstMeter.ts` | Đo burst (nhiều file đổi nhanh = nghi git checkout) để hold/drop diff giả. |
-| `src/watcher/fileSnapshotStore.ts` | Baseline content theo workspace folder để watcher có thể so sánh "before/after". |
+| `src/watcher/baselineScanner.ts` / `baselineStore.ts` | Scan và lưu baseline content theo workspace folder để watcher có thể so sánh "before/after". |
 | `src/watcher/gitBranchWatcher.ts` | Quan sát `.git/HEAD`, set suppress window trên `WorkspaceWatcher` khi đổi branch để không nổ diff giả. |
 | `res/webview/diff.monaco.{js,css}` | Frontend webview: load Monaco từ `node_modules/monaco-editor/min`, render decorations + view-zones, toolbar buttons, gửi message accept/reject/edit. |
 
@@ -65,7 +65,7 @@ và không còn hook nào tham gia. `ClaudeRunner` (đường `startSession`) c�
 
 ```
 WorkspaceWatcher.start()
-  ├── onDidSaveTextDocument           → cập nhật baseline trong FileSnapshotStore
+  ├── onDidSaveTextDocument           → cập nhật baseline trong BaselineStore
   │                                     + đánh dấu savedFilesByVsCode (window 2s)
   └── vscode.workspace.createFileSystemWatcher('**/*')
        ↓ onDidChange / onDidCreate

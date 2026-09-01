@@ -1,115 +1,11 @@
 /**
- * fileSnapshotStore.ts
+ * fileTypeRules.ts
  *
- * Quản lý snapshot nội dung các file trong workspace để
- * WorkspaceWatcher có thể phát hiện external writes so với baseline.
+ * Quy tắc xác định file nào được coi là text/reviewable.
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { isExcludedPathSegment } from './pathExclusions';
-import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
-
-export class FileSnapshotStore {
-  /** filePath -> nội dung baseline trước khi external process ghi đè */
-  private snapshots = new Map<string, string>();
-  /**
-   * Các file bị bỏ qua vì vượt giới hạn kích thước.
-   *
-   * Cần nhớ riêng, vì "không có baseline" một mình là mơ hồ: nó vừa có nghĩa
-   * file mới toanh, vừa có nghĩa file cũ nhưng từng bị bỏ qua. Phân biệt sai thì
-   * WorkspaceWatcher sẽ gắn `fileExistedBefore = false`, và khi đó Revert all
-   * sẽ XOÁ file thay vì khôi phục nội dung.
-   */
-  private sizeSkipped = new Set<string>();
-
-  private normalizePath(p: string): string {
-    const fsPath = vscode.Uri.file(path.resolve(p)).fsPath;
-    return process.platform === 'win32' ? fsPath.toLowerCase() : fsPath;
-  }
-
-  get(filePath: string): string | undefined {
-    return this.snapshots.get(this.normalizePath(filePath));
-  }
-
-  set(filePath: string, content: string): void {
-    this.snapshots.set(this.normalizePath(filePath), content);
-  }
-
-  has(filePath: string): boolean {
-    return this.snapshots.has(this.normalizePath(filePath));
-  }
-
-  /** Bỏ theo dõi 1 file vì nó vượt giới hạn kích thước. */
-  markSizeSkipped(filePath: string): void {
-    const key = this.normalizePath(filePath);
-    this.snapshots.delete(key);
-    this.sizeSkipped.add(key);
-  }
-
-  /**
-   * File này từng bị bỏ qua vì kích thước? Dùng để phân biệt "file mới" với
-   * "file cũ vừa lọt xuống dưới ngưỡng". Trả về true thì đồng thời xoá cờ, vì
-   * caller sẽ dựng lại baseline ngay sau đó.
-   */
-  consumeSizeSkipped(filePath: string): boolean {
-    const key = this.normalizePath(filePath);
-    return this.sizeSkipped.delete(key);
-  }
-
-  /** Xoá toàn bộ baseline trong RAM. Dùng khi branch switch để rebuild lại từ disk. */
-  clear(): void {
-    this.snapshots.clear();
-    this.sizeSkipped.clear();
-  }
-
-  /**
-   * Đệ quy snapshot nội dung tất cả file text trong một thư mục.
-   * Chỉ chạy lần đầu khi extension khởi động để tạo baseline.
-   */
-  buildInitialSnapshots(folderPath: string): void {
-    try {
-      this.snapshotDir(folderPath, 0);
-    } catch {
-      // ignore lỗi permission hoặc thư mục không có quyền đọc
-    }
-  }
-
-  private snapshotDir(dirPath: string, depth: number): void {
-    if (depth > 5) { return; } // giới hạn độ sâu để tránh tràn stack
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.startsWith('.')) {
-        continue;
-      }
-      const fullPath = path.resolve(dirPath, entry.name);
-      if (isExcludedPathSegment(fullPath)) {
-        continue;
-      }
-      if (entry.isDirectory()) {
-        this.snapshotDir(fullPath, depth + 1);
-      } else if (entry.isFile() && isTextFile(entry.name)) {
-        try {
-          // Lọc thô theo byte trước, để file vài MB không bị đọc lên chỉ để loại.
-          if (exceedsSizeLimitByBytes(fs.statSync(fullPath).size)) {
-            this.markSizeSkipped(fullPath);
-            continue;
-          }
-          const content = fs.readFileSync(fullPath, 'utf8');
-          if (exceedsLineLimit(content)) {
-            this.markSizeSkipped(fullPath);
-            continue;
-          }
-          this.snapshots.set(this.normalizePath(fullPath), content);
-        } catch {
-          // binary hoặc file đang bị lock — bỏ qua
-        }
-      }
-    }
-  }
-}
-
 
 type FileDetectionMode = 'defaultAndCustom' | 'customOnly';
 
@@ -134,10 +30,11 @@ const DEFAULT_TEXT_EXTS = new Set([
   '.eslintrc.json', '.eyaml', '.eyml',
   '.fish', '.fs', '.fsi', '.fsproj', '.fsscript', '.fsx', '.fxml', '.fx', '.fxh',
   '.geojson', '.git-blame-ignore-revs', '.gitattributes', '.gitconfig',
-  '.gitignore', '.gitignore_global', '.gitmodules', '.go', '.gradle',
-  '.gradle.kts', '.groovy', '.gvy', '.gyp', '.gypi',
+  '.gitignore', '.gitignore_global', '.gitmodules', '.go', '.gradle', '.gradle.kts',
+  '.groovy', '.gvy', '.gyp', '.gypi',
   '.h', '.h++', '.h.in', '.handlebars', '.har', '.hbs', '.hh', '.hintrc',
-  '.hjs', '.hlsl', '.hlsli', '.hpp', '.hpp.in', '.htm', '.html', '.hxx',
+  '.hjs',
+  '.hlsl', '.hlsli', '.hpp', '.hpp.in', '.htm', '.html', '.hxx',
   '.i', '.iced', '.iml', '.ini', '.ino', '.inl', '.instructions.md', '.ipy',
   '.ipp', '.ipynb', '.isml', '.ixx',
   '.j2', '.jade', '.java', '.jav', '.jl', '.jmd', '.jenkinsfile', '.jinja2',
@@ -202,9 +99,7 @@ const DEFAULT_TEXT_FILENAME_PATTERNS = [
 
 let textFileRules: TextFileRules | undefined;
 
-/**
- * Kiểm tra xem file có phải là text file không dựa trên extension, filename và pattern.
- */
+/** Kiểm tra xem file có phải là text file không dựa trên extension, filename và pattern. */
 export function isTextFile(filename: string): boolean {
   if (!textFileRules) {
     refreshTextFileRules();

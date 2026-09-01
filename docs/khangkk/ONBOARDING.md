@@ -38,7 +38,7 @@ Phạm vi hỗ trợ:
 | | `diff/eol.ts` | Detect/convert EOL (LF ↔ CRLF) — quan trọng để không tạo diff giả toàn file. |
 | **Webview FE** | `res/webview/diff.monaco.{js,css}` | Monaco từ `node_modules`, render decorations + view-zones + nút accept/reject, gửi postMessage. |
 | **Phát hiện edit** | `watcher/workspaceWatcher.ts` (389) | **Đường phát hiện chính.** save event + `FileSystemWatcher` cho mọi external write. |
-| | `watcher/fileSnapshotStore.ts` (285) | Baseline nội dung theo folder + `isTextFile()` (rule file text). |
+| | `watcher/baselineScanner.ts` / `baselineStore.ts` / `fileTypeRules.ts` | Scan, lưu baseline theo folder và xác định rule file text. |
 | | `watcher/gitBranchWatcher.ts` (308) | Theo dõi `.git/HEAD` + reflog để phân biệt git op với AI edit. |
 | | `watcher/writeBurstMeter.ts` | Đếm burst (git checkout vs AI edit). |
 | | `watcher/pathExclusions.ts`, `fileSizeLimit.ts` | Lọc path / giới hạn số dòng. |
@@ -151,7 +151,7 @@ npx @vscode/vsce package   # đóng .vsix
 - Implement interface `IAiRunner` (`runner/aiRunner.ts`), thêm nhánh detect trong `runner/runnerFactory.ts`. Lưu ý đường này phải tôn trọng `maxFileLines` (xem `snapshotBefore` trong `diffManager.ts`).
 
 **Đổi rule file nào là "text/reviewable"**
-- `watcher/fileSnapshotStore.ts` → `refreshTextFileRules()` / `isTextFile()`. `supportedFileDetectionMode` chọn built-in+custom hay custom-only.
+- `watcher/fileTypeRules.ts` → `refreshTextFileRules()` / `isTextFile()`. `supportedFileDetectionMode` chọn built-in+custom hay custom-only.
 
 Sau mọi thay đổi có ảnh hưởng hành vi: chạy `npm run compile`, F5, và test tay theo mục 6.
 
