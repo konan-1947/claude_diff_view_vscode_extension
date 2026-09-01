@@ -33,6 +33,10 @@ function canonicalCasePath(filePath: string): string {
   }
 }
 
+function isFileNotFound(error: unknown): boolean {
+  return error instanceof vscode.FileSystemError && error.code === 'FileNotFound';
+}
+
 export class DiffManager {
   private _onDidChangeDiffs = new vscode.EventEmitter<void>();
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
@@ -72,16 +76,27 @@ export class DiffManager {
     if (this.snapshots.has(absPath)) {
       return;
     }
-    const fileExistedBefore = fs.existsSync(absPath);
+    const uri = vscode.Uri.file(absPath);
     try {
-      const content = fs.readFileSync(absPath, 'utf8');
+      await vscode.workspace.fs.stat(uri);
+    } catch (err) {
+      if (isFileNotFound(err)) {
+        this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
+        void this.store.save(this.snapshots);
+      }
+      return;
+    }
+
+    try {
+      const content = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
       // Đường built-in runner cũng phải tôn trọng maxFileLines, nếu không setting
       // chỉ đúng với đường workspace watcher. Không snapshot -> openDiff() thoát
       // sớm vì không có snapshot -> file lớn không mở diff, đúng như mong đợi.
       if (exceedsLineLimit(content)) { return; }
-      this.snapshots.set(absPath, { content, fileExistedBefore });
+      this.snapshots.set(absPath, { content, fileExistedBefore: true });
     } catch {
-      this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
+      // File có thể bị xóa hoặc không đọc được sau khi stat — không tạo snapshot rỗng.
+      return;
     }
     void this.store.save(this.snapshots);
   }
@@ -93,7 +108,9 @@ export class DiffManager {
 
     let modifiedContent: string;
     try {
-      modifiedContent = fs.readFileSync(absPath, 'utf8');
+      modifiedContent = Buffer.from(
+        await vscode.workspace.fs.readFile(vscode.Uri.file(absPath))
+      ).toString('utf8');
     } catch {
       return;
     }
@@ -388,7 +405,12 @@ export class DiffManager {
   }
 
   private async reopenAsTextEditor(absPath: string): Promise<void> {
-    if (!fs.existsSync(absPath)) {
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
+    } catch (err) {
+      if (!isFileNotFound(err)) {
+        console.error('[ai-cli-diff] cannot stat file before reopening:', err);
+      }
       this.lastCursors.delete(absPath);
       return;
     }
@@ -508,7 +530,8 @@ export class DiffManager {
         eol = doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
       } else {
         try {
-          eol = detectEol(fs.readFileSync(absPath, 'utf8'));
+          const bytes = await vscode.workspace.fs.readFile(uri);
+          eol = detectEol(Buffer.from(bytes).toString('utf8'));
         } catch {
           eol = '\n';
         }
@@ -533,9 +556,9 @@ export class DiffManager {
   private async deleteFile(absPath: string): Promise<void> {
     try {
       await vscode.workspace.fs.delete(vscode.Uri.file(absPath));
-    } catch {
-      if (fs.existsSync(absPath)) {
-        throw new Error(`Cannot delete ${absPath}`);
+    } catch (err) {
+      if (!isFileNotFound(err)) {
+        throw err;
       }
     }
   }

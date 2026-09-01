@@ -1,20 +1,21 @@
 /**
  * workspaceWatcher.ts
  *
- * Theo dõi file thay đổi trong workspace qua VS Code API và fs.watch.
+ * Theo dõi file thay đổi trong workspace qua VS Code API.
  * Khi bất kỳ file nào được ghi (bởi Claude, hay bất kỳ tool nào),
  * extension sẽ tự động snapshot và hiện inline diff.
  *
  * Flow:
- *   1. onDidSaveTextDocument → sync snapshot để fs.watch không trigger diff sai
- *   2. fs.watch workspace folders → bắt được cả file ghi từ external process
+ *   1. onDidSaveTextDocument → sync snapshot để FileSystemWatcher không trigger diff sai
+ *   2. FileSystemWatcher → bắt được cả file ghi từ external process
  */
 
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
-import { FileSnapshotStore, isTextFile } from './fileSnapshotStore';
+import { BaselineScanner } from './baselineScanner';
+import { BaselineStore } from './baselineStore';
+import { isTextFile } from './fileTypeRules';
 import { isExcludedPathSegment } from './pathExclusions';
 import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
@@ -23,9 +24,10 @@ export class WorkspaceWatcher {
   private disposables: vscode.Disposable[] = [];
   /** Debounce: thời điểm lần cuối xử lý mỗi file */
   private lastProcessed = new Map<string, number>();
-  /** Lưu thời điểm VS Code vừa Save file (để bỏ qua fs.watch trigger từ chính VS Code) */
+  /** Lưu thời điểm VS Code vừa Save file (để bỏ qua watcher trigger từ chính VS Code) */
   private savedFilesByVsCode = new Map<string, number>();
-  private readonly snapshots: FileSnapshotStore;
+  private readonly snapshots: BaselineStore;
+  private readonly baselineScanner: BaselineScanner;
   private readonly pendingTimers = new Set<NodeJS.Timeout>();
   /** Debounce window is 500ms — keep entries an order of magnitude longer for safety, then drop. */
   private static readonly LAST_PROCESSED_TTL_MS = 60_000;
@@ -38,6 +40,9 @@ export class WorkspaceWatcher {
    */
   private suppressUntil = 0;
   private readonly burstMeter = new WriteBurstMeter();
+  /** Giữ external write đến khi initial baseline scan hoàn tất. */
+  private baselineScansInProgress = 0;
+  private readonly queuedExternalWrites = new Map<string, boolean>();
   /** Thời gian giữ file vượt ngưỡng burst chờ xác nhận git trước khi mở diff bình thường. */
   private holdMs = 2000;
   /** File vượt ngưỡng burst, đang chờ xác nhận git (xem resolveOrHold/scheduleHoldResolve). */
@@ -49,7 +54,8 @@ export class WorkspaceWatcher {
   private static readonly ACTIVE_TAB_CAPTURE_GAP_MS = 500;
 
   constructor(private readonly diffManager: DiffManager) {
-    this.snapshots = new FileSnapshotStore();
+    this.snapshots = new BaselineStore();
+    this.baselineScanner = new BaselineScanner(this.snapshots);
   }
 
   start(): void {
@@ -102,11 +108,9 @@ export class WorkspaceWatcher {
     }
     this.heldWrites.clear();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      try {
-        this.snapshots.buildInitialSnapshots(folder.uri.fsPath);
-      } catch {
+      void this.watchFolder(folder.uri.fsPath).catch(() => {
         // ignore — sẽ tự rebuild dần qua các event sau
-      }
+      });
     }
   }
 
@@ -124,8 +128,8 @@ export class WorkspaceWatcher {
   }
 
   /**
-   * Sync snapshot khi VS Code save — đảm bảo fs.watch không trigger diff sai.
-   * (onDidSaveTextDocument luôn fire trước fs.watch)
+   * Sync snapshot khi VS Code save — đảm bảo FileSystemWatcher không trigger diff sai.
+   * (onDidSaveTextDocument luôn fire trước watcher event)
    */
   private watchVscodeEvents(): void {
     const d = vscode.workspace.onDidSaveTextDocument((doc) => {
@@ -133,7 +137,7 @@ export class WorkspaceWatcher {
       // File quá lớn thì không giữ baseline — nhưng phải ĐÁNH DẤU, không chỉ bỏ
       // qua: nếu sau này nó tụt xuống dưới ngưỡng, "không có baseline" sẽ bị hiểu
       // là file mới và Revert all sẽ xoá mất file. Vẫn ghi nhận VS Code vừa lưu
-      // để fs.watch không hiểu nhầm đây là external write.
+      // để FileSystemWatcher không hiểu nhầm đây là external write.
       const text = doc.getText();
       if (exceedsLineLimit(text)) {
         this.snapshots.markSizeSkipped(filePath);
@@ -164,46 +168,57 @@ export class WorkspaceWatcher {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders) { return; }
 
-    for (const folder of folders) {
-      this.watchFolder(folder.uri.fsPath);
-    }
-
-    const d = vscode.workspace.onDidChangeWorkspaceFolders((e) => {
-      for (const added of e.added) {
-        this.watchFolder(added.uri.fsPath);
-      }
-    });
-    this.disposables.push(d);
-
-    // Sử dụng FileSystemWatcher native của VS Code thay vì fs.watch để tránh kẹt event loop
+    // Sử dụng FileSystemWatcher native của VS Code để tránh kẹt event loop
     // khi tạo mới project có hàng ngàn file (VD: node_modules trong Next.js)
     const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*');
     const handleUri = (uri: vscode.Uri) => {
-      this.handleExternalWrite(uri.fsPath);
+      this.handleExternalWrite(uri);
     };
     
     fileWatcher.onDidChange(handleUri);
     fileWatcher.onDidCreate(handleUri);
     
     this.disposables.push(fileWatcher);
+
+    for (const folder of folders) {
+      void this.watchFolder(folder.uri.fsPath);
+    }
+
+    const d = vscode.workspace.onDidChangeWorkspaceFolders((e) => {
+      for (const added of e.added) {
+        void this.watchFolder(added.uri.fsPath);
+      }
+    });
+    this.disposables.push(d);
   }
 
-  private watchFolder(folderPath: string): void {
+  private async watchFolder(folderPath: string): Promise<void> {
+    this.baselineScansInProgress++;
     try {
-      this.snapshots.buildInitialSnapshots(folderPath);
+      await this.baselineScanner.buildInitialSnapshots(folderPath);
     } catch (err) {
       console.error('[ai-cli-diff-view] workspaceWatcher buildInitialSnapshots error:', err);
+    } finally {
+      this.baselineScansInProgress--;
+      if (this.baselineScansInProgress === 0) {
+        const queued = Array.from(this.queuedExternalWrites.entries());
+        this.queuedExternalWrites.clear();
+        for (const [filePath, burstHold] of queued) {
+          this.lastProcessed.delete(filePath);
+          this.handleExternalWrite(vscode.Uri.file(filePath), burstHold);
+        }
+      }
     }
   }
 
-  private handleExternalWrite(filePath: string): void {
-    const absPath = this.normalizePath(filePath);
+  private handleExternalWrite(uri: vscode.Uri, burstHoldOverride?: boolean): void {
+    const absPath = this.normalizePath(uri.fsPath);
 
     // Đo tốc độ ghi TRƯỚC mọi filter bên dưới — xem writeBurstMeter.ts. Capture
     // quyết định NGAY tại thời điểm raw event tới (chính xác nhất so với cửa
     // sổ trượt), mang theo qua debounce/setTimeout bên dưới tới lúc quyết định
     // triggerDiff — không gọi record() lần 2 để tránh đếm trùng.
-    const burstHold = this.burstMeter.record(absPath);
+    const burstHold = burstHoldOverride ?? this.burstMeter.record(absPath);
 
     // Bỏ qua dependency / build output / tooling (dotnet bin/obj, node_modules, …)
     if (isExcludedPathSegment(absPath)) {
@@ -227,82 +242,93 @@ export class WorkspaceWatcher {
     if (!isTextFile(path.basename(absPath))) { return; }
     if (!this.isInWorkspace(absPath)) { return; }
 
-    // Đọc nội dung mới từ disk sau một chút để đảm bảo write xong
+    if (this.baselineScansInProgress > 0) {
+      this.queuedExternalWrites.set(absPath, burstHold);
+      return;
+    }
+
+    // Đọc nội dung mới sau một chút để đảm bảo write xong.
     const timer = setTimeout(() => {
       this.pendingTimers.delete(timer);
-      // Re-check after timeout in case VS Code onDidSaveTextDocument fired during the 200ms delay
-      const lastVsCodeSaveAfterTimeout = this.savedFilesByVsCode.get(absPath) ?? 0;
-      if (Date.now() - lastVsCodeSaveAfterTimeout < 2000) {
+      void this.processExternalWrite(uri, absPath, burstHold);
+    }, 200);
+    this.pendingTimers.add(timer);
+  }
+
+  private async processExternalWrite(
+    uri: vscode.Uri,
+    absPath: string,
+    burstHold: boolean
+  ): Promise<void> {
+    // Re-check after timeout in case VS Code onDidSaveTextDocument fired during the 200ms delay.
+    const lastVsCodeSaveAfterTimeout = this.savedFilesByVsCode.get(absPath) ?? 0;
+    if (Date.now() - lastVsCodeSaveAfterTimeout < 2000) {
+      return;
+    }
+
+    try {
+      // Lọc thô theo byte TRƯỚC khi đọc, để file vài MB không bị đọc lên chỉ để loại.
+      // stat() cũng là phép kiểm tra file tồn tại; nếu file đã bị xóa, nó sẽ throw.
+      const stat = await vscode.workspace.fs.stat(uri);
+      if (exceedsSizeLimitByBytes(stat.size)) {
+        this.snapshots.markSizeSkipped(absPath);
         return;
       }
 
-      try {
-        if (!fs.existsSync(absPath)) { return; }
+      const newContentRaw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
 
-        // Lọc thô theo byte TRƯỚC khi đọc, giống snapshotDir(): một file vài
-        // trăm MB (vd dump dữ liệu JSON) mà đọc thẳng vào string sẽ ngốn RAM và
-        // giết luôn extension host, trước cả khi exceedsLineLimit() kịp chạy.
-        if (exceedsSizeLimitByBytes(fs.statSync(absPath).size)) {
-          this.snapshots.markSizeSkipped(absPath);
-          return;
-        }
-
-        const newContentRaw = fs.readFileSync(absPath, 'utf8');
-
-        // File vượt giới hạn số dòng -> coi như không tồn tại với extension:
-        // không giữ baseline, không mở diff. Xoá cả baseline cũ phòng khi file
-        // vừa vượt ngưỡng (hoặc user vừa hạ setting xuống).
-        if (exceedsLineLimit(newContentRaw)) {
-          this.snapshots.markSizeSkipped(absPath);
-          return;
-        }
-
-        // Trong window external batch (vd: git checkout): chỉ refresh baseline,
-        // không tạo diff. Tránh việc so working tree mới với baseline branch cũ.
-        if (this.isSuppressed()) {
-          this.snapshots.set(absPath, newContentRaw);
-          return;
-        }
-
-        const oldContentRaw = this.snapshots.get(absPath);
-
-        const newContent = this.normalizeContent(newContentRaw);
-        const oldContent = oldContentRaw !== undefined ? this.normalizeContent(oldContentRaw) : undefined;
-
-        if (oldContent === undefined) {
-          this.snapshots.set(absPath, newContentRaw);
-          // File từng bị bỏ qua vì quá lớn và giờ vừa lọt xuống dưới ngưỡng:
-          // nó KHÔNG phải file mới. Không có baseline cũ để so, nên chỉ nhận nội
-          // dung hiện tại làm baseline rồi thôi. Mở diff ở đây sẽ hiện cả file là
-          // "thêm mới", và Revert all trên diff đó sẽ xoá mất file.
-          if (this.snapshots.consumeSizeSkipped(absPath)) { return; }
-          if (newContent.trim()) {
-            this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
-          }
-          return;
-        }
-
-        if (oldContent === newContent) {
-          // normalizeContent() bỏ qua EOL, nên nhánh này còn nuốt cả trường hợp
-          // file chỉ đổi CRLF <-> LF. Phải refresh baseline raw trước khi thoát,
-          // nếu không snapshot giữ EOL cũ vĩnh viễn và lần sửa 1 dòng kế tiếp sẽ
-          // bị so lệch EOL -> diff phủ cả file (bug #15).
-          this.snapshots.set(absPath, newContentRaw);
-          return;
-        }
-
-        // Trước khi trigger diff mới, cập nhật baseline vào snapshot store của watcher
-        // để lần save kế tiếp không bị trigger lại.
-        this.snapshots.set(absPath, newContentRaw);
-
-        if (!this.diffManager.hasPendingDiff(absPath)) {
-          this.resolveOrHold(absPath, oldContentRaw!, newContentRaw, true, burstHold);
-        }
-      } catch {
-        // file đang bị lock hoặc xóa — bỏ qua
+      // File vượt giới hạn số dòng -> coi như không tồn tại với extension:
+      // không giữ baseline, không mở diff. Xoá cả baseline cũ phòng khi file
+      // vừa vượt ngưỡng (hoặc user vừa hạ setting xuống).
+      if (exceedsLineLimit(newContentRaw)) {
+        this.snapshots.markSizeSkipped(absPath);
+        return;
       }
-    }, 200);
-    this.pendingTimers.add(timer);
+
+      // Trong window external batch (vd: git checkout): chỉ refresh baseline,
+      // không tạo diff. Tránh việc so working tree mới với baseline branch cũ.
+      if (this.isSuppressed()) {
+        this.snapshots.set(absPath, newContentRaw);
+        return;
+      }
+
+      const oldContentRaw = this.snapshots.get(absPath);
+
+      const newContent = this.normalizeContent(newContentRaw);
+      const oldContent = oldContentRaw !== undefined ? this.normalizeContent(oldContentRaw) : undefined;
+
+      if (oldContent === undefined) {
+        this.snapshots.set(absPath, newContentRaw);
+        // File từng bị bỏ qua vì quá lớn và giờ vừa lọt xuống dưới ngưỡng:
+        // nó KHÔNG phải file mới. Không có baseline cũ để so, nên chỉ nhận nội
+        // dung hiện tại làm baseline rồi thôi. Mở diff ở đây sẽ hiện cả file là
+        // "thêm mới", và Revert all trên diff đó sẽ xoá mất file.
+        if (this.snapshots.consumeSizeSkipped(absPath)) { return; }
+        if (newContent.trim()) {
+          this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
+        }
+        return;
+      }
+
+      if (oldContent === newContent) {
+        // normalizeContent() bỏ qua EOL, nên nhánh này còn nuốt cả trường hợp
+        // file chỉ đổi CRLF <-> LF. Phải refresh baseline raw trước khi thoát,
+        // nếu không snapshot giữ EOL cũ vĩnh viễn và lần sửa 1 dòng kế tiếp sẽ
+        // bị so lệch EOL -> diff phủ cả file (bug #15).
+        this.snapshots.set(absPath, newContentRaw);
+        return;
+      }
+
+      // Trước khi trigger diff mới, cập nhật baseline vào snapshot store của watcher
+      // để lần save kế tiếp không bị trigger lại.
+      this.snapshots.set(absPath, newContentRaw);
+
+      if (!this.diffManager.hasPendingDiff(absPath)) {
+        this.resolveOrHold(absPath, oldContentRaw!, newContentRaw, true, burstHold);
+      }
+    } catch {
+      // file đang bị lock, không có quyền đọc hoặc đã bị xóa — bỏ qua
+    }
   }
 
   private triggerDiff(
@@ -392,6 +418,6 @@ export class WorkspaceWatcher {
       this.holdResolveTimer = undefined;
     }
     this.heldWrites.clear();
+    this.queuedExternalWrites.clear();
   }
 }
-

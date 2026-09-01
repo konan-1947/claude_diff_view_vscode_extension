@@ -58,7 +58,7 @@ There used to be a third, hook-based pipeline (`PreToolUse`/`PostToolUse` hooks 
 
 **Workspace watcher (primary path for all external AI CLIs)**
 
-`src/watcher/workspaceWatcher.ts` combines save events with a `FileSystemWatcher` for any external write, regardless of which tool made it. `src/watcher/fileSnapshotStore.ts` builds and updates the per-folder text-file baseline so a newly written file is compared against prior content rather than treated as brand new. `src/watcher/pathExclusions.ts` filters out paths that should not be tracked. `src/watcher/writeBurstMeter.ts` decides whether a write is part of a burst (git checkout vs AI edits); writes past the burst threshold are held in `WorkspaceWatcher`'s `heldWrites` queue for `burstDetectionHoldMs` instead of opening a diff immediately — if `GitBranchWatcher` confirms a branch change in that window (`notifyExternalBatch()`), held writes are silently dropped; otherwise they open normally once the hold expires. See `docs/GIT_VS_AI_EDIT_DETECTION.md`.
+`src/watcher/workspaceWatcher.ts` combines save events with a `FileSystemWatcher` for any external write, regardless of which tool made it. `src/watcher/baselineScanner.ts` builds the per-folder text-file baseline and `src/watcher/baselineStore.ts` stores it, so a newly written file is compared against prior content rather than treated as brand new. `src/watcher/pathExclusions.ts` filters out paths that should not be tracked. `src/watcher/writeBurstMeter.ts` decides whether a write is part of a burst (git checkout vs AI edits); writes past the burst threshold are held in `WorkspaceWatcher`'s `heldWrites` queue for `burstDetectionHoldMs` instead of opening a diff immediately — if `GitBranchWatcher` confirms a branch change in that window (`notifyExternalBatch()`), held writes are silently dropped; otherwise they open normally once the hold expires. See `docs/GIT_VS_AI_EDIT_DETECTION.md`.
 
 **Built-in runner (Claude-only)**
 
@@ -85,7 +85,7 @@ Pending-file navigation logic lives in `src/diff/navigationManager.ts`, reachabl
 
 ### Configurable text-file detection
 
-`refreshTextFileRules()` / `isTextFile()` in `src/watcher/fileSnapshotStore.ts` decide which files are reviewable. They read four settings (see below) and are refreshed on the corresponding `onDidChangeConfiguration` events. `supportedFileDetectionMode` chooses between built-in rules + custom, or custom-only.
+`refreshTextFileRules()` / `isTextFile()` in `src/watcher/fileTypeRules.ts` decide which files are reviewable. They read four settings (see below) and are refreshed on the corresponding `onDidChangeConfiguration` events. `supportedFileDetectionMode` chooses between built-in rules + custom, or custom-only.
 
 ### Important implementation constraints
 
@@ -101,7 +101,8 @@ Pending-file navigation logic lives in `src/diff/navigationManager.ts`, reachabl
 | `ai-cli-diff-view.supportedFileExtensions` | Extra extensions to treat as text (dot optional) |
 | `ai-cli-diff-view.supportedFilenames` | Extra exact filenames to treat as text |
 | `ai-cli-diff-view.supportedFilenamePatterns` | Extra basename globs (`*`, `?`) to treat as text |
-| `ai-cli-diff-view.maxFileLines` | Advanced: ignore files above this many lines — no baseline, no diff (default 5000; `0` disables). Enforced in `src/watcher/fileSizeLimit.ts`, applied by `fileSnapshotStore.snapshotDir()` and both write paths in `workspaceWatcher`. Skipped files are recorded in `FileSnapshotStore.sizeSkipped` so that one later dropping below the limit is not mistaken for a brand-new file (which would make Revert all delete it) |
+| `ai-cli-diff-view.maxFileLines` | Advanced: ignore files above this many lines — no baseline, no diff (default 5000; `0` disables). Enforced in `src/watcher/fileSizeLimit.ts`, applied by `baselineScanner` and both write paths in `workspaceWatcher`. Skipped files are recorded in `BaselineStore.sizeSkipped` so that one later dropping below the limit is not mistaken for a brand-new file (which would make Revert all delete it) |
+| `ai-cli-diff-view.baselineScanConcurrency` | Advanced: maximum number of files read concurrently during the initial baseline scan (default 4, range 1–16). Lower it for large or remote workspaces to reduce I/O and memory pressure. |
 | `ai-cli-diff-view.burstDetectionEnabled` | Advanced: hold files beyond the burst threshold to confirm a git branch change before opening their diff, instead of opening immediately (see `docs/GIT_VS_AI_EDIT_DETECTION.md`) |
 | `ai-cli-diff-view.burstDetectionWindowMs` | Advanced: sliding window (ms) used to count file changes for burst detection (default 300) |
 | `ai-cli-diff-view.burstDetectionThreshold` | Advanced: number of distinct files changed within the window that counts as a burst (default 8) |
