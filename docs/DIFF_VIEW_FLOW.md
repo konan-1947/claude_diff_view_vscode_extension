@@ -69,13 +69,15 @@ WorkspaceWatcher.start()
   │                                     + đánh dấu savedFilesByVsCode (window 2s)
   └── vscode.workspace.createFileSystemWatcher('**/*')
        ↓ onDidChange / onDidCreate
-       handleExternalWrite(filePath):
+         handleExternalWrite(uri):
          - skip nếu isExcludedPathSegment (node_modules, bin/obj, ...)
          - skip nếu vừa save bởi VS Code (< 2s)
          - debounce per-file 500ms
          - skip nếu không phải text file hoặc ngoài workspace
          - setTimeout(200ms) → đọc lại file
             - re-check savedFilesByVsCode (race)
+            - workspace.fs.stat(uri) → kiểm tra tồn tại + byte limit
+            - workspace.fs.readFile(uri) → đọc nội dung UTF-8 bất đồng bộ
             - nếu isSuppressed() (git branch switch window): chỉ refresh baseline,
               không tạo diff
             - so sánh old/new (đã normalize trim + \r\n→\n)
@@ -313,7 +315,7 @@ Context key:
                     AI CLI (Claude/Codex/Qwen…) ghi file ra disk
                                  │
                                  ▼
-              WorkspaceWatcher (onDidSaveTextDocument + fs.watch '**/*')
+              WorkspaceWatcher (onDidSaveTextDocument + FileSystemWatcher '**/*')
                  ─ lọc excluded / VS Code save / non-text / suppress window
                  ─ burst? → giữ trong heldWrites, chờ xác nhận git
                                  │
