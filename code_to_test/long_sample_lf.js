@@ -11,7 +11,7 @@
 'use strict';
 
 const DEFAULT_TIMEOUT_MS = 12000;
-const MAX_RETRIES = 7;
+const MAX_RETRIES = 8;
 const BACKOFF_BASE_MS = 250;
 const BACKOFF_MAX_MS = 10000;
 

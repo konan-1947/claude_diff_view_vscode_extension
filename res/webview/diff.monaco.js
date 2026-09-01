@@ -62,6 +62,7 @@
       decorationIds: [],
       viewZoneIds: [],
       hoveredGroupIdx: -1,
+      toolbarHovered: false,
       didAutoReveal: false,
       currentTheme: null,
       inFlight: false,
@@ -177,6 +178,18 @@
     state.editor.onMouseLeave(() => { updateHoveredGroupFromCursor(); });
     state.editor.onDidChangeCursorPosition(() => { updateHoveredGroupFromCursor(); });
 
+    const toolbar = document.getElementById('toolbar');
+    if (toolbar) {
+      toolbar.addEventListener('pointerenter', () => {
+        state.toolbarHovered = true;
+        setHoveredGroup(-1);
+      });
+      toolbar.addEventListener('pointerleave', () => {
+        state.toolbarHovered = false;
+      });
+      toolbar.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
+    }
+
     registerActions();
 
     document.getElementById('btn-accept-file').addEventListener('click', () => {
@@ -198,9 +211,11 @@
       gotoHunk(+1);
     });
     document.getElementById('btn-next-file').addEventListener('click', () => {
+      setHoveredGroup(-1);
       vscodeApi.postMessage({ type: 'nextFile' });
     });
     document.getElementById('btn-prev-file').addEventListener('click', () => {
+      setHoveredGroup(-1);
       vscodeApi.postMessage({ type: 'prevFile' });
     });
 
@@ -474,6 +489,26 @@
       const top = state.editor.getBottomForLineNumber(w._group.endLine) - state.editor.getScrollTop();
       w._dom.style.top = top + 'px';
       w._dom.style.right = (minimapW + scrollbarW + 8) + 'px';
+
+      const toolbar = document.getElementById('toolbar');
+      const editorDom = state.editor.getDomNode();
+      if (!toolbar || !editorDom) { return; }
+      const barRect = w._dom.getBoundingClientRect();
+      const toolbarRect = toolbar.getBoundingClientRect();
+      const overlaps = barRect.left < toolbarRect.right
+        && barRect.right > toolbarRect.left
+        && barRect.top < toolbarRect.bottom
+        && barRect.bottom > toolbarRect.top;
+      if (!overlaps) { return; }
+
+      // Keep the hunk action bar out of the file/hunk navigation hit area.
+      const editorRect = editorDom.getBoundingClientRect();
+      const topAboveToolbar = toolbarRect.top - barRect.height - 6;
+      if (topAboveToolbar < editorRect.top + 4) {
+        setHoveredGroup(-1);
+        return;
+      }
+      w._dom.style.top = (topAboveToolbar - editorRect.top) + 'px';
     }
 
     function maybeAutoReveal() {
@@ -495,6 +530,7 @@
     }
 
     function setHoveredGroup(idx) {
+      if (state.toolbarHovered && idx !== -1) { return; }
       if (idx === state.hoveredGroupIdx) { return; }
       // Chỉ đụng vào thanh cũ và thanh mới, không quét cả danh sách: hàm này chạy
       // từ onMouseMove, tức mỗi lần di chuột, nên chi phí phải là hằng số bất kể

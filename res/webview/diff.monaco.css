@@ -21,7 +21,8 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  z-index: 30;
+  padding: 4px 6px;
+  z-index: 40;
   pointer-events: auto;
 }
 
@@ -174,7 +175,7 @@ body {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
-  z-index: 30;
+  z-index: 20;
 }
 
 .hunk-bar.visible {
