@@ -20,6 +20,11 @@ import { isExcludedPathSegment } from './pathExclusions';
 import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
 
+interface ExternalWriteOptions {
+  burstHoldOverride?: boolean;
+  readDelayMs?: number;
+}
+
 export class WorkspaceWatcher {
   private disposables: vscode.Disposable[] = [];
   /** Debounce: thời điểm lần cuối xử lý mỗi file */
@@ -29,6 +34,9 @@ export class WorkspaceWatcher {
   private readonly snapshots: BaselineStore;
   private readonly baselineScanner: BaselineScanner;
   private readonly pendingTimers = new Set<NodeJS.Timeout>();
+  /** Directory-create events waiting for one settled subtree reconciliation. */
+  private readonly pendingDirectoryScans = new Map<string, NodeJS.Timeout>();
+  private static readonly DIRECTORY_SETTLE_MS = 300;
   /** Debounce window is 500ms — keep entries an order of magnitude longer for safety, then drop. */
   private static readonly LAST_PROCESSED_TTL_MS = 60_000;
   /** VS Code save guard window is 2s — same safety multiplier. */
@@ -42,7 +50,7 @@ export class WorkspaceWatcher {
   private readonly burstMeter = new WriteBurstMeter();
   /** Giữ external write đến khi initial baseline scan hoàn tất. */
   private baselineScansInProgress = 0;
-  private readonly queuedExternalWrites = new Map<string, boolean>();
+  private readonly queuedExternalWrites = new Map<string, { burstHold: boolean; readDelayMs: number }>();
   /** Thời gian giữ file vượt ngưỡng burst chờ xác nhận git trước khi mở diff bình thường. */
   private holdMs = 2000;
   /** File vượt ngưỡng burst, đang chờ xác nhận git (xem resolveOrHold/scheduleHoldResolve). */
@@ -176,7 +184,9 @@ export class WorkspaceWatcher {
     };
     
     fileWatcher.onDidChange(handleUri);
-    fileWatcher.onDidCreate(handleUri);
+    fileWatcher.onDidCreate((uri) => {
+      void this.handleExternalCreate(uri);
+    });
     
     this.disposables.push(fileWatcher);
 
@@ -203,22 +213,112 @@ export class WorkspaceWatcher {
       if (this.baselineScansInProgress === 0) {
         const queued = Array.from(this.queuedExternalWrites.entries());
         this.queuedExternalWrites.clear();
-        for (const [filePath, burstHold] of queued) {
+        for (const [filePath, queuedWrite] of queued) {
           this.lastProcessed.delete(filePath);
-          this.handleExternalWrite(vscode.Uri.file(filePath), burstHold);
+          this.handleExternalWrite(vscode.Uri.file(filePath), {
+            burstHoldOverride: queuedWrite.burstHold,
+            readDelayMs: queuedWrite.readDelayMs,
+          });
         }
       }
     }
   }
 
-  private handleExternalWrite(uri: vscode.Uri, burstHoldOverride?: boolean): void {
+  /**
+   * File-create events follow the normal write path. Directory-create events
+   * need one delayed subtree scan because a recursive watcher can observe the
+   * new directory but miss children created in the same filesystem batch.
+   */
+  private async handleExternalCreate(uri: vscode.Uri): Promise<void> {
+    try {
+      const stat = await vscode.workspace.fs.stat(uri);
+      const isDirectory = (stat.type & vscode.FileType.Directory) !== 0;
+      const isSymlink = (stat.type & vscode.FileType.SymbolicLink) !== 0;
+      if (!isDirectory) {
+        this.handleExternalWrite(uri);
+        return;
+      }
+
+      const absPath = this.normalizePath(uri.fsPath);
+      if (isSymlink || isExcludedPathSegment(absPath) || !this.isInWorkspace(absPath)) {
+        return;
+      }
+      this.scheduleDirectoryScan(uri, absPath);
+    } catch {
+      // The created path may already have been moved or deleted.
+    }
+  }
+
+  private scheduleDirectoryScan(uri: vscode.Uri, absPath: string): void {
+    // A pending ancestor scan already covers this directory.
+    for (const pendingPath of this.pendingDirectoryScans.keys()) {
+      if (this.isSameOrDescendant(absPath, pendingPath)) {
+        return;
+      }
+    }
+
+    // Prefer the broader scan if a parent event arrives after child events.
+    for (const [pendingPath, timer] of this.pendingDirectoryScans) {
+      if (this.isSameOrDescendant(pendingPath, absPath)) {
+        clearTimeout(timer);
+        this.pendingDirectoryScans.delete(pendingPath);
+      }
+    }
+
+    const timer = setTimeout(() => {
+      this.pendingDirectoryScans.delete(absPath);
+      void this.scanCreatedDirectory(uri);
+    }, WorkspaceWatcher.DIRECTORY_SETTLE_MS);
+    this.pendingDirectoryScans.set(absPath, timer);
+  }
+
+  private isSameOrDescendant(candidatePath: string, parentPath: string): boolean {
+    const relative = path.relative(parentPath, candidatePath);
+    return relative === '' ||
+      (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
+  }
+
+  private async scanCreatedDirectory(rootUri: vscode.Uri): Promise<void> {
+    const pending = [rootUri];
+    while (pending.length > 0) {
+      const directory = pending.pop()!;
+      let entries: [string, vscode.FileType][];
+      try {
+        entries = await vscode.workspace.fs.readDirectory(directory);
+      } catch {
+        continue;
+      }
+
+      for (const [name, type] of entries) {
+        const childUri = vscode.Uri.joinPath(directory, name);
+        const childPath = this.normalizePath(childUri.fsPath);
+        if (isExcludedPathSegment(childPath) || (type & vscode.FileType.SymbolicLink) !== 0) {
+          continue;
+        }
+        if ((type & vscode.FileType.Directory) !== 0) {
+          pending.push(childUri);
+        } else if ((type & vscode.FileType.File) !== 0 && isTextFile(name)) {
+          // The directory already had a settle delay, so do not add the normal
+          // 200ms file-write delay again. Existing file debounce handles overlap
+          // with a child onDidCreate event that VS Code did deliver.
+          this.handleExternalWrite(childUri, { readDelayMs: 0 });
+        }
+      }
+    }
+  }
+
+  private handleExternalWrite(
+    uri: vscode.Uri,
+    options: ExternalWriteOptions = {}
+  ): void {
     const absPath = this.normalizePath(uri.fsPath);
+    const readDelayMs = options.readDelayMs ?? 200;
 
     // Đo tốc độ ghi TRƯỚC mọi filter bên dưới — xem writeBurstMeter.ts. Capture
     // quyết định NGAY tại thời điểm raw event tới (chính xác nhất so với cửa
     // sổ trượt), mang theo qua debounce/setTimeout bên dưới tới lúc quyết định
     // triggerDiff — không gọi record() lần 2 để tránh đếm trùng.
-    const burstHold = burstHoldOverride ?? this.burstMeter.record(absPath);
+    const burstHold = options.burstHoldOverride ?? this.burstMeter.record(absPath);
 
     // Bỏ qua dependency / build output / tooling (dotnet bin/obj, node_modules, …)
     if (isExcludedPathSegment(absPath)) {
@@ -243,7 +343,12 @@ export class WorkspaceWatcher {
     if (!this.isInWorkspace(absPath)) { return; }
 
     if (this.baselineScansInProgress > 0) {
-      this.queuedExternalWrites.set(absPath, burstHold);
+      this.queuedExternalWrites.set(absPath, { burstHold, readDelayMs });
+      return;
+    }
+
+    if (readDelayMs <= 0) {
+      void this.processExternalWrite(uri, absPath, burstHold);
       return;
     }
 
@@ -251,7 +356,7 @@ export class WorkspaceWatcher {
     const timer = setTimeout(() => {
       this.pendingTimers.delete(timer);
       void this.processExternalWrite(uri, absPath, burstHold);
-    }, 200);
+    }, readDelayMs);
     this.pendingTimers.add(timer);
   }
 
@@ -260,7 +365,8 @@ export class WorkspaceWatcher {
     absPath: string,
     burstHold: boolean
   ): Promise<void> {
-    // Re-check after timeout in case VS Code onDidSaveTextDocument fired during the 200ms delay.
+    // Re-check immediately before reading in case VS Code saved the document
+    // while this write was waiting for its settle delay.
     const lastVsCodeSaveAfterTimeout = this.savedFilesByVsCode.get(absPath) ?? 0;
     if (Date.now() - lastVsCodeSaveAfterTimeout < 2000) {
       return;
@@ -413,6 +519,10 @@ export class WorkspaceWatcher {
       clearTimeout(timer);
     }
     this.pendingTimers.clear();
+    for (const timer of this.pendingDirectoryScans.values()) {
+      clearTimeout(timer);
+    }
+    this.pendingDirectoryScans.clear();
     if (this.holdResolveTimer) {
       clearTimeout(this.holdResolveTimer);
       this.holdResolveTimer = undefined;
