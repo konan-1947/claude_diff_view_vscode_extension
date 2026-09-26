@@ -49,6 +49,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private errorMessage = '';
   private diffDisposable?: vscode.Disposable;
   private lastTerminalFocused = false;
+  private agentModeActive = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -80,6 +81,11 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
   refresh(): void {
     this.postFilesUpdate();
+  }
+
+  setAgentMode(active: boolean): void {
+    this.agentModeActive = active;
+    void this.view?.webview.postMessage({ type: 'agentModeState', active });
   }
 
   focusTerminal(): void {
@@ -341,6 +347,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
+    console.log('[ai-cli-diff-view] terminal:resolveWebviewView:start');
     this.view = webviewView;
     const xtermDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm');
     const iconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons');
@@ -356,9 +363,14 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
         return;
       }
       switch (msg.type) {
+        case 'toggleAgentMode':
+          console.log('[ai-cli-diff-view] terminal:toggleAgentMode');
+          void vscode.commands.executeCommand('ai-cli-diff-view.toggleAgentMode');
+          return;
         case 'ready':
           // Push initial files page state once the webview is ready.
           this.postFilesUpdate();
+          this.setAgentMode(this.agentModeActive);
           if (!this.context.globalState.get<boolean>(INTRODUCE_SEEN_KEY)) {
             void this.view?.webview.postMessage({ type: 'showIntroduce' });
           }
@@ -525,6 +537,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     });
 
     this.render();
+    console.log('[ai-cli-diff-view] terminal:resolveWebviewView:complete');
   }
 
   private render(): void {

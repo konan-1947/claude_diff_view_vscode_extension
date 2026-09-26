@@ -101,6 +101,22 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     align-items: center;
     gap: 2px;
   }
+  .agent-mode-btn {
+    min-width: 92px;
+    height: 22px;
+    padding: 0 9px;
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 20px;
+    white-space: nowrap;
+  }
+  .agent-mode-btn:hover { background: var(--vscode-button-hoverBackground); }
+  .agent-mode-btn:active { transform: translateY(1px); }
   .header-btn {
     background: transparent;
     color: var(--vscode-icon-foreground, var(--vscode-foreground));
@@ -542,6 +558,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
       <span class="title-files">Pending Files</span>
     </span>
     <div id="header-actions">
+      <button id="btn-agent-mode" class="agent-mode-btn" type="button" title="Open Agent mode" aria-label="Open Agent mode">Agent mode</button>
       <button id="btn-toggle-page" class="header-btn" title="Switch view" aria-label="Switch view">
         <svg class="toggle-to-files" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 6h18"/>
@@ -772,6 +789,16 @@ ${FONT_OPTIONS.map((f) => {
       const termHost = document.getElementById('term-host');
       const tabsEl = document.getElementById('tabs');
       const btnAddTab = document.getElementById('tab-add');
+      const btnAgentMode = document.getElementById('btn-agent-mode');
+      let agentModeActive = false;
+
+      function setAgentModeState(active) {
+        agentModeActive = !!active;
+        btnAgentMode.textContent = agentModeActive ? 'Tắt Agent mode' : 'Agent mode';
+        const label = agentModeActive ? 'Tắt Agent mode' : 'Bật Agent mode';
+        btnAgentMode.title = label;
+        btnAgentMode.setAttribute('aria-label', label);
+      }
 
       // id -> { id, term, fit, host, tab, dataDisp, exited }
       const sessions = new Map();
@@ -1165,6 +1192,8 @@ ${FONT_OPTIONS.map((f) => {
           }
         } else if (msg.type === 'showIntroduce') {
           openIntro();
+        } else if (msg.type === 'agentModeState') {
+          setAgentModeState(msg.active);
         } else if (msg.type === 'focusTerminal') {
           const sess = sessions.get(activeId);
           if (sess) {
@@ -1174,6 +1203,10 @@ ${FONT_OPTIONS.map((f) => {
       });
 
       // ---- Page toggle ----
+      btnAgentMode.addEventListener('click', () => {
+        vscode.postMessage({ type: 'toggleAgentMode' });
+      });
+
       const btnTogglePage = document.getElementById('btn-toggle-page');
       btnTogglePage.addEventListener('click', () => {
         const isTerminal = document.body.classList.contains('page-terminal');

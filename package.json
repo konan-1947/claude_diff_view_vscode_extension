@@ -150,6 +150,14 @@
         "title": "AI CLI Diff: Start Claude Session"
       },
       {
+        "command": "ai-cli-diff-view.openWebviewPanelTest",
+        "title": "AI CLI Diff: Open WebviewPanel Test"
+      },
+      {
+        "command": "ai-cli-diff-view.toggleAgentMode",
+        "title": "AI CLI Diff: Toggle Agent Mode"
+      },
+      {
         "command": "ai-cli-diff-view.acceptAllHunks",
         "title": "AI CLI Diff: Accept All Changes"
       },

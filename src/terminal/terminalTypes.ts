@@ -57,6 +57,7 @@ export const MAX_FILE_LINES_CEILING = 200000;
 
 export type IncomingMessage =
   | { type: 'ready' }
+  | { type: 'toggleAgentMode' }
   | { type: 'createSession'; cols: number; rows: number }
   | { type: 'closeSession'; id: string }
   | { type: 'input'; id: string; data: string }
