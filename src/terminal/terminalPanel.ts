@@ -39,8 +39,12 @@ interface SessionRecord {
 
 export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ai-cli-diff-view.terminal';
+  public static readonly panelViewType = 'ai-cli-diff-view.terminalPanel';
 
   private view?: vscode.WebviewView;
+  private panel?: vscode.WebviewPanel;
+  private webview?: vscode.Webview;
+  private webviewMessageDisposable?: vscode.Disposable;
   private sessions = new Map<string, SessionRecord>();
   private nextSessionNum = 0;
 
@@ -50,6 +54,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private diffDisposable?: vscode.Disposable;
   private lastTerminalFocused = false;
   private agentModeActive = false;
+  private focusWhenReady = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -85,19 +90,24 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
   setAgentMode(active: boolean): void {
     this.agentModeActive = active;
-    void this.view?.webview.postMessage({ type: 'agentModeState', active });
+    void this.webview?.postMessage({ type: 'agentModeState', active });
   }
 
   focusTerminal(): void {
-    if (!this.view) {
+    if (!this.webview) {
       return;
     }
     try {
-      this.view.show(false);
+      if (this.view) {
+        this.view.show(false);
+      } else {
+        this.panel?.reveal(vscode.ViewColumn.Active, false);
+      }
     } catch {
       // view may not be resolvable yet; ignore.
     }
-    void this.view.webview.postMessage({ type: 'focusTerminal' });
+    this.focusWhenReady = true;
+    void this.webview.postMessage({ type: 'focusTerminal' });
   }
 
   wasTerminalFocused(): boolean {
@@ -105,7 +115,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private postFilesUpdate(): void {
-    if (!this.view) {
+    if (!this.webview) {
       return;
     }
     const html = buildPendingFilesInnerHtml({
@@ -115,14 +125,14 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       lastPrompt: this.lastPrompt,
       errorMessage: this.errorMessage,
     });
-    void this.view.webview.postMessage({ type: 'filesUpdate', html });
+    void this.webview.postMessage({ type: 'filesUpdate', html });
   }
 
   private fileIconsBase(): string {
-    if (!this.view) {
+    if (!this.webview) {
       return '';
     }
-    return this.view.webview
+    return this.webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons'))
       .toString() + '/';
   }
@@ -134,13 +144,13 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const pty = new PtySession();
     const subs: vscode.Disposable[] = [
       pty.onData((data) => {
-        this.view?.webview.postMessage({ type: 'data', id, data });
+        this.webview?.postMessage({ type: 'data', id, data });
       }),
       pty.onExit((code) => {
-        this.view?.webview.postMessage({ type: 'exit', id, code });
+        this.webview?.postMessage({ type: 'exit', id, code });
       }),
       pty.onError((message) => {
-        this.view?.webview.postMessage({ type: 'error', id, message });
+        this.webview?.postMessage({ type: 'error', id, message });
       }),
     ];
     const safeCols = Math.max(1, cols | 0);
@@ -148,7 +158,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
     pty.start(cwd, safeCols, safeRows);
     this.sessions.set(id, { pty, subs, title, cols: safeCols, rows: safeRows });
-    this.view?.webview.postMessage({ type: 'sessionCreated', id, title });
+    this.webview?.postMessage({ type: 'sessionCreated', id, title });
     return { id, title };
   }
 
@@ -162,7 +172,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     }
     try { rec.pty.dispose(); } catch { /* ignore */ }
     this.sessions.delete(id);
-    this.view?.webview.postMessage({ type: 'sessionClosed', id });
+    this.webview?.postMessage({ type: 'sessionClosed', id });
   }
 
   private loadSettings(): TerminalSettings {
@@ -349,16 +359,53 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     console.log('[ai-cli-diff-view] terminal:resolveWebviewView:start');
     this.view = webviewView;
+    this.panel = undefined;
+    this.attachWebview(webviewView.webview);
+    console.log('[ai-cli-diff-view] terminal:resolveWebviewView:complete');
+  }
+
+  openWebviewPanel(): vscode.WebviewPanel {
+    const panel = vscode.window.createWebviewPanel(
+      TerminalPanelProvider.panelViewType,
+      'Terminal',
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: false,
+      }
+    );
+    this.panel = panel;
+    this.view = undefined;
+    this.attachWebview(panel.webview);
+    panel.onDidDispose(() => {
+      this.panel = undefined;
+      this.dispose();
+    }, null, this.context.subscriptions);
+    return panel;
+  }
+
+  startFresh(): void {
+    this.disposeSessions();
+    this.render();
+  }
+
+  resetSessions(): void {
+    this.disposeSessions();
+  }
+
+  private attachWebview(webview: vscode.Webview): void {
+    this.webview = webview;
     const xtermDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm');
     const iconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons');
     const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
 
-    webviewView.webview.options = {
+    webview.options = {
       enableScripts: true,
       localResourceRoots: [xtermDir, iconsDir, introDir],
     };
 
-    webviewView.webview.onDidReceiveMessage((msg: IncomingMessage) => {
+    this.webviewMessageDisposable?.dispose();
+    this.webviewMessageDisposable = webview.onDidReceiveMessage((msg: IncomingMessage) => {
       if (!msg || typeof msg !== 'object') {
         return;
       }
@@ -371,8 +418,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           // Push initial files page state once the webview is ready.
           this.postFilesUpdate();
           this.setAgentMode(this.agentModeActive);
+          if (this.focusWhenReady) {
+            this.focusWhenReady = false;
+            void this.webview?.postMessage({ type: 'focusTerminal' });
+          }
           if (!this.context.globalState.get<boolean>(INTRODUCE_SEEN_KEY)) {
-            void this.view?.webview.postMessage({ type: 'showIntroduce' });
+            void this.webview?.postMessage({ type: 'showIntroduce' });
           }
           return;
         case 'createSession':
@@ -413,13 +464,13 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           const id = msg.id;
           const subs: vscode.Disposable[] = [
             pty.onData((data) => {
-              this.view?.webview.postMessage({ type: 'data', id, data });
+              this.webview?.postMessage({ type: 'data', id, data });
             }),
             pty.onExit((code) => {
-              this.view?.webview.postMessage({ type: 'exit', id, code });
+              this.webview?.postMessage({ type: 'exit', id, code });
             }),
             pty.onError((message) => {
-              this.view?.webview.postMessage({ type: 'error', id, message });
+              this.webview?.postMessage({ type: 'error', id, message });
             }),
           ];
           const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
@@ -428,12 +479,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         }
         case 'getSettings':
-          this.view?.webview.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
+          this.webview?.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           return;
         case 'installFont': {
           const font = findInstallableForPrimary(msg.primary || '');
           if (!font) {
-            this.view?.webview.postMessage({
+            this.webview?.postMessage({
               type: 'installError',
               primary: msg.primary,
               error: 'No installer registered for this font.',
@@ -441,15 +492,15 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             return;
           }
           const primary = font.primary;
-          this.view?.webview.postMessage({
+          this.webview?.postMessage({
             type: 'installProgress',
             primary,
             message: 'Starting…',
           });
           void installFont(font, (m) => {
-            this.view?.webview.postMessage({ type: 'installProgress', primary, message: m });
+            this.webview?.postMessage({ type: 'installProgress', primary, message: m });
           }).then((result) => {
-            this.view?.webview.postMessage({
+            this.webview?.postMessage({
               type: 'installDone',
               primary,
               targetDir: result.targetDir,
@@ -457,7 +508,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             });
           }).catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
-            this.view?.webview.postMessage({ type: 'installError', primary, error: message });
+            this.webview?.postMessage({ type: 'installError', primary, error: message });
           });
           return;
         }
@@ -477,7 +528,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             if (typeof value !== 'string') {
               return;
             }
-            this.view?.webview.postMessage({
+            this.webview?.postMessage({
               type: 'fileExtensionsPromptResult',
               action: msg.action,
               previousValue: msg.value,
@@ -512,7 +563,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.saveSoundNotificationSettings(incoming),
             this.saveFileLimitSettings(incoming),
           ]).then(() => {
-            this.view?.webview.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
+            this.webview?.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           });
           return;
         }
@@ -531,17 +582,18 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           // Webview reports its width dropped below ~1/4 of screen width.
           // Close the auxiliary bar (where extension.ts moves the panel on first run).
           // Best-effort: if user moved the panel elsewhere, this still tries the aux bar.
-          void vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+          if (this.view) {
+            void vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+          }
           return;
       }
     });
 
     this.render();
-    console.log('[ai-cli-diff-view] terminal:resolveWebviewView:complete');
   }
 
   private render(): void {
-    if (!this.view) {
+    if (!this.webview) {
       return;
     }
     const filesInner = buildPendingFilesInnerHtml({
@@ -552,14 +604,26 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       errorMessage: this.errorMessage,
     });
 
-    this.view.webview.html = buildTerminalHtml({
-      webview: this.view.webview,
+    this.webview.html = buildTerminalHtml({
+      webview: this.webview,
       extensionUri: this.context.extensionUri,
       filesInnerHtml: filesInner,
     });
   }
 
   dispose(): void {
+    this.disposeSessions();
+    this.webviewMessageDisposable?.dispose();
+    this.webviewMessageDisposable = undefined;
+    this.webview = undefined;
+    this.view = undefined;
+    this.panel = undefined;
+    this.focusWhenReady = false;
+    this.diffDisposable?.dispose();
+    this.diffDisposable = undefined;
+  }
+
+  private disposeSessions(): void {
     for (const rec of this.sessions.values()) {
       for (const d of rec.subs) {
         try { d.dispose(); } catch { /* ignore */ }
@@ -567,8 +631,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       try { rec.pty.dispose(); } catch { /* ignore */ }
     }
     this.sessions.clear();
-    this.diffDisposable?.dispose();
-    this.diffDisposable = undefined;
   }
 }
 

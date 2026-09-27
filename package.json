@@ -133,7 +133,8 @@
         {
           "id": "ai-cli-diff-view.terminal",
           "name": "AI CLI",
-          "type": "webview"
+          "type": "webview",
+          "when": "ai-cli-diff-view.terminalVisible"
         }
       ],
       "explorer": [
@@ -148,10 +149,6 @@
       {
         "command": "ai-cli-diff-view.startSession",
         "title": "AI CLI Diff: Start Claude Session"
-      },
-      {
-        "command": "ai-cli-diff-view.openWebviewPanelTest",
-        "title": "AI CLI Diff: Open WebviewPanel Test"
       },
       {
         "command": "ai-cli-diff-view.toggleAgentMode",

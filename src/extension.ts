@@ -76,7 +76,8 @@ function activateExtension(context: vscode.ExtensionContext): void {
   debugLog('activate:navigation webview provider registered');
 
   let activeRunner: IAiRunner | undefined;
-  let webviewPanelTest: vscode.WebviewPanel | undefined;
+  let agentModePanel: vscode.WebviewPanel | undefined;
+  let agentModeTerminal: TerminalPanelProvider | undefined;
   type ShowTabsSetting = 'multiple' | 'single' | 'none';
   let agentModeActive = false;
   let agentModeTabsState: {
@@ -115,6 +116,7 @@ function activateExtension(context: vscode.ExtensionContext): void {
     { dispose: () => terminalPanel.dispose() }
   );
   debugLog('activate:terminal webview provider registered');
+  void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', true);
 
   const captureEditorTabsState = (): {
     target: vscode.ConfigurationTarget;
@@ -162,50 +164,26 @@ function activateExtension(context: vscode.ExtensionContext): void {
   };
   restoreAgentModeTabsOnDeactivate = restoreEditorTabs;
 
-  const openWebviewPanelTest = (): void => {
-    debugLog('webview-panel-test:command invoked');
-    if (webviewPanelTest) {
-      debugLog('webview-panel-test:revealing existing panel');
-      webviewPanelTest.reveal(vscode.ViewColumn.Active);
+  const openAgentTerminal = (): void => {
+    if (agentModePanel) {
+      agentModePanel.reveal(vscode.ViewColumn.Active);
       return;
     }
 
-    webviewPanelTest = vscode.window.createWebviewPanel(
-      'ai-cli-diff-view.webviewPanelTest',
-      'WebviewPanel test',
-      vscode.ViewColumn.Active,
-      { enableScripts: false }
-    );
-    debugLog('webview-panel-test:panel created');
+    const terminal = new TerminalPanelProvider(context, diffManager);
+    const panel = terminal.openWebviewPanel();
+    agentModeTerminal = terminal;
+    agentModePanel = panel;
+    terminal.setAgentMode(true);
+    debugLog('agent-mode:central terminal panel created');
 
-    webviewPanelTest.webview.html = `<!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>WebviewPanel test</title>
-        <style>
-          html, body {
-            height: 100%;
-            margin: 0;
-          }
-          body {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--vscode-editor-foreground);
-            background: var(--vscode-editor-background);
-            font-family: var(--vscode-font-family);
-            font-size: 24px;
-          }
-        </style>
-      </head>
-      <body>WebviewPanel test</body>
-      </html>`;
-
-    webviewPanelTest.onDidDispose(() => {
-      debugLog('webview-panel-test:panel disposed');
-      webviewPanelTest = undefined;
+    panel.onDidDispose(() => {
+      if (agentModePanel !== panel) {
+        return;
+      }
+      agentModePanel = undefined;
+      agentModeTerminal = undefined;
+      debugLog('agent-mode:central terminal panel disposed');
       if (agentModeActive) {
         void exitAgentMode();
       }
@@ -217,18 +195,15 @@ function activateExtension(context: vscode.ExtensionContext): void {
       return;
     }
     try {
-      openWebviewPanelTest();
-      await hideEditorTabs();
       agentModeActive = true;
-      terminalPanel.setAgentMode(true);
+      terminalPanel.resetSessions();
+      await hideEditorTabs();
+      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', false);
+      openAgentTerminal();
       debugLog('agent-mode:enabled');
     } catch (error: unknown) {
       debugError('agent-mode:enable failed', error);
-      try {
-        await restoreEditorTabs();
-      } catch (restoreError: unknown) {
-        debugError('agent-mode:rollback failed', restoreError);
-      }
+      await exitAgentMode();
       void vscode.window.showErrorMessage(
         `Could not enable Agent mode: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -240,8 +215,20 @@ function activateExtension(context: vscode.ExtensionContext): void {
       return;
     }
     agentModeActive = false;
-    terminalPanel.setAgentMode(false);
+    const panel = agentModePanel;
+    const centralTerminal = agentModeTerminal;
+    agentModePanel = undefined;
+    agentModeTerminal = undefined;
+    if (panel) {
+      panel.dispose();
+    } else {
+      centralTerminal?.dispose();
+    }
     try {
+      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', true);
+      terminalPanel.startFresh();
+      terminalPanel.setAgentMode(false);
+      terminalPanel.focusTerminal();
       await restoreEditorTabs();
       debugLog('agent-mode:disabled');
     } catch (error: unknown) {
@@ -287,16 +274,15 @@ function activateExtension(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('ai-cli-diff-view.nextFile', () => navigationManager.nextFile()),
     vscode.commands.registerCommand('ai-cli-diff-view.prevFile', () => navigationManager.prevFile()),
-    vscode.commands.registerCommand('ai-cli-diff-view.openWebviewPanelTest', openWebviewPanelTest),
     vscode.commands.registerCommand('ai-cli-diff-view.toggleAgentMode', () => (
       agentModeActive ? exitAgentMode() : enterAgentMode()
     ))
   );
-  debugLog('activate:test and agent-mode commands registered');
+  debugLog('activate:agent-mode command registered');
 
   context.subscriptions.push(
     vscode.window.onDidChangeWindowState((state) => {
-      if (state.focused && terminalPanel.wasTerminalFocused()) {
+      if (!agentModeActive && state.focused && terminalPanel.wasTerminalFocused()) {
         terminalPanel.focusTerminal();
       }
     })
