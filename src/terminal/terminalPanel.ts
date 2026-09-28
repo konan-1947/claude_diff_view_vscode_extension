@@ -52,9 +52,16 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private lastPrompt = '';
   private errorMessage = '';
   private diffDisposable?: vscode.Disposable;
+  private workspaceDiffDisposable?: vscode.Disposable;
+  private themeDisposable?: vscode.Disposable;
   private lastTerminalFocused = false;
   private agentModeActive = false;
   private focusWhenReady = false;
+  private diffPreviewOpen = false;
+  private filePreviewOpen = false;
+  private filePreviewPath?: string;
+  private pendingAgentFilePath?: string;
+  private pendingAgentFilePreviewPath?: string;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -62,6 +69,19 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   ) {
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
       this.postFilesUpdate();
+      if (this.diffPreviewOpen) {
+        this.postDiffPreviewFiles();
+      }
+    });
+    this.workspaceDiffDisposable = vscode.workspace.onDidChangeTextDocument((event) => {
+      if (this.diffPreviewOpen && this.diffManager.hasPendingDiff(event.document.uri.fsPath)) {
+        void this.postDiffPreviewFile(event.document.uri.fsPath);
+      }
+    });
+    this.themeDisposable = vscode.window.onDidChangeActiveColorTheme(() => {
+      if (this.diffPreviewOpen) {
+        void this.webview?.postMessage({ type: 'diffPreviewTheme', theme: currentMonacoTheme() });
+      }
     });
   }
 
@@ -91,6 +111,39 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   setAgentMode(active: boolean): void {
     this.agentModeActive = active;
     void this.webview?.postMessage({ type: 'agentModeState', active });
+  }
+
+  openPendingFileInAgent(filePath: string): boolean {
+    if (!this.agentModeActive || !this.diffManager.hasPendingDiff(filePath)) {
+      return false;
+    }
+    this.filePreviewOpen = false;
+    this.filePreviewPath = undefined;
+    this.diffPreviewOpen = true;
+    if (this.webview) {
+      void this.webview.postMessage({ type: 'showDiffPreview', path: filePath });
+    } else {
+      this.pendingAgentFilePath = filePath;
+    }
+    return true;
+  }
+
+  openFileInAgent(filePath: string): boolean {
+    if (!this.agentModeActive) {
+      return false;
+    }
+    if (this.diffManager.hasPendingDiff(filePath)) {
+      return this.openPendingFileInAgent(filePath);
+    }
+    this.diffPreviewOpen = false;
+    this.filePreviewOpen = true;
+    this.filePreviewPath = filePath;
+    if (this.webview) {
+      void this.webview.postMessage({ type: 'showFilePreview', path: filePath });
+    } else {
+      this.pendingAgentFilePreviewPath = filePath;
+    }
+    return true;
   }
 
   focusTerminal(): void {
@@ -367,11 +420,11 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   openWebviewPanel(): vscode.WebviewPanel {
     const panel = vscode.window.createWebviewPanel(
       TerminalPanelProvider.panelViewType,
-      'Terminal',
+      'Agent Terminal',
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
-        retainContextWhenHidden: false,
+        retainContextWhenHidden: true,
       }
     );
     this.panel = panel;
@@ -398,10 +451,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const xtermDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm');
     const iconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons');
     const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
+    const monacoDir = vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'monaco-editor', 'min');
+    const webviewDir = vscode.Uri.joinPath(this.context.extensionUri, 'res', 'webview');
 
     webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir, iconsDir, introDir],
+      localResourceRoots: [xtermDir, iconsDir, introDir, monacoDir, webviewDir],
     };
 
     this.webviewMessageDisposable?.dispose();
@@ -421,6 +476,16 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           if (this.focusWhenReady) {
             this.focusWhenReady = false;
             void this.webview?.postMessage({ type: 'focusTerminal' });
+          }
+          if (this.pendingAgentFilePath) {
+            const filePath = this.pendingAgentFilePath;
+            this.pendingAgentFilePath = undefined;
+            void this.webview?.postMessage({ type: 'showDiffPreview', path: filePath });
+          }
+          if (this.pendingAgentFilePreviewPath) {
+            const filePath = this.pendingAgentFilePreviewPath;
+            this.pendingAgentFilePreviewPath = undefined;
+            void this.webview?.postMessage({ type: 'showFilePreview', path: filePath });
           }
           if (!this.context.globalState.get<boolean>(INTRODUCE_SEEN_KEY)) {
             void this.webview?.postMessage({ type: 'showIntroduce' });
@@ -569,8 +634,67 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
         }
         case 'openFile':
           if (msg.path && typeof msg.path === 'string') {
-            void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
+            if (!this.openFileInAgent(msg.path)) {
+              void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
+            }
           }
+          return;
+        case 'requestDiffPreview':
+          this.diffPreviewOpen = true;
+          this.postDiffPreviewFiles();
+          return;
+        case 'closeDiffPreview':
+          this.diffPreviewOpen = false;
+          return;
+        case 'requestFilePreview':
+          this.filePreviewOpen = true;
+          this.filePreviewPath = msg.path;
+          void this.postFilePreview(msg.path).catch((err: unknown) => {
+            this.postFilePreviewError(msg.path, err);
+          });
+          return;
+        case 'closeFilePreview':
+          this.filePreviewOpen = false;
+          this.filePreviewPath = undefined;
+          return;
+        case 'filePreviewEdit':
+          void this.applyFilePreviewEdit(msg.path, msg.content).catch((err: unknown) => {
+            this.postFilePreviewError(msg.path, err);
+          });
+          return;
+        case 'filePreviewSave':
+          void this.saveFilePreview(msg.path).catch((err: unknown) => {
+            this.postFilePreviewError(msg.path, err);
+          });
+          return;
+        case 'requestDiffPreviewFile':
+          void this.postDiffPreviewFile(msg.path);
+          return;
+        case 'previewEditModified':
+          void this.diffManager.applyPreviewEdit(msg.path, msg.newCurrent).catch((err: unknown) => {
+            this.postDiffPreviewError(msg.path, err);
+          });
+          return;
+        case 'previewSaveFile':
+          void this.diffManager.savePreviewFile(msg.path).catch((err: unknown) => {
+            this.postDiffPreviewError(msg.path, err);
+          });
+          return;
+        case 'previewAcceptHunk':
+          void this.diffManager.acceptHunkFromPreview(msg.path, msg.newOriginal, msg.newCurrent)
+            .catch((err: unknown) => this.postDiffPreviewError(msg.path, err));
+          return;
+        case 'previewRejectHunk':
+          void this.diffManager.rejectHunkFromPreview(msg.path, msg.newOriginal, msg.newCurrent)
+            .catch((err: unknown) => this.postDiffPreviewError(msg.path, err));
+          return;
+        case 'previewAcceptFile':
+          void this.diffManager.acceptFromPreview(msg.path)
+            .catch((err: unknown) => this.postDiffPreviewError(msg.path, err));
+          return;
+        case 'previewRejectFile':
+          void this.diffManager.revertFromPreview(msg.path)
+            .catch((err: unknown) => this.postDiffPreviewError(msg.path, err));
           return;
         case 'introduceSeen':
           void this.context.globalState.update(INTRODUCE_SEEN_KEY, true);
@@ -611,6 +735,80 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private postDiffPreviewFiles(): void {
+    if (!this.webview || !this.diffPreviewOpen) {
+      return;
+    }
+    const files = this.diffManager.getPendingFiles().map((filePath) => ({
+      path: filePath,
+      label: this.displayPath(filePath),
+    }));
+    void this.webview.postMessage({ type: 'diffPreviewFiles', files });
+  }
+
+  private async postDiffPreviewFile(filePath: string): Promise<void> {
+    if (!this.webview || !this.diffPreviewOpen) {
+      return;
+    }
+    const file = await this.diffManager.getDiffPreviewFile(filePath);
+    if (!this.webview || !this.diffPreviewOpen) {
+      return;
+    }
+    void this.webview.postMessage({
+      type: 'diffPreviewFile',
+      path: filePath,
+      file,
+      theme: currentMonacoTheme(),
+    });
+  }
+
+  private postDiffPreviewError(filePath: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    void this.webview?.postMessage({ type: 'diffPreviewError', path: filePath, message });
+  }
+
+  private async postFilePreview(filePath: string): Promise<void> {
+    if (!this.webview || !this.filePreviewOpen) { return; }
+    const uri = vscode.Uri.file(filePath);
+    const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.fsPath === filePath);
+    const document = openDocument ?? await vscode.workspace.openTextDocument(uri);
+    if (!this.webview || !this.filePreviewOpen) { return; }
+    void this.webview.postMessage({
+      type: 'filePreviewData',
+      path: filePath,
+      label: this.displayPath(filePath),
+      content: document.getText(),
+      language: document.languageId,
+      theme: currentMonacoTheme(),
+    });
+  }
+
+  private async applyFilePreviewEdit(filePath: string, content: string): Promise<void> {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(document.uri, new vscode.Range(0, 0, document.lineCount, 0), content);
+    await vscode.workspace.applyEdit(edit);
+  }
+
+  private async saveFilePreview(filePath: string): Promise<void> {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    await document.save();
+  }
+
+  private postFilePreviewError(filePath: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    void this.webview?.postMessage({ type: 'filePreviewError', path: filePath, message });
+  }
+
+  private displayPath(filePath: string): string {
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath));
+    if (!workspaceFolder) {
+      return path.basename(filePath);
+    }
+    const relative = path.relative(workspaceFolder.uri.fsPath, filePath);
+    return relative || path.basename(filePath);
+  }
+
   dispose(): void {
     this.disposeSessions();
     this.webviewMessageDisposable?.dispose();
@@ -621,6 +819,15 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.focusWhenReady = false;
     this.diffDisposable?.dispose();
     this.diffDisposable = undefined;
+    this.workspaceDiffDisposable?.dispose();
+    this.workspaceDiffDisposable = undefined;
+    this.themeDisposable?.dispose();
+    this.themeDisposable = undefined;
+    this.diffPreviewOpen = false;
+    this.filePreviewOpen = false;
+    this.filePreviewPath = undefined;
+    this.pendingAgentFilePath = undefined;
+    this.pendingAgentFilePreviewPath = undefined;
   }
 
   private disposeSessions(): void {
@@ -641,4 +848,13 @@ function resolveShellName(): string {
     (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
   const base = path.basename(shell);
   return base.replace(/\.exe$/i, '');
+}
+
+function currentMonacoTheme(): string {
+  switch (vscode.window.activeColorTheme.kind) {
+    case vscode.ColorThemeKind.Light: return 'vs';
+    case vscode.ColorThemeKind.HighContrast: return 'hc-black';
+    case vscode.ColorThemeKind.HighContrastLight: return 'hc-light';
+    default: return 'vs-dark';
+  }
 }

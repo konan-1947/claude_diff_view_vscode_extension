@@ -43,6 +43,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const xtermJs = `${xtermBase}/xterm.js`;
   const xtermCss = `${xtermBase}/xterm.css`;
   const addonFitJs = `${xtermBase}/addon-fit.js`;
+  const monacoBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs'));
+  const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
+  const filePreviewJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'filePreview.js'));
 
   const introBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'introduce'));
   const introSlides: IntroSlide[] = [
@@ -58,9 +61,11 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const csp = [
     `default-src 'none'`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src 'nonce-${nonce}' ${webview.cspSource}`,
+    `script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval'`,
     `font-src ${webview.cspSource}`,
     `img-src ${webview.cspSource} data:`,
+    `worker-src blob:`,
+    `child-src blob:`,
   ].join('; ');
 
   return `<!DOCTYPE html>
@@ -101,6 +106,12 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     align-items: center;
     gap: 2px;
   }
+  .header-separator {
+    width: 1px;
+    height: 16px;
+    margin: 0 5px;
+    background: var(--vscode-panel-border, rgba(128,128,128,0.45));
+  }
   .agent-mode-btn {
     min-width: 92px;
     height: 22px;
@@ -117,6 +128,23 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   .agent-mode-btn:hover { background: var(--vscode-button-hoverBackground); }
   .agent-mode-btn:active { transform: translateY(1px); }
+  #btn-view-diff[hidden] { display: none; }
+  .view-diff-btn {
+    min-width: 76px;
+    height: 22px;
+    padding: 0 9px;
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    background: var(--vscode-button-secondaryBackground, transparent);
+    border: 1px solid var(--vscode-button-border, rgba(128,128,128,0.45));
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 20px;
+    white-space: nowrap;
+  }
+  .view-diff-btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
+  .view-diff-btn:active { transform: translateY(1px); }
   .header-btn {
     background: transparent;
     color: var(--vscode-icon-foreground, var(--vscode-foreground));
@@ -427,6 +455,218 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   #btn-install-font[disabled] { opacity: 0.55; cursor: default; }
   #btn-reload-window { display: none; }
 
+  /* Aggregate diff preview */
+  #diff-preview-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--vscode-editor-background, #1e1e1e);
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    z-index: 15;
+  }
+  #diff-preview-overlay[hidden] { display: none; }
+  #file-preview-overlay {
+    position: absolute;
+    top: 56px;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 16;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    font-family: var(--vscode-font-family);
+  }
+  #file-preview-overlay[hidden] { display: none; }
+  .file-preview-card {
+    width: min(80%, 1280px);
+    height: 80%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background, #1e1e1e);
+    border: 1px solid var(--vscode-focusBorder, #007fd4);
+    border-radius: 6px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.48);
+  }
+  .file-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,.3));
+    background: var(--vscode-sideBar-background, #1e1e1e);
+    font-size: 12px;
+  }
+  #file-preview-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #file-preview-editor { flex: 1 1 auto; min-height: 0; }
+  .diff-preview-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.3));
+    background: var(--vscode-sideBar-background, #1e1e1e);
+  }
+  .diff-preview-title {
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+  }
+  .diff-preview-title strong { font-size: 13px; font-weight: 600; }
+  .diff-preview-title span {
+    color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9));
+    font-size: 11px;
+  }
+  .diff-preview-head-actions { display: flex; align-items: center; gap: 6px; }
+  .diff-preview-head-actions .btn { margin: 0; padding: 4px 9px; font-size: 11px; }
+  .diff-preview-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(150px, 210px) minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .diff-preview-files {
+    overflow: auto;
+    padding: 12px 8px;
+    border-right: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+    background: var(--vscode-sideBar-background, #1e1e1e);
+  }
+  .diff-preview-files-label {
+    margin: 0 8px 8px;
+    color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9));
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .diff-preview-file-link {
+    width: 100%;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 3px;
+    color: var(--vscode-foreground);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+  }
+  .diff-preview-file-link:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.12)); }
+  .diff-preview-file-link .file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .diff-preview-file-link .file-stats { margin-left: auto; flex: 0 0 auto; white-space: nowrap; font-size: 10px; }
+  .diff-add { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  .diff-delete { color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c); }
+  .diff-preview-content {
+    overflow: auto;
+    padding: 16px 18px 28px;
+  }
+  .diff-preview-status {
+    padding: 28px 12px;
+    color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9));
+    font-size: 12px;
+    text-align: center;
+  }
+  .aggregate-file-section {
+    margin: 0 0 18px;
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
+    border-radius: 5px;
+    overflow: hidden;
+    background: var(--vscode-editor-background, #1e1e1e);
+  }
+  .aggregate-file-section.is-active {
+    border-color: var(--vscode-focusBorder, #007fd4);
+  }
+  .aggregate-file-section.is-collapsed .aggregate-file-body { display: none; }
+  .aggregate-file-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 5px 8px 5px 10px;
+    background: var(--vscode-editorWidget-background, rgba(128,128,128,0.1));
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+  }
+  .aggregate-file-section.is-collapsed .aggregate-file-head { border-bottom: 0; }
+  .aggregate-file-toggle {
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
+    border: 0;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    background: transparent;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .aggregate-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .aggregate-file-stats { margin-left: auto; flex: 0 0 auto; font-family: var(--vscode-font-family); font-size: 10px; }
+  .aggregate-file-actions { display: flex; flex: 0 0 auto; gap: 4px; margin-left: 4px; }
+  .aggregate-file-actions button,
+  .aggregate-hunk-actions button {
+    padding: 3px 7px;
+    border: 1px solid var(--vscode-button-border, rgba(128,128,128,0.4));
+    border-radius: 3px;
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    background: var(--vscode-button-secondaryBackground, transparent);
+    cursor: pointer;
+    font-family: var(--vscode-font-family);
+    font-size: 10px;
+  }
+  .aggregate-file-actions button:hover,
+  .aggregate-hunk-actions button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
+  .aggregate-file-actions .accept,
+  .aggregate-hunk-actions .accept { color: var(--vscode-testing-iconPassed, #73c991); }
+  .aggregate-file-actions .reject,
+  .aggregate-hunk-actions .reject { color: var(--vscode-testing-iconFailed, #f14c4c); }
+  .aggregate-file-body { padding: 0; }
+  .aggregate-file-loading,
+  .aggregate-file-error {
+    padding: 20px 12px;
+    color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9));
+    font-family: var(--vscode-font-family);
+    font-size: 11px;
+  }
+  .aggregate-file-error { color: var(--vscode-errorForeground, #f48771); }
+  .aggregate-hunk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
+    background: var(--vscode-editor-background, #1e1e1e);
+  }
+  .aggregate-hunk-label {
+    align-self: center;
+    margin-right: 3px;
+    color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9));
+    font-size: 10px;
+  }
+  .aggregate-editor {
+    width: 100%;
+    height: 420px;
+    min-height: 220px;
+  }
+  .aggregate-file-section.is-collapsed .aggregate-editor { display: none; }
+  @media (max-width: 600px) {
+    .diff-preview-scroll { grid-template-columns: 1fr; }
+    .diff-preview-files { display: none; }
+    .aggregate-file-head { flex-wrap: wrap; }
+    .aggregate-file-actions { width: 100%; margin-left: 26px; padding-bottom: 3px; }
+  }
+
   /* Introduce overlay */
   #introduce-overlay {
     position: absolute;
@@ -558,7 +798,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
       <span class="title-files">Pending Files</span>
     </span>
     <div id="header-actions">
-      <button id="btn-agent-mode" class="agent-mode-btn" type="button" title="Open Agent mode" aria-label="Open Agent mode">Agent mode</button>
+      <button id="btn-view-diff" class="view-diff-btn" type="button" title="Preview all pending changes" aria-label="Preview all pending changes" hidden>View diff</button>
       <button id="btn-toggle-page" class="header-btn" title="Switch view" aria-label="Switch view">
         <svg class="toggle-to-files" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 6h18"/>
@@ -583,6 +823,8 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
+      <span class="header-separator" aria-hidden="true"></span>
+      <button id="btn-agent-mode" class="agent-mode-btn" type="button" title="Open Agent mode" aria-label="Open Agent mode">Agent mode</button>
     </div>
   </div>
   <div id="tab-strip">
@@ -742,6 +984,36 @@ ${FONT_OPTIONS.map((f) => {
       </div>
     </div>
     <div id="files-wrap">${filesInnerHtml}</div>
+    <div id="diff-preview-overlay" hidden>
+      <div class="diff-preview-head">
+        <div class="diff-preview-title">
+          <strong>Preview diff mode</strong>
+          <span id="diff-preview-summary">Loading changes…</span>
+        </div>
+        <div class="diff-preview-head-actions">
+          <button id="btn-diff-collapse-all" class="btn btn-secondary" type="button">Collapse all</button>
+          <button id="btn-diff-expand-all" class="btn btn-secondary" type="button">Expand all</button>
+        </div>
+      </div>
+      <div class="diff-preview-scroll">
+        <aside class="diff-preview-files">
+          <p class="diff-preview-files-label">Changed files</p>
+          <div id="diff-preview-file-list"></div>
+        </aside>
+        <main id="diff-preview-content" class="diff-preview-content">
+          <div id="diff-preview-status" class="diff-preview-status">Loading pending changes…</div>
+        </main>
+      </div>
+    </div>
+    <div id="file-preview-overlay" hidden>
+      <section class="file-preview-card" role="dialog" aria-label="File preview">
+        <header class="file-preview-head">
+          <strong id="file-preview-path">Loading file…</strong>
+          <span>Ctrl+S to save</span>
+        </header>
+        <div id="file-preview-editor"></div>
+      </section>
+    </div>
     <div id="introduce-overlay" hidden>
       <div class="intro-card">
         <div class="intro-head">
@@ -770,8 +1042,15 @@ ${FONT_OPTIONS.map((f) => {
   <script nonce="${nonce}" src="${xtermJs}"></script>
   <script nonce="${nonce}" src="${addonFitJs}"></script>
   <script nonce="${nonce}">
+    window.__AI_CLI_MONACO_BASE__ = ${JSON.stringify(monacoBase.toString())};
+  </script>
+  <script nonce="${nonce}" src="${aggregateDiffJs}"></script>
+  <script nonce="${nonce}" src="${filePreviewJs}"></script>
+  <script nonce="${nonce}">
     (function () {
-      const vscode = acquireVsCodeApi();
+      const vscode = window.__AI_CLI_VSCODE_API__ || (
+        window.__AI_CLI_VSCODE_API__ = acquireVsCodeApi()
+      );
       const errEl = document.getElementById('err');
       function showError(msg) {
         errEl.style.display = 'block';
@@ -790,6 +1069,9 @@ ${FONT_OPTIONS.map((f) => {
       const tabsEl = document.getElementById('tabs');
       const btnAddTab = document.getElementById('tab-add');
       const btnAgentMode = document.getElementById('btn-agent-mode');
+      const btnViewDiff = document.getElementById('btn-view-diff');
+      const diffPreviewOverlay = document.getElementById('diff-preview-overlay');
+      const filePreviewOverlay = document.getElementById('file-preview-overlay');
       let agentModeActive = false;
 
       function setAgentModeState(active) {
@@ -798,6 +1080,8 @@ ${FONT_OPTIONS.map((f) => {
         const label = agentModeActive ? 'Tắt Agent mode' : 'Bật Agent mode';
         btnAgentMode.title = label;
         btnAgentMode.setAttribute('aria-label', label);
+        btnViewDiff.hidden = !agentModeActive;
+        if (!agentModeActive) closeActivePreview();
       }
 
       // id -> { id, term, fit, host, tab, dataDisp, exited }
@@ -1194,6 +1478,10 @@ ${FONT_OPTIONS.map((f) => {
           openIntro();
         } else if (msg.type === 'agentModeState') {
           setAgentModeState(msg.active);
+        } else if (msg.type === 'showDiffPreview') {
+          openDiffPreview(msg.path);
+        } else if (msg.type === 'showFilePreview') {
+          openFilePreview(msg.path);
         } else if (msg.type === 'focusTerminal') {
           const sess = sessions.get(activeId);
           if (sess) {
@@ -1205,6 +1493,56 @@ ${FONT_OPTIONS.map((f) => {
       // ---- Page toggle ----
       btnAgentMode.addEventListener('click', () => {
         vscode.postMessage({ type: 'toggleAgentMode' });
+      });
+
+      // Aggregate diff preview stays in this webview so
+      // the terminal sessions remain alive underneath when the preview closes.
+      function openDiffPreview(targetPath) {
+        if (!filePreviewOverlay.hidden) closeFilePreview();
+        diffPreviewOverlay.hidden = false;
+        window.aiCliDiffPreview?.open(targetPath);
+        btnViewDiff.textContent = 'Back to terminal';
+        btnViewDiff.title = 'Back to terminal';
+        btnViewDiff.setAttribute('aria-label', 'Back to terminal');
+      }
+
+      function closeDiffPreview() {
+        diffPreviewOverlay.hidden = true;
+        window.aiCliDiffPreview?.close();
+        btnViewDiff.textContent = 'View diff';
+        btnViewDiff.title = 'Preview all pending changes';
+        btnViewDiff.setAttribute('aria-label', 'Preview all pending changes');
+      }
+
+      function openFilePreview(filePath) {
+        if (!diffPreviewOverlay.hidden) closeDiffPreview();
+        filePreviewOverlay.hidden = false;
+        window.aiCliFilePreview?.open(filePath);
+        btnViewDiff.textContent = 'Back to terminal';
+        btnViewDiff.title = 'Back to terminal';
+      }
+
+      function closeFilePreview() {
+        filePreviewOverlay.hidden = true;
+        window.aiCliFilePreview?.close();
+        btnViewDiff.textContent = 'View diff';
+        btnViewDiff.title = 'Preview all pending changes';
+      }
+
+      function closeActivePreview() {
+        if (!diffPreviewOverlay.hidden) closeDiffPreview();
+        if (!filePreviewOverlay.hidden) closeFilePreview();
+      }
+
+      btnViewDiff.addEventListener('click', () => {
+        if (diffPreviewOverlay.hidden && filePreviewOverlay.hidden) openDiffPreview();
+        else closeActivePreview();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && (!diffPreviewOverlay.hidden || !filePreviewOverlay.hidden)) closeActivePreview();
+      });
+      filePreviewOverlay.addEventListener('click', (event) => {
+        if (event.target === filePreviewOverlay) closeFilePreview();
       });
 
       const btnTogglePage = document.getElementById('btn-toggle-page');

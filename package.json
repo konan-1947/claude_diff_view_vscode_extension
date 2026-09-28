@@ -155,6 +155,11 @@
         "title": "AI CLI Diff: Toggle Agent Mode"
       },
       {
+        "command": "ai-cli-diff-view.focusAgentTerminal",
+        "title": "Back to Agent",
+        "icon": "$(terminal)"
+      },
+      {
         "command": "ai-cli-diff-view.acceptAllHunks",
         "title": "AI CLI Diff: Accept All Changes"
       },

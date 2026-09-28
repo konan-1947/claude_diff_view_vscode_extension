@@ -9,8 +9,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { calculateHunks } from './hunkCalculator';
+import { calculateHunks, Hunk } from './hunkCalculator';
 import { detectEol, fromLf, toLf } from './eol';
+import { detectLanguageId } from './language';
 import { exceedsLineLimit } from '../watcher/fileSizeLimit';
 import { DIFF_EDITOR_VIEW_TYPE } from './diffWebviewPanel';
 import { SnapshotStore, SnapshotState } from './snapshotStore';
@@ -35,6 +36,14 @@ function canonicalCasePath(filePath: string): string {
 
 function isFileNotFound(error: unknown): boolean {
   return error instanceof vscode.FileSystemError && error.code === 'FileNotFound';
+}
+
+export interface DiffPreviewFile {
+  filePath: string;
+  originalContent: string;
+  currentContent: string;
+  language: string;
+  hunks: Hunk[];
 }
 
 export class DiffManager {
@@ -267,6 +276,147 @@ export class DiffManager {
   /** Alias dùng bởi DiffEditorProvider; trả về content của snapshot (left side). */
   getSnapshotContent(filePath: string): string | undefined {
     return this.getSnapshot(filePath);
+  }
+
+  /**
+   * Build the real diff payload used by the aggregate Agent preview.
+   * The snapshot is the left/original side; the current file on disk is the
+   * right/modified side. Both are normalized to LF before calculating hunks.
+   */
+  async getDiffPreviewFile(filePath: string): Promise<DiffPreviewFile | undefined> {
+    const absPath = normalizePath(filePath);
+    const snapshot = this.snapshots.get(absPath);
+    if (!snapshot) { return undefined; }
+
+    let currentContent = '';
+    const openDocument = vscode.workspace.textDocuments.find(
+      (document) => normalizePath(document.uri.fsPath) === absPath
+    );
+    if (openDocument) {
+      currentContent = openDocument.getText();
+    } else {
+      try {
+        currentContent = Buffer.from(
+          await vscode.workspace.fs.readFile(vscode.Uri.file(absPath))
+        ).toString('utf8');
+      } catch (err) {
+        if (!isFileNotFound(err)) {
+          return undefined;
+        }
+      }
+    }
+
+    const originalLf = toLf(snapshot.content);
+    const currentLf = toLf(currentContent);
+    const hunks = calculateHunks(originalLf, currentLf);
+    if (hunks.length === 0) {
+      return undefined;
+    }
+
+    return {
+      filePath: absPath,
+      originalContent: originalLf,
+      currentContent: currentLf,
+      language: detectLanguageId(absPath),
+      hunks,
+    };
+  }
+
+  /** Apply a manual edit made in the aggregate preview to the workspace document. */
+  async applyPreviewEdit(filePath: string, newCurrent: string): Promise<void> {
+    const absPath = normalizePath(filePath);
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
+    const expanded = fromLf(
+      newCurrent,
+      document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'
+    );
+    if (document.getText() === expanded) { return; }
+    const edit = new vscode.WorkspaceEdit();
+    const fullRange = new vscode.Range(
+      new vscode.Position(0, 0),
+      document.lineAt(document.lineCount - 1).range.end
+    );
+    edit.replace(document.uri, fullRange, expanded);
+    await vscode.workspace.applyEdit(edit);
+  }
+
+  async savePreviewFile(filePath: string): Promise<void> {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(normalizePath(filePath)));
+    await document.save();
+  }
+
+  /** Accept a complete file without opening a native editor tab. */
+  async acceptFromPreview(filePath: string): Promise<void> {
+    const absPath = normalizePath(filePath);
+    if (!this.snapshots.has(absPath)) { return; }
+    this.snapshots.delete(absPath);
+    void this.store.save(this.snapshots);
+    this.closePanel(absPath);
+    this._onDidChangeDiffs.fire();
+  }
+
+  /** Revert a complete file without opening a native editor tab. */
+  async revertFromPreview(filePath: string): Promise<void> {
+    const absPath = normalizePath(filePath);
+    const snapshot = this.snapshots.get(absPath);
+    if (!snapshot) { return; }
+    if (!snapshot.fileExistedBefore && snapshot.content.length === 0) {
+      try {
+        await vscode.workspace.fs.delete(vscode.Uri.file(absPath), { useTrash: false });
+      } catch (err) {
+        if (!isFileNotFound(err)) { throw err; }
+      }
+    } else {
+      await this.writeFile(absPath, snapshot.content);
+    }
+    this.snapshots.delete(absPath);
+    void this.store.save(this.snapshots);
+    this.closePanel(absPath);
+    this._onDidChangeDiffs.fire();
+  }
+
+  async acceptHunkFromPreview(
+    filePath: string,
+    newOriginal: string,
+    newCurrent: string
+  ): Promise<void> {
+    const absPath = normalizePath(filePath);
+    const snapshot = this.snapshots.get(absPath);
+    if (!snapshot) { return; }
+    this.snapshots.set(absPath, {
+      ...snapshot,
+      content: fromLf(newOriginal, detectEol(snapshot.content)),
+    });
+    if (newOriginal === newCurrent) {
+      this.snapshots.delete(absPath);
+      this.closePanel(absPath);
+    }
+    void this.store.save(this.snapshots);
+    this._onDidChangeDiffs.fire();
+  }
+
+  async rejectHunkFromPreview(
+    filePath: string,
+    newOriginal: string,
+    newCurrent: string
+  ): Promise<void> {
+    const absPath = normalizePath(filePath);
+    const snapshot = this.snapshots.get(absPath);
+    if (!snapshot) { return; }
+    await this.writeFile(absPath, newCurrent, { fromLf: true });
+    if (newOriginal === newCurrent) {
+      if (!snapshot.fileExistedBefore && newCurrent.length === 0) {
+        try {
+          await vscode.workspace.fs.delete(vscode.Uri.file(absPath), { useTrash: false });
+        } catch (err) {
+          if (!isFileNotFound(err)) { throw err; }
+        }
+      }
+      this.snapshots.delete(absPath);
+      this.closePanel(absPath);
+    }
+    void this.store.save(this.snapshots);
+    this._onDidChangeDiffs.fire();
   }
 
   setLastCursor(filePath: string, line: number, column: number, topLine?: number): void {
