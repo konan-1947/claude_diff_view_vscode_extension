@@ -135,6 +135,12 @@
           "name": "AI CLI",
           "type": "webview",
           "when": "ai-cli-diff-view.terminalVisible"
+        },
+        {
+          "id": "ai-cli-diff-view.agentChanges",
+          "name": "AGENT",
+          "type": "webview",
+          "when": "ai-cli-diff-view.agentModeActive"
         }
       ],
       "explorer": [

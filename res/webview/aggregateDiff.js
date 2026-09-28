@@ -17,6 +17,7 @@
   let observer = null;
   let monacoPromise = null;
   let pendingTargetPath = null;
+  let activePath = null;
 
   function setStatus(text, error) {
     if (!status) { return; }
@@ -26,6 +27,7 @@
   }
 
   function open(targetPath) {
+    ensureObserver();
     pendingTargetPath = targetPath || null;
     setStatus('Loading pending changes…', false);
     vscode.postMessage({ type: 'requestDiffPreview' });
@@ -33,6 +35,7 @@
 
   function close() {
     vscode.postMessage({ type: 'closeDiffPreview' });
+    activePath = null;
     disposeAll();
   }
 
@@ -466,6 +469,10 @@
   }
 
   function setActive(state) {
+    if (activePath !== state.meta.path) {
+      activePath = state.meta.path;
+      vscode.postMessage({ type: 'previewActiveFile', path: activePath });
+    }
     for (const candidate of files.values()) {
       candidate.section.classList.toggle('is-active', candidate === state);
     }
@@ -504,28 +511,33 @@
     return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
   }
 
-  observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      const state = files.get(entry.target.dataset.path);
-      if (!state) { continue; }
-      state.nearViewport = entry.isIntersecting;
-      if (entry.isIntersecting) {
-        requestFile(entry.target.dataset.path);
-        setActive(state);
-        if (state.data && !state.editor) {
-          ensureMonaco().then((monaco) => mountEditor(monaco, state));
+  function ensureObserver() {
+    if (observer) { return; }
+    observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const state = files.get(entry.target.dataset.path);
+        if (!state) { continue; }
+        state.nearViewport = entry.isIntersecting;
+        if (entry.isIntersecting) {
+          requestFile(entry.target.dataset.path);
+          setActive(state);
+          if (state.data && !state.editor) {
+            ensureMonaco().then((monaco) => mountEditor(monaco, state));
+          }
         }
       }
-    }
-    const live = Array.from(files.values()).filter((state) => state.editor);
-    if (live.length > 4) {
-      live
-        .filter((state) => !state.nearViewport)
-        .sort((a, b) => a.lastUsed - b.lastUsed)
-        .slice(0, live.length - 4)
-        .forEach(disposeEditor);
-    }
-  }, { root: content, rootMargin: '800px 0px' });
+      const live = Array.from(files.values()).filter((state) => state.editor);
+      if (live.length > 4) {
+        live
+          .filter((state) => !state.nearViewport)
+          .sort((a, b) => a.lastUsed - b.lastUsed)
+          .slice(0, live.length - 4)
+          .forEach(disposeEditor);
+      }
+    }, { root: content, rootMargin: '800px 0px' });
+  }
+
+  ensureObserver();
 
   collapseAll?.addEventListener('click', () => {
     for (const state of files.values()) { setCollapsed(state, true); }

@@ -9,6 +9,7 @@ import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
+import { AgentChangesPanel } from './views/agentChangesPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
 
 const LOG_PREFIX = '[ai-cli-diff-view]';
@@ -88,6 +89,15 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   let agentModeTerminal: TerminalPanelProvider | undefined;
   let agentModeActive = false;
   let agentModeTabsState: AgentModeTabsState | undefined;
+  const agentChangesPanel = new AgentChangesPanel(
+    context.extensionUri,
+    diffManager,
+    (filePath) => agentModeActive && !!agentModeTerminal?.openPendingFileInAgent(filePath)
+  );
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(AgentChangesPanel.viewType, agentChangesPanel),
+    agentChangesPanel
+  );
 
   context.subscriptions.push(
     { dispose: () => diffManager.disposeAll() },
@@ -98,16 +108,30 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   const restoreStaleAgentModeTabs = async (): Promise<void> => {
     const staleState = context.workspaceState.get<AgentModeTabsState>(AGENT_MODE_TABS_STATE_KEY);
-    if (!staleState) {
+    if (staleState) {
+      await vscode.workspace.getConfiguration('workbench.editor').update(
+        'showTabs',
+        staleState.value,
+        staleState.target
+      );
+      await context.workspaceState.update(AGENT_MODE_TABS_STATE_KEY, undefined);
+      debugLog('agent-mode:stale editor tabs restored after reload');
       return;
     }
-    await vscode.workspace.getConfiguration('workbench.editor').update(
-      'showTabs',
-      staleState.value,
-      staleState.target
-    );
-    await context.workspaceState.update(AGENT_MODE_TABS_STATE_KEY, undefined);
-    debugLog('agent-mode:stale editor tabs restored after reload');
+
+    // Older Agent Mode builds could leave showTabs set to none without a
+    // recoverable snapshot. Extension startup is always outside Agent Mode,
+    // so self-heal that stranded state rather than leaving every editor tab
+    // and its close button hidden.
+    const editorConfig = vscode.workspace.getConfiguration('workbench.editor');
+    if (editorConfig.get<ShowTabsSetting>('showTabs') === 'none') {
+      const hasWorkspace = Boolean(
+        vscode.workspace.workspaceFile || vscode.workspace.workspaceFolders?.length
+      );
+      const target = hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+      await editorConfig.update('showTabs', 'multiple', target);
+      debugLog('agent-mode:recovered hidden editor tabs outside Agent Mode');
+    }
   };
 
   await restoreStaleAgentModeTabs();
@@ -208,6 +232,13 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     agentModeTerminal = terminal;
     agentModePanel = panel;
     terminal.setAgentMode(true);
+    context.subscriptions.push(
+      terminal.onDidChangePreviewActiveFile((filePath) => {
+        if (agentModeActive && agentModeTerminal === terminal) {
+          agentChangesPanel.setActiveFile(filePath);
+        }
+      })
+    );
     debugLog('agent-mode:central terminal panel created');
 
     panel.onDidDispose(() => {
@@ -238,6 +269,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     try {
       agentModeActive = true;
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.agentModeActive', true);
+      agentChangesPanel.setAgentMode(true);
       terminalPanel.resetSessions();
       await hideEditorTabs();
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', false);
@@ -258,6 +290,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       return;
     }
     agentModeActive = false;
+    agentChangesPanel.setAgentMode(false);
     const panel = agentModePanel;
     const centralTerminal = agentModeTerminal;
     agentModePanel = undefined;
@@ -269,11 +302,13 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     }
     try {
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.agentModeActive', false);
+      // Restore this user setting before any terminal cleanup. A failing
+      // terminal/webview operation must never leave editor tabs hidden.
+      await restoreEditorTabs();
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', true);
       terminalPanel.startFresh();
       terminalPanel.setAgentMode(false);
       terminalPanel.focusTerminal();
-      await restoreEditorTabs();
       debugLog('agent-mode:disabled');
     } catch (error: unknown) {
       debugError('agent-mode:disable failed', error);

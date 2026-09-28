@@ -62,6 +62,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private filePreviewPath?: string;
   private pendingAgentFilePath?: string;
   private pendingAgentFilePreviewPath?: string;
+  private readonly _onDidChangePreviewActiveFile = new vscode.EventEmitter<string | undefined>();
+  public readonly onDidChangePreviewActiveFile = this._onDidChangePreviewActiveFile.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -120,6 +122,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.filePreviewOpen = false;
     this.filePreviewPath = undefined;
     this.diffPreviewOpen = true;
+    this._onDidChangePreviewActiveFile.fire(filePath);
     if (this.webview) {
       void this.webview.postMessage({ type: 'showDiffPreview', path: filePath });
     } else {
@@ -645,6 +648,10 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         case 'closeDiffPreview':
           this.diffPreviewOpen = false;
+          this._onDidChangePreviewActiveFile.fire(undefined);
+          return;
+        case 'previewActiveFile':
+          this._onDidChangePreviewActiveFile.fire(msg.path);
           return;
         case 'requestFilePreview':
           this.filePreviewOpen = true;
@@ -828,6 +835,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.filePreviewPath = undefined;
     this.pendingAgentFilePath = undefined;
     this.pendingAgentFilePreviewPath = undefined;
+    this._onDidChangePreviewActiveFile.dispose();
   }
 
   private disposeSessions(): void {

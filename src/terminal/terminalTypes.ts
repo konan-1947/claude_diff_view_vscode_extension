@@ -71,6 +71,7 @@ export type IncomingMessage =
   | { type: 'openFile'; path: string }
   | { type: 'requestDiffPreview' }
   | { type: 'closeDiffPreview' }
+  | { type: 'previewActiveFile'; path?: string }
   | { type: 'requestDiffPreviewFile'; path: string }
   | { type: 'previewEditModified'; path: string; newCurrent: string }
   | { type: 'previewSaveFile'; path: string }

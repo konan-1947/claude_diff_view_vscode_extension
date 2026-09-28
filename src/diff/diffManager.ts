@@ -46,6 +46,14 @@ export interface DiffPreviewFile {
   hunks: Hunk[];
 }
 
+/** Lightweight data for navigators that must not receive file contents. */
+export interface DiffPreviewMetadata {
+  filePath: string;
+  additions: number;
+  deletions: number;
+  hunks: number;
+}
+
 export class DiffManager {
   private _onDidChangeDiffs = new vscode.EventEmitter<void>();
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
@@ -320,6 +328,25 @@ export class DiffManager {
       language: detectLanguageId(absPath),
       hunks,
     };
+  }
+
+  /**
+   * Return pending-diff counters without exposing either side of a file to a
+   * webview. This is intentionally computed in the extension host so the
+   * Agent secondary bar remains a navigator, not a second diff renderer.
+   */
+  async getDiffPreviewMetadata(): Promise<DiffPreviewMetadata[]> {
+    const files = await Promise.all(this.getPendingFiles().map(async (filePath) => {
+      const preview = await this.getDiffPreviewFile(filePath);
+      if (!preview) { return undefined; }
+      return {
+        filePath: preview.filePath,
+        additions: preview.hunks.reduce((total, hunk) => total + hunk.addedLines.length, 0),
+        deletions: preview.hunks.reduce((total, hunk) => total + hunk.removedLines.length, 0),
+        hunks: preview.hunks.length,
+      };
+    }));
+    return files.filter((file): file is DiffPreviewMetadata => file !== undefined);
   }
 
   /** Apply a manual edit made in the aggregate preview to the workspace document. */
