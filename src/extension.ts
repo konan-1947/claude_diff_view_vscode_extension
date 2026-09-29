@@ -90,14 +90,16 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   let agentModeTerminal: TerminalPanelProvider | undefined;
   let agentModeTabsState: AgentModeTabsState | undefined;
   const agentChangesPanel = new AgentChangesPanel(
-    context.extensionUri,
     diffManager,
-    (filePath) => agentModeActive && !!agentModeTerminal?.openPendingFileInAgent(filePath)
+    (filePath) => {
+      if (agentModeActive) {
+        return !!agentModeTerminal?.openPendingFileInAgent(filePath);
+      }
+      void diffManager.openDiff(filePath);
+      return true;
+    }
   );
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(AgentChangesPanel.viewType, agentChangesPanel),
-    agentChangesPanel
-  );
+  context.subscriptions.push(agentChangesPanel);
 
   context.subscriptions.push(
     { dispose: () => diffManager.disposeAll() },
@@ -161,6 +163,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   );
   debugLog('activate:terminal webview provider registered');
   void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', true);
+  void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', false);
   void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.agentModeActive', false);
 
   const captureEditorTabsState = (): {
@@ -268,6 +271,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     }
     try {
       agentModeActive = true;
+      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', false);
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.agentModeActive', true);
       agentChangesPanel.setAgentMode(true);
       terminalPanel.resetSessions();
@@ -306,6 +310,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       // terminal/webview operation must never leave editor tabs hidden.
       await restoreEditorTabs();
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', true);
+      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', false);
       terminalPanel.startFresh();
       terminalPanel.setAgentMode(false);
       terminalPanel.focusTerminal();
@@ -356,6 +361,15 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   context.subscriptions.push(
     vscode.commands.registerCommand('ai-cli-diff-view.nextFile', () => navigationManager.nextFile()),
     vscode.commands.registerCommand('ai-cli-diff-view.prevFile', () => navigationManager.prevFile()),
+    vscode.commands.registerCommand('ai-cli-diff-view.showPendingFiles', async () => {
+      agentChangesPanel.setCodeModeFilesVisible(true);
+      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', true);
+    }),
+    vscode.commands.registerCommand('ai-cli-diff-view.showTerminal', async () => {
+      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', false);
+      agentChangesPanel.setCodeModeFilesVisible(false);
+      terminalPanel.focusTerminal();
+    }),
     vscode.commands.registerCommand('ai-cli-diff-view.focusAgentTerminal', () => {
       if (!agentModeActive || !agentModeTerminal) {
         return;

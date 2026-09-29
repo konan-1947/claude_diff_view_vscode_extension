@@ -174,6 +174,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   body.page-files .toggle-to-files { display: none; }
   body.page-files .toggle-to-terminal { display: inline-flex; }
 
+
   /* Tab strip */
   #tab-strip {
     flex: 0 0 28px;
@@ -1583,6 +1584,10 @@ ${FONT_OPTIONS.map((f) => {
       const btnTogglePage = document.getElementById('btn-toggle-page');
       btnTogglePage.addEventListener('click', () => {
         const isTerminal = document.body.classList.contains('page-terminal');
+        if (isTerminal) {
+          vscode.postMessage({ type: 'showPendingFiles' });
+          return;
+        }
         document.body.classList.toggle('page-terminal', !isTerminal);
         document.body.classList.toggle('page-files', isTerminal);
         if (!isTerminal) {

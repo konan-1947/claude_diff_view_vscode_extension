@@ -137,6 +137,9 @@ export class DiffManager {
     // một diff phủ cả file.
     const hunks = calculateHunks(toLf(snapshot.content), toLf(modifiedContent));
     if (hunks.length === 0) {
+      // A newly-created empty file is still pending: Revert must delete it and
+      // Accept must keep it. There is simply no text hunk to render.
+      if (!snapshot.fileExistedBefore) { return; }
       this.snapshots.delete(absPath);
       void this.store.save(this.snapshots);
       this._onDidChangeDiffs.fire();
@@ -317,7 +320,7 @@ export class DiffManager {
     const originalLf = toLf(snapshot.content);
     const currentLf = toLf(currentContent);
     const hunks = calculateHunks(originalLf, currentLf);
-    if (hunks.length === 0) {
+    if (hunks.length === 0 && snapshot.fileExistedBefore) {
       return undefined;
     }
 

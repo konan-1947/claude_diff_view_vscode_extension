@@ -472,6 +472,9 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           console.log('[ai-cli-diff-view] terminal:toggleAgentMode');
           void vscode.commands.executeCommand('ai-cli-diff-view.toggleAgentMode');
           return;
+        case 'showPendingFiles':
+          void vscode.commands.executeCommand('ai-cli-diff-view.showPendingFiles');
+          return;
         case 'ready':
           // Push initial files page state once the webview is ready.
           this.postFilesUpdate();

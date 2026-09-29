@@ -134,13 +134,12 @@
           "id": "ai-cli-diff-view.terminal",
           "name": "AI CLI",
           "type": "webview",
-          "when": "ai-cli-diff-view.terminalVisible"
+          "when": "ai-cli-diff-view.terminalVisible && !ai-cli-diff-view.terminalFilesPage"
         },
         {
           "id": "ai-cli-diff-view.agentChanges",
-          "name": "AGENT",
-          "type": "webview",
-          "when": "ai-cli-diff-view.agentModeActive"
+          "name": "PENDING FILES",
+          "when": "ai-cli-diff-view.agentModeActive || ai-cli-diff-view.terminalVisible && ai-cli-diff-view.terminalFilesPage"
         }
       ],
       "explorer": [
@@ -182,6 +181,11 @@
         "title": "AI CLI Diff: Open Pending File"
       },
       {
+        "command": "ai-cli-diff-view.showTerminal",
+        "title": "Back to Terminal",
+        "icon": "$(terminal)"
+      },
+      {
         "command": "ai-cli-diff-view.nextFile",
         "title": "AI CLI Diff: Next Edited File"
       },
@@ -217,7 +221,15 @@
         "when": "ai-cli-diff-view.hasPendingDiff"
       }
     ],
-    "menus": {}
+    "menus": {
+      "view/title": [
+        {
+          "command": "ai-cli-diff-view.showTerminal",
+          "when": "view == ai-cli-diff-view.agentChanges && ai-cli-diff-view.terminalFilesPage",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

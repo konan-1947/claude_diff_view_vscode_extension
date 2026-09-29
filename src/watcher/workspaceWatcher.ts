@@ -413,9 +413,9 @@ export class WorkspaceWatcher {
         // dung hiện tại làm baseline rồi thôi. Mở diff ở đây sẽ hiện cả file là
         // "thêm mới", và Revert all trên diff đó sẽ xoá mất file.
         if (this.snapshots.consumeSizeSkipped(absPath)) { return; }
-        if (newContent.trim()) {
-          this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
-        }
+        // A new empty file still needs a pending snapshot: accepting keeps it,
+        // while reverting removes it. It has no content hunk to render.
+        this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
         return;
       }
 
