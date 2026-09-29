@@ -10,8 +10,7 @@
   const content = document.getElementById('diff-preview-content');
   const status = document.getElementById('diff-preview-status');
   const summary = document.getElementById('diff-preview-summary');
-  const collapseAll = document.getElementById('btn-diff-collapse-all');
-  const expandAll = document.getElementById('btn-diff-expand-all');
+  const toggleAll = document.getElementById('btn-diff-toggle-all');
 
   const files = new Map();
   let observer = null;
@@ -104,6 +103,7 @@
     }
 
     updateSummary();
+    updateToggleAllLabel();
     if (metadata.length === 0) {
       setStatus('No pending changes.', false);
       return;
@@ -193,6 +193,11 @@
       originalModel: null,
       modifiedModel: null,
       modifiedListener: null,
+      decorationIds: [],
+      viewZoneIds: [],
+      groupWidgets: [],
+      hoveredGroupIdx: -1,
+      editorDisposables: [],
       data: null,
       groups: [],
       collapsed: false,
@@ -303,37 +308,28 @@
   function mountEditor(monaco, state) {
     if (state.mounting) { return; }
     state.mounting = true;
+    const isNewEditor = !state.editor;
     const data = state.data;
     state.lastUsed = Date.now();
     state.suppressEdit = true;
     try {
       if (!state.editor) {
-        state.originalModel = monaco.editor.createModel(
-          data.originalContent,
-          data.language,
-          monaco.Uri.parse('inmemory://ai-cli-diff/original/' + encodeURIComponent(data.filePath))
-        );
         state.modifiedModel = monaco.editor.createModel(
           data.currentContent,
           data.language,
           monaco.Uri.parse('inmemory://ai-cli-diff/modified/' + encodeURIComponent(data.filePath))
         );
-        state.editor = monaco.editor.createDiffEditor(state.editorHost, {
-          automaticLayout: false,
+        // Use the same line decorations and removal view zones as the main
+        // custom diff. Monaco's DiffEditor worker is unreliable in VS Code
+        // webviews, while the extension has already computed these hunks.
+        state.editor = monaco.editor.create(state.editorHost, {
+          automaticLayout: true,
           readOnly: false,
-          originalEditable: false,
-          renderSideBySide: false,
           scrollBeyondLastLine: false,
-          renderOverviewRuler: true,
           minimap: { enabled: false },
-          hideUnchangedRegions: {
-            enabled: true,
-            contextLineCount: 3,
-            minimumLineCount: 7,
-            revealLineCount: 3,
-          },
+          wordWrap: 'off',
         });
-        state.editor.setModel({ original: state.originalModel, modified: state.modifiedModel });
+        state.editor.setModel(state.modifiedModel);
         state.modifiedListener = state.modifiedModel.onDidChangeContent(() => {
           if (state.suppressEdit || !state.data) { return; }
           state.data.currentContent = state.modifiedModel.getValue();
@@ -347,54 +343,90 @@
             });
           }, 200);
         });
-        state.editor.getModifiedEditor().addCommand(
+        state.editor.addCommand(
           monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
           () => vscode.postMessage({ type: 'previewSaveFile', path: data.filePath })
         );
+        state.editorDisposables.push(
+          state.editor.onMouseMove((event) => {
+            // Moving from a line into an overlay widget has no Monaco line
+            // position. Treating that as "no hunk" hides the bar before its
+            // Accept/Reject buttons can be clicked.
+            if (!event.target.position) { return; }
+            setHoveredGroup(state, findGroupAtLine(state, event.target.position.lineNumber));
+          }),
+          state.editor.onDidChangeCursorPosition((event) => {
+            setHoveredGroup(state, findGroupAtLine(state, event.position.lineNumber));
+          }),
+          state.editor.onDidScrollChange(() => repositionHoveredGroup(state)),
+          state.editor.onDidLayoutChange(() => repositionHoveredGroup(state))
+        );
       } else {
-        if (state.originalModel.getValue() !== data.originalContent) {
-          state.originalModel.setValue(data.originalContent);
-        }
         if (state.modifiedModel.getValue() !== data.currentContent) {
           state.modifiedModel.setValue(data.currentContent);
         }
       }
+      renderDiffDecorations(monaco, state);
+      renderGroupWidgets(state);
     } finally {
       state.suppressEdit = false;
       state.mounting = false;
     }
     requestAnimationFrame(() => {
-      try { state.editor.layout(); } catch (_) { /* section may be closing */ }
+      try {
+        state.editor.layout();
+        if (isNewEditor && data.hunks.length) {
+          state.editor.revealLineInCenter(data.hunks[0].modifiedStart + 1);
+        }
+      } catch (_) { /* section may be closing */ }
+    });
+  }
+
+  function renderDiffDecorations(monaco, state) {
+    const decorations = [];
+    for (const hunk of state.data.hunks) {
+      for (const added of hunk.addedLines) {
+        const line = added.modifiedLineIndex + 1;
+        decorations.push({
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: true,
+            className: 'aggregate-diff-added-line',
+            linesDecorationsClassName: 'aggregate-diff-added-gutter',
+          },
+        });
+      }
+    }
+    state.decorationIds = state.editor.deltaDecorations(state.decorationIds, decorations);
+    state.editor.changeViewZones((accessor) => {
+      for (const id of state.viewZoneIds) { accessor.removeZone(id); }
+      state.viewZoneIds = [];
+      const fontInfo = state.editor.getOption(monaco.editor.EditorOption.fontInfo);
+      for (const hunk of state.data.hunks) {
+        if (!hunk.removedLines.length) { continue; }
+        const dom = document.createElement('div');
+        dom.className = 'aggregate-diff-removed-zone';
+        dom.style.lineHeight = fontInfo.lineHeight + 'px';
+        dom.style.fontSize = fontInfo.fontSize + 'px';
+        dom.style.fontFamily = fontInfo.fontFamily;
+        for (const removed of hunk.removedLines) {
+          const line = document.createElement('div');
+          line.className = 'aggregate-diff-removed-line';
+          line.textContent = removed.text;
+          dom.appendChild(line);
+        }
+        state.viewZoneIds.push(accessor.addZone({
+          afterLineNumber: Math.max(0, hunk.modifiedStart),
+          heightInLines: hunk.removedLines.length,
+          domNode: dom,
+        }));
+      }
     });
   }
 
   function renderHunkActions(state) {
     state.hunkActions.replaceChildren();
-    if (!state.groups.length) {
-      state.hunkActions.hidden = true;
-      return;
-    }
-    state.hunkActions.hidden = false;
-    const label = document.createElement('span');
-    label.className = 'aggregate-hunk-label';
-    label.textContent = 'Hunks';
-    state.hunkActions.appendChild(label);
-    state.groups.forEach((group, index) => {
-      state.hunkActions.appendChild(actionButton('Accept ' + (index + 1), 'accept', () => {
-        if (state.busy || !state.data) { return; }
-        state.selectedGroup = group;
-        const patch = applyAccept(state);
-        state.busy = true;
-        vscode.postMessage({ type: 'previewAcceptHunk', path: state.data.filePath, ...patch });
-      }));
-      state.hunkActions.appendChild(actionButton('Reject ' + (index + 1), 'reject', () => {
-        if (state.busy || !state.data) { return; }
-        state.selectedGroup = group;
-        const patch = applyReject(state);
-        state.busy = true;
-        vscode.postMessage({ type: 'previewRejectHunk', path: state.data.filePath, ...patch });
-      }));
-    });
+    state.hunkActions.hidden = true;
   }
 
   function buildGroups(hunks) {
@@ -421,8 +453,76 @@
     for (const group of groups) {
       group.removedCount = group.removedTexts.length;
       group.addedCount = group.addedTexts.length;
+      group.startLine = Math.max(1, group.modifiedStart + 1);
+      group.endLine = group.addedCount > 0
+        ? group.modifiedStart + group.addedCount
+        : group.startLine;
     }
     return groups;
+  }
+
+  function findGroupAtLine(state, line) {
+    if (!line) { return -1; }
+    return state.groups.findIndex((group) => line >= group.startLine && line <= group.endLine);
+  }
+
+  function renderGroupWidgets(state) {
+    for (const widget of state.groupWidgets) { state.editor.removeOverlayWidget(widget); }
+    state.groupWidgets = [];
+    state.hoveredGroupIdx = -1;
+    state.groups.forEach((group, index) => {
+      const dom = document.createElement('div');
+      dom.className = 'aggregate-hunk-bar';
+      const accept = document.createElement('button');
+      accept.className = 'accept';
+      accept.textContent = 'Accept';
+      accept.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (state.busy || !state.data) { return; }
+        state.selectedGroup = group;
+        state.busy = true;
+        vscode.postMessage({ type: 'previewAcceptHunk', path: state.data.filePath, ...applyAccept(state) });
+      });
+      const reject = document.createElement('button');
+      reject.className = 'reject';
+      reject.textContent = 'Reject';
+      reject.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (state.busy || !state.data) { return; }
+        state.selectedGroup = group;
+        state.busy = true;
+        vscode.postMessage({ type: 'previewRejectHunk', path: state.data.filePath, ...applyReject(state) });
+      });
+      dom.append(accept, reject);
+      const widget = {
+        group,
+        dom,
+        getId: () => 'ai-cli-diff.aggregateHunkBar.' + index,
+        getDomNode: () => dom,
+        getPosition: () => null,
+      };
+      state.editor.addOverlayWidget(widget);
+      state.groupWidgets.push(widget);
+    });
+  }
+
+  function setHoveredGroup(state, index) {
+    if (index === state.hoveredGroupIdx) { return; }
+    const previous = state.groupWidgets[state.hoveredGroupIdx];
+    previous?.dom.classList.remove('visible');
+    state.hoveredGroupIdx = index;
+    const next = state.groupWidgets[index];
+    if (!next) { return; }
+    next.dom.classList.add('visible');
+    repositionHoveredGroup(state);
+  }
+
+  function repositionHoveredGroup(state) {
+    const widget = state.groupWidgets[state.hoveredGroupIdx];
+    if (!widget || !state.editor) { return; }
+    const layout = state.editor.getLayoutInfo();
+    widget.dom.style.top = (state.editor.getBottomForLineNumber(widget.group.endLine) - state.editor.getScrollTop()) + 'px';
+    widget.dom.style.right = ((layout.verticalScrollbarWidth || 0) + 8) + 'px';
   }
 
   function applyAccept(state) {
@@ -458,6 +558,7 @@
     state.section.classList.toggle('is-collapsed', state.collapsed);
     state.toggle.textContent = state.collapsed ? '›' : '⌄';
     state.toggle.title = state.collapsed ? 'Expand file' : 'Collapse file';
+    updateToggleAllLabel();
     requestAnimationFrame(() => {
       try { state.editor?.layout(); } catch (_) { /* ignore */ }
     });
@@ -466,6 +567,13 @@
   function setCollapsed(state, collapsed) {
     if (!state || state.collapsed === collapsed) { return; }
     toggleCollapsed(state);
+  }
+
+  function updateToggleAllLabel() {
+    if (!toggleAll) { return; }
+    const allCollapsed = files.size > 0 && Array.from(files.values()).every((state) => state.collapsed);
+    toggleAll.textContent = allCollapsed ? 'Expand all' : 'Collapse all';
+    toggleAll.title = toggleAll.textContent;
   }
 
   function setActive(state) {
@@ -487,12 +595,18 @@
   function disposeEditor(state) {
     state.modifiedListener?.dispose();
     state.modifiedListener = null;
+    for (const disposable of state.editorDisposables) { disposable.dispose(); }
+    state.editorDisposables = [];
+    for (const widget of state.groupWidgets) { state.editor?.removeOverlayWidget(widget); }
+    state.groupWidgets = [];
     state.editor?.dispose();
     state.editor = null;
     state.originalModel?.dispose();
     state.originalModel = null;
     state.modifiedModel?.dispose();
     state.modifiedModel = null;
+    state.decorationIds = [];
+    state.viewZoneIds = [];
     state.editorHost.replaceChildren();
   }
 
@@ -539,11 +653,10 @@
 
   ensureObserver();
 
-  collapseAll?.addEventListener('click', () => {
-    for (const state of files.values()) { setCollapsed(state, true); }
-  });
-  expandAll?.addEventListener('click', () => {
-    for (const state of files.values()) { setCollapsed(state, false); }
+  toggleAll?.addEventListener('click', () => {
+    const allCollapsed = files.size > 0 && Array.from(files.values()).every((state) => state.collapsed);
+    for (const state of files.values()) { setCollapsed(state, !allCollapsed); }
+    updateToggleAllLabel();
   });
 
   window.addEventListener('message', (event) => {

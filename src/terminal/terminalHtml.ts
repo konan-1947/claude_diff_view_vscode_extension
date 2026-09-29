@@ -659,6 +659,42 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     height: 420px;
     min-height: 220px;
   }
+  .aggregate-diff-added-line { background-color: rgba(46, 160, 67, 0.18); }
+  .aggregate-diff-added-gutter {
+    width: 3px !important;
+    margin-left: 3px;
+    background-color: rgba(46, 160, 67, 0.55);
+  }
+  .aggregate-diff-removed-zone {
+    background-color: rgba(248, 81, 73, 0.12);
+    color: rgba(248, 81, 73, 0.95);
+    padding: 0;
+    white-space: pre;
+  }
+  .aggregate-diff-removed-line { padding: 0; }
+  .aggregate-hunk-bar {
+    display: inline-flex;
+    gap: 4px;
+    padding: 3px 4px;
+    border: 1px solid var(--vscode-editorWidget-border, rgba(128,128,128,.35));
+    border-radius: 4px;
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s ease;
+  }
+  .aggregate-hunk-bar.visible { opacity: 1; pointer-events: auto; }
+  .aggregate-hunk-bar button {
+    padding: 2px 8px;
+    border: 0;
+    border-radius: 3px;
+    color: var(--vscode-button-foreground);
+    cursor: pointer;
+    font: 11px var(--vscode-font-family);
+  }
+  .aggregate-hunk-bar .accept { background: var(--vscode-testing-iconPassed, #73c991); }
+  .aggregate-hunk-bar .reject { background: var(--vscode-testing-iconFailed, #f14c4c); }
   .aggregate-file-section.is-collapsed .aggregate-editor { display: none; }
   @media (max-width: 600px) {
     .diff-preview-scroll { grid-template-columns: 1fr; }
@@ -991,8 +1027,7 @@ ${FONT_OPTIONS.map((f) => {
           <span id="diff-preview-summary">Loading changes…</span>
         </div>
         <div class="diff-preview-head-actions">
-          <button id="btn-diff-collapse-all" class="btn btn-secondary" type="button">Collapse all</button>
-          <button id="btn-diff-expand-all" class="btn btn-secondary" type="button">Expand all</button>
+          <button id="btn-diff-toggle-all" class="btn btn-secondary" type="button">Collapse all</button>
         </div>
       </div>
       <div class="diff-preview-scroll">

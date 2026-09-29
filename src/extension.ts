@@ -60,7 +60,8 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   debugLog('activate:configuration initialized');
 
   const diffManager       = new DiffManager(context);
-  const workspaceWatcher  = new WorkspaceWatcher(diffManager);
+  let agentModeActive = false;
+  const workspaceWatcher  = new WorkspaceWatcher(diffManager, () => !agentModeActive);
   const gitBranchWatcher  = new GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
   const navigationManager = new NavigationManager(diffManager);
   debugLog('activate:core services constructed');
@@ -87,7 +88,6 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   let activeRunner: IAiRunner | undefined;
   let agentModePanel: vscode.WebviewPanel | undefined;
   let agentModeTerminal: TerminalPanelProvider | undefined;
-  let agentModeActive = false;
   let agentModeTabsState: AgentModeTabsState | undefined;
   const agentChangesPanel = new AgentChangesPanel(
     context.extensionUri,
