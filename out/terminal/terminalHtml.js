@@ -1,74 +1,87 @@
-import * as vscode from 'vscode';
-import { findInstallableForPrimary } from './fontInstaller';
-import { PENDING_FILES_CSS } from './pendingFilesPage';
-import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
-
-interface FontOption {
-  label: string;
-  value: string;
-  primary: string;
-}
-
-const FONT_OPTIONS: ReadonlyArray<FontOption> = [
-  { label: 'Consolas',          value: 'Consolas, "Courier New", monospace',                     primary: 'Consolas' },
-  { label: 'Cascadia Code',     value: '"Cascadia Code", "Cascadia Mono", Consolas, monospace',  primary: 'Cascadia Code' },
-  { label: 'Cascadia Mono',     value: '"Cascadia Mono", Consolas, monospace',                   primary: 'Cascadia Mono' },
-  { label: 'Fira Code',         value: '"Fira Code", Consolas, monospace',                       primary: 'Fira Code' },
-  { label: 'JetBrains Mono',    value: '"JetBrains Mono", Consolas, monospace',                  primary: 'JetBrains Mono' },
-  { label: 'Source Code Pro',   value: '"Source Code Pro", Consolas, monospace',                 primary: 'Source Code Pro' },
-  { label: 'Hack',              value: 'Hack, Consolas, monospace',                              primary: 'Hack' },
-  { label: 'Menlo / Monaco',    value: 'Menlo, Monaco, "Courier New", monospace',                primary: 'Menlo' },
-  { label: 'Ubuntu Mono',       value: '"Ubuntu Mono", Consolas, monospace',                     primary: 'Ubuntu Mono' },
-  { label: 'IBM Plex Mono',     value: '"IBM Plex Mono", Consolas, monospace',                   primary: 'IBM Plex Mono' },
-  { label: 'Roboto Mono',       value: '"Roboto Mono", Consolas, monospace',                     primary: 'Roboto Mono' },
-  { label: 'SF Mono',           value: '"SF Mono", Menlo, Consolas, monospace',                  primary: 'SF Mono' },
-  { label: 'Courier New',       value: '"Courier New", Courier, monospace',                      primary: 'Courier New' },
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildTerminalHtml = buildTerminalHtml;
+const vscode = __importStar(require("vscode"));
+const fontInstaller_1 = require("./fontInstaller");
+const pendingFilesPage_1 = require("./pendingFilesPage");
+const terminalTypes_1 = require("./terminalTypes");
+const FONT_OPTIONS = [
+    { label: 'Consolas', value: 'Consolas, "Courier New", monospace', primary: 'Consolas' },
+    { label: 'Cascadia Code', value: '"Cascadia Code", "Cascadia Mono", Consolas, monospace', primary: 'Cascadia Code' },
+    { label: 'Cascadia Mono', value: '"Cascadia Mono", Consolas, monospace', primary: 'Cascadia Mono' },
+    { label: 'Fira Code', value: '"Fira Code", Consolas, monospace', primary: 'Fira Code' },
+    { label: 'JetBrains Mono', value: '"JetBrains Mono", Consolas, monospace', primary: 'JetBrains Mono' },
+    { label: 'Source Code Pro', value: '"Source Code Pro", Consolas, monospace', primary: 'Source Code Pro' },
+    { label: 'Hack', value: 'Hack, Consolas, monospace', primary: 'Hack' },
+    { label: 'Menlo / Monaco', value: 'Menlo, Monaco, "Courier New", monospace', primary: 'Menlo' },
+    { label: 'Ubuntu Mono', value: '"Ubuntu Mono", Consolas, monospace', primary: 'Ubuntu Mono' },
+    { label: 'IBM Plex Mono', value: '"IBM Plex Mono", Consolas, monospace', primary: 'IBM Plex Mono' },
+    { label: 'Roboto Mono', value: '"Roboto Mono", Consolas, monospace', primary: 'Roboto Mono' },
+    { label: 'SF Mono', value: '"SF Mono", Menlo, Consolas, monospace', primary: 'SF Mono' },
+    { label: 'Courier New', value: '"Courier New", Courier, monospace', primary: 'Courier New' },
 ];
-
-export interface IntroSlide {
-  src: string;
-  caption: string;
-}
-
-export interface BuildTerminalHtmlArgs {
-  webview: vscode.Webview;
-  extensionUri: vscode.Uri;
-  filesInnerHtml: string;
-}
-
-export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
-  const { webview, extensionUri, filesInnerHtml } = args;
-
-  const xtermBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'xterm'));
-  const xtermJs = `${xtermBase}/xterm.js`;
-  const xtermCss = `${xtermBase}/xterm.css`;
-  const addonFitJs = `${xtermBase}/addon-fit.js`;
-  const monacoBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs'));
-  const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
-  const filePreviewJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'filePreview.js'));
-
-  const introBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'introduce'));
-  const introSlides: IntroSlide[] = [
-    { src: `${introBase}/welcome.png`, caption: 'Welcome to AI CLI Diff — review every AI edit before it lands.' },
-    { src: `${introBase}/image1.png`,  caption: 'Accept or reject each AI change with one click in the side panel.' },
-    { src: `${introBase}/image2.png`,  caption: 'Run an AI CLI agent right inside the embedded terminal.' },
-    { src: `${introBase}/image3.png`,  caption: 'See changed files in their real folder structure.' },
-    { src: `${introBase}/image4.png`,  caption: 'Review changes hunk by hunk directly in the editor.' },
-    { src: `${introBase}/image5.png`,  caption: 'Customize terminal font, theme, and cursor from the Settings popover.' },
-  ];
-
-  const nonce = randomNonce();
-  const csp = [
-    `default-src 'none'`,
-    `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval'`,
-    `font-src ${webview.cspSource}`,
-    `img-src ${webview.cspSource} data:`,
-    `worker-src blob:`,
-    `child-src blob:`,
-  ].join('; ');
-
-  return `<!DOCTYPE html>
+function buildTerminalHtml(args) {
+    const { webview, extensionUri, filesInnerHtml } = args;
+    const xtermBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'xterm'));
+    const xtermJs = `${xtermBase}/xterm.js`;
+    const xtermCss = `${xtermBase}/xterm.css`;
+    const addonFitJs = `${xtermBase}/addon-fit.js`;
+    const monacoBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs'));
+    const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
+    const filePreviewJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'filePreview.js'));
+    const introBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'introduce'));
+    const introSlides = [
+        { src: `${introBase}/welcome.png`, caption: 'Welcome to AI CLI Diff — review every AI edit before it lands.' },
+        { src: `${introBase}/image1.png`, caption: 'Accept or reject each AI change with one click in the side panel.' },
+        { src: `${introBase}/image2.png`, caption: 'Run an AI CLI agent right inside the embedded terminal.' },
+        { src: `${introBase}/image3.png`, caption: 'See changed files in their real folder structure.' },
+        { src: `${introBase}/image4.png`, caption: 'Review changes hunk by hunk directly in the editor.' },
+        { src: `${introBase}/image5.png`, caption: 'Customize terminal font, theme, and cursor from the Settings popover.' },
+    ];
+    const nonce = randomNonce();
+    const csp = [
+        `default-src 'none'`,
+        `style-src ${webview.cspSource} 'unsafe-inline'`,
+        `script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval'`,
+        `font-src ${webview.cspSource}`,
+        `img-src ${webview.cspSource} data:`,
+        `worker-src blob:`,
+        `child-src blob:`,
+    ].join('; ');
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -286,7 +299,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     position: absolute;
     inset: 0;
   }
-  ${PENDING_FILES_CSS}
+  ${pendingFilesPage_1.PENDING_FILES_CSS}
 
   #err {
     position: absolute;
@@ -386,25 +399,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     flex: none;
   }
   .field.indent { padding-left: 16px; }
-  .field.stack-field {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .field.stack-field > label { flex: none; }
-  .field textarea {
-    width: 100%;
-    min-height: 52px;
-    resize: vertical;
-    padding: 4px 6px;
-    background: var(--vscode-input-background, #2a2a2a);
-    color: var(--vscode-input-foreground, var(--vscode-foreground));
-    border: 1px solid var(--vscode-input-border, transparent);
-    border-radius: 3px;
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 12px;
-    box-sizing: border-box;
-  }
   .color-row { display: flex; align-items: center; gap: 8px; }
   .color-row span { font-family: var(--vscode-editor-font-family, monospace); opacity: 0.7; font-size: 11px; }
   .file-ext-controls {
@@ -880,9 +874,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
           <label for="f-font-family">Font family</label>
           <select id="f-font-family">
 ${FONT_OPTIONS.map((f) => {
-  const installable = !!findInstallableForPrimary(f.primary);
-  return `            <option value="${escapeAttr(f.value)}" data-primary="${escapeAttr(f.primary)}"${installable ? ' data-installable="1"' : ''}>${escapeHtml(f.label)}</option>`;
-}).join('\n')}
+        const installable = !!(0, fontInstaller_1.findInstallableForPrimary)(f.primary);
+        return `            <option value="${escapeAttr(f.value)}" data-primary="${escapeAttr(f.primary)}"${installable ? ' data-installable="1"' : ''}>${escapeHtml(f.label)}</option>`;
+    }).join('\n')}
           </select>
         </div>
         <div class="field field-install" id="install-row" hidden>
@@ -1007,34 +1001,6 @@ ${FONT_OPTIONS.map((f) => {
           lines — and accept that opening such a diff may stall the editor.
         </div>
 
-        <div class="field stack-field">
-          <label for="f-excluded-segments">Excluded path segments</label>
-          <textarea id="f-excluded-segments" spellcheck="false"
-            placeholder="myvendor&#10;.terraform"></textarea>
-        </div>
-        <div class="setting-help">
-          One segment name per line. Matched against whole path components at any depth, so
-          <code>myvendor</code> also skips <code>src/myvendor/…</code>. Use the patterns box
-          below for anything containing a <code>/</code>.
-        </div>
-
-        <div class="field stack-field">
-          <label for="f-excluded-patterns">Excluded path patterns</label>
-          <textarea id="f-excluded-patterns" spellcheck="false"
-            placeholder="src/generated/**&#10;**/*.min.js"></textarea>
-        </div>
-        <div class="setting-help">
-          One glob per line, matched against the whole path with <code>/</code> separators:
-          <code>*</code> does not cross a <code>/</code>, <code>**</code> does. Patterns match
-          at any depth, so <code>src/generated/**</code> also covers
-          <code>packages/foo/src/generated/…</code> — they are not anchored to the workspace
-          root.
-          <br><br>
-          Excluded files get no baseline and never open a diff. Changing these boxes rebuilds
-          the baseline; diff tabs already open for a newly excluded path stay open until you
-          resolve them.
-        </div>
-
         <div class="actions">
           <button id="btn-reset" class="btn btn-secondary" type="button">Reset</button>
           <button id="btn-apply" class="btn btn-primary" type="button">Apply</button>
@@ -1115,7 +1081,7 @@ ${FONT_OPTIONS.map((f) => {
         return;
       }
 
-      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS, ...DEFAULT_EXCLUSION_SETTINGS })};
+      const DEFAULTS = ${JSON.stringify({ ...terminalTypes_1.DEFAULT_SETTINGS, ...terminalTypes_1.DEFAULT_BURST_DETECTION_SETTINGS, ...terminalTypes_1.DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...terminalTypes_1.DEFAULT_FILE_LIMIT_SETTINGS })};
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
       const termHost = document.getElementById('term-host');
@@ -1678,8 +1644,6 @@ ${FONT_OPTIONS.map((f) => {
       const fBurstThreshold = document.getElementById('f-burst-threshold');
       const fBurstHold = document.getElementById('f-burst-hold');
       const fMaxFileLines = document.getElementById('f-max-file-lines');
-      const fExcludedSegments = document.getElementById('f-excluded-segments');
-      const fExcludedPatterns = document.getElementById('f-excluded-patterns');
       const fileExtBody = document.getElementById('file-ext-body');
       const btnExtNew = document.getElementById('btn-ext-new');
       const btnExtEdit = document.getElementById('btn-ext-edit');
@@ -1761,18 +1725,6 @@ ${FONT_OPTIONS.map((f) => {
         renderFileExtensions();
       }
 
-      function parseLineList(value) {
-        const seen = new Set();
-        const result = [];
-        String(value || '').split(/\\r?\\n/).forEach((part) => {
-          const trimmed = part.trim();
-          if (!trimmed || seen.has(trimmed)) return;
-          seen.add(trimmed);
-          result.push(trimmed);
-        });
-        return result;
-      }
-
       function populateForm(s) {
         fFontFamily.value = s.fontFamily;
         if (fFontFamily.value !== s.fontFamily) {
@@ -1803,8 +1755,6 @@ ${FONT_OPTIONS.map((f) => {
         fBurstThreshold.value = String(s.burstDetectionThreshold);
         fBurstHold.value = String(s.burstDetectionHoldMs);
         fMaxFileLines.value = String(s.maxFileLines);
-        fExcludedSegments.value = Array.isArray(s.excludedPathSegments) ? s.excludedPathSegments.join('\\n') : '';
-        fExcludedPatterns.value = Array.isArray(s.excludedPathPatterns) ? s.excludedPathPatterns.join('\\n') : '';
         toggleCustomRows();
       }
 
@@ -1838,8 +1788,6 @@ ${FONT_OPTIONS.map((f) => {
           burstDetectionHoldMs: isFinite(burstHold) ? Math.min(10000, Math.max(500, burstHold)) : DEFAULTS.burstDetectionHoldMs,
           // 0 = tắt giới hạn, nên chặn dưới là 0 chứ không phải một mức tối thiểu.
           maxFileLines: isFinite(maxFileLines) ? Math.min(200000, Math.max(0, maxFileLines)) : DEFAULTS.maxFileLines,
-          excludedPathSegments: parseLineList(fExcludedSegments.value),
-          excludedPathPatterns: parseLineList(fExcludedPatterns.value),
         };
       }
 
@@ -1979,20 +1927,18 @@ ${FONT_OPTIONS.map((f) => {
 </body>
 </html>`;
 }
-
-function randomNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let s = '';
-  for (let i = 0; i < 24; i++) {
-    s += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return s;
+function randomNonce() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let s = '';
+    for (let i = 0; i < 24; i++) {
+        s += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return s;
 }
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
-
-function escapeAttr(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function escapeAttr(s) {
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+//# sourceMappingURL=terminalHtml.js.map

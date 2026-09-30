@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
-  "version": "3.7.0",
+  "version": "4.0.2",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
@@ -149,7 +149,14 @@
         {
           "id": "ai-cli-diff-view.terminal",
           "name": "AI CLI",
-          "type": "webview"
+          "type": "webview",
+          "when": "ai-cli-diff-view.terminalVisible && !ai-cli-diff-view.terminalFilesPage"
+        },
+        {
+          "id": "ai-cli-diff-view.agentChanges",
+          "name": "PENDING FILES",
+          "type": "webview",
+          "when": "ai-cli-diff-view.agentModeActive || ai-cli-diff-view.terminalVisible && ai-cli-diff-view.terminalFilesPage"
         }
       ],
       "explorer": [
@@ -166,6 +173,15 @@
         "title": "AI CLI Diff: Start Claude Session"
       },
       {
+        "command": "ai-cli-diff-view.toggleAgentMode",
+        "title": "AI CLI Diff: Toggle Agent Mode"
+      },
+      {
+        "command": "ai-cli-diff-view.focusAgentTerminal",
+        "title": "Back to Agent",
+        "icon": "$(terminal)"
+      },
+      {
         "command": "ai-cli-diff-view.acceptAllHunks",
         "title": "AI CLI Diff: Accept All Changes"
       },
@@ -180,6 +196,11 @@
       {
         "command": "ai-cli-diff-view.openPendingFile",
         "title": "AI CLI Diff: Open Pending File"
+      },
+      {
+        "command": "ai-cli-diff-view.showTerminal",
+        "title": "Back to Terminal",
+        "icon": "$(terminal)"
       },
       {
         "command": "ai-cli-diff-view.nextFile",
@@ -217,7 +238,15 @@
         "when": "ai-cli-diff-view.hasPendingDiff"
       }
     ],
-    "menus": {}
+    "menus": {
+      "view/title": [
+        {
+          "command": "ai-cli-diff-view.showTerminal",
+          "when": "view == ai-cli-diff-view.agentChanges && ai-cli-diff-view.terminalFilesPage",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

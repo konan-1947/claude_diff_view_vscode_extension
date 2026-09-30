@@ -11,6 +11,7 @@ export interface CommandDeps {
   context: vscode.ExtensionContext;
   getRunner(): IAiRunner | undefined;
   setRunner(runner: IAiRunner): void;
+  openPendingFileInAgent?(filePath: string): boolean;
 }
 
 export function registerAllCommands(deps: CommandDeps): void {
@@ -84,6 +85,9 @@ export function registerAllCommands(deps: CommandDeps): void {
       }
 
       try {
+        if (deps.openPendingFileInAgent?.(filePath)) {
+          return;
+        }
         await diffManager.openDiff(filePath);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

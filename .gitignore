@@ -1,5 +1,7 @@
 node_modules/
-out/
+out/*
+!out/
+!out/**
 *.vsix
 .vscode-test/
 

@@ -279,7 +279,6 @@ function dirBuildToJson(db: DirBuild): TreeJson {
 
 function buildPendingTreeModel(pending: string[]): TreeJson {
   const root: DirBuild = { subdirs: new Map(), files: [] };
-  const folders = vscode.workspace.workspaceFolders ?? [];
   const orphans = pending.filter((p) => !workspaceFolderContaining(p));
   const outsideBase = outsideBaseForOrphans(orphans);
 
@@ -289,7 +288,9 @@ function buildPendingTreeModel(pending: string[]): TreeJson {
     if (wf) {
       const rel = path.relative(wf.uri.fsPath, path.normalize(absPath));
       const segments = rel.split(/[/\\]/).filter(Boolean);
-      parts = folders.length > 1 ? [wf.name, ...segments] : segments;
+      // Mirror the Agent Mode tree: even a single-folder workspace gets an
+      // explicit root node, so files at different depths have clear context.
+      parts = [wf.name, ...segments];
     } else {
       const rel = path.relative(outsideBase, path.normalize(absPath));
       parts = rel.split(/[/\\]/).filter(Boolean).filter((seg) => seg !== '.' && seg !== '..');
