@@ -5,6 +5,7 @@ import { IAiRunner } from './runner/aiRunner';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { refreshTextFileRules } from './watcher/fileTypeRules';
 import { refreshFileSizeLimit } from './watcher/fileSizeLimit';
+import { refreshPathExclusions } from './watcher/pathExclusions';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
@@ -57,6 +58,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   refreshTextFileRules();
   refreshFileSizeLimit();
+  refreshPathExclusions();
   debugLog('activate:configuration initialized');
 
   const diffManager       = new DiffManager(context);
@@ -158,6 +160,14 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       }
       if (e.affectsConfiguration('ai-cli-diff-view.maxFileLines')) {
         refreshFileSizeLimit();
+      }
+      if (e.affectsConfiguration('ai-cli-diff-view.excludedPathSegments') ||
+          e.affectsConfiguration('ai-cli-diff-view.excludedPathPatterns')) {
+        refreshPathExclusions();
+        // Files that were excluded during the initial scan have no baseline, so
+        // dropping an exclusion would make them look brand new — and Revert all
+        // would delete them. Rebuild the baseline against the new rules.
+        workspaceWatcher.rebuildBaselineAfterRuleChange();
       }
     })
   );

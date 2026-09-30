@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
 import { PENDING_FILES_CSS } from './pendingFilesPage';
-import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
+import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 
 interface FontOption {
   label: string;
@@ -386,6 +386,25 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     flex: none;
   }
   .field.indent { padding-left: 16px; }
+  .field.stack-field {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .field.stack-field > label { flex: none; }
+  .field textarea {
+    width: 100%;
+    min-height: 52px;
+    resize: vertical;
+    padding: 4px 6px;
+    background: var(--vscode-input-background, #2a2a2a);
+    color: var(--vscode-input-foreground, var(--vscode-foreground));
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 3px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    box-sizing: border-box;
+  }
   .color-row { display: flex; align-items: center; gap: 8px; }
   .color-row span { font-family: var(--vscode-editor-font-family, monospace); opacity: 0.7; font-size: 11px; }
   .file-ext-controls {
@@ -988,6 +1007,34 @@ ${FONT_OPTIONS.map((f) => {
           lines — and accept that opening such a diff may stall the editor.
         </div>
 
+        <div class="field stack-field">
+          <label for="f-excluded-segments">Excluded path segments</label>
+          <textarea id="f-excluded-segments" spellcheck="false"
+            placeholder="myvendor&#10;.terraform"></textarea>
+        </div>
+        <div class="setting-help">
+          One segment name per line. Matched against whole path components at any depth, so
+          <code>myvendor</code> also skips <code>src/myvendor/…</code>. Use the patterns box
+          below for anything containing a <code>/</code>.
+        </div>
+
+        <div class="field stack-field">
+          <label for="f-excluded-patterns">Excluded path patterns</label>
+          <textarea id="f-excluded-patterns" spellcheck="false"
+            placeholder="src/generated/**&#10;**/*.min.js"></textarea>
+        </div>
+        <div class="setting-help">
+          One glob per line, matched against the whole path with <code>/</code> separators:
+          <code>*</code> does not cross a <code>/</code>, <code>**</code> does. Patterns match
+          at any depth, so <code>src/generated/**</code> also covers
+          <code>packages/foo/src/generated/…</code> — they are not anchored to the workspace
+          root.
+          <br><br>
+          Excluded files get no baseline and never open a diff. Changing these boxes rebuilds
+          the baseline; diff tabs already open for a newly excluded path stay open until you
+          resolve them.
+        </div>
+
         <div class="actions">
           <button id="btn-reset" class="btn btn-secondary" type="button">Reset</button>
           <button id="btn-apply" class="btn btn-primary" type="button">Apply</button>
@@ -1068,7 +1115,7 @@ ${FONT_OPTIONS.map((f) => {
         return;
       }
 
-      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS })};
+      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS, ...DEFAULT_EXCLUSION_SETTINGS })};
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
       const termHost = document.getElementById('term-host');
@@ -1631,6 +1678,8 @@ ${FONT_OPTIONS.map((f) => {
       const fBurstThreshold = document.getElementById('f-burst-threshold');
       const fBurstHold = document.getElementById('f-burst-hold');
       const fMaxFileLines = document.getElementById('f-max-file-lines');
+      const fExcludedSegments = document.getElementById('f-excluded-segments');
+      const fExcludedPatterns = document.getElementById('f-excluded-patterns');
       const fileExtBody = document.getElementById('file-ext-body');
       const btnExtNew = document.getElementById('btn-ext-new');
       const btnExtEdit = document.getElementById('btn-ext-edit');
@@ -1712,6 +1761,18 @@ ${FONT_OPTIONS.map((f) => {
         renderFileExtensions();
       }
 
+      function parseLineList(value) {
+        const seen = new Set();
+        const result = [];
+        String(value || '').split(/\\r?\\n/).forEach((part) => {
+          const trimmed = part.trim();
+          if (!trimmed || seen.has(trimmed)) return;
+          seen.add(trimmed);
+          result.push(trimmed);
+        });
+        return result;
+      }
+
       function populateForm(s) {
         fFontFamily.value = s.fontFamily;
         if (fFontFamily.value !== s.fontFamily) {
@@ -1742,6 +1803,8 @@ ${FONT_OPTIONS.map((f) => {
         fBurstThreshold.value = String(s.burstDetectionThreshold);
         fBurstHold.value = String(s.burstDetectionHoldMs);
         fMaxFileLines.value = String(s.maxFileLines);
+        fExcludedSegments.value = Array.isArray(s.excludedPathSegments) ? s.excludedPathSegments.join('\\n') : '';
+        fExcludedPatterns.value = Array.isArray(s.excludedPathPatterns) ? s.excludedPathPatterns.join('\\n') : '';
         toggleCustomRows();
       }
 
@@ -1775,6 +1838,8 @@ ${FONT_OPTIONS.map((f) => {
           burstDetectionHoldMs: isFinite(burstHold) ? Math.min(10000, Math.max(500, burstHold)) : DEFAULTS.burstDetectionHoldMs,
           // 0 = tắt giới hạn, nên chặn dưới là 0 chứ không phải một mức tối thiểu.
           maxFileLines: isFinite(maxFileLines) ? Math.min(200000, Math.max(0, maxFileLines)) : DEFAULTS.maxFileLines,
+          excludedPathSegments: parseLineList(fExcludedSegments.value),
+          excludedPathPatterns: parseLineList(fExcludedPatterns.value),
         };
       }
 

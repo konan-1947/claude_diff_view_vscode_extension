@@ -67,6 +67,22 @@
           "minimum": 0,
           "markdownDescription": "Advanced: ignore files longer than this many lines — no baseline is kept and no diff tab ever opens for them. Set to `0` to disable the limit.\n\nDiff cost grows with the **square** of how many lines differ, so a large file that gets largely rewritten can block VS Code for seconds. Files that big are also almost always generated code, bundles or lock files rather than something reviewed hunk by hunk.\n\nWhy 5000: measured across `microsoft/vscode`, 99.8% of source files fall under it (median ~112 lines, p99 ~1980). Raise it if you genuinely review very large hand-written files — the TypeScript compiler's `checker.ts` is 54,433 lines — and accept that opening such a diff may stall the editor."
         },
+        "ai-cli-diff-view.excludedPathSegments": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Additional path segments to ignore, matched against whole path components at any depth. `myvendor` skips `<root>/myvendor/…` and `<root>/src/myvendor/…`.\n\nUse `ai-cli-diff-view.excludedPathPatterns` instead if your entry contains a path separator."
+        },
+        "ai-cli-diff-view.excludedPathPatterns": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Additional path globs to ignore. Matched against the whole path with `/` separators; `*` does not cross a `/` while `**` does. e.g. `src/generated/**`, `**/*.min.js`, `packages/*/dist/**`.\n\nPatterns are matched at any depth, so `src/generated/**` also covers `<root>/packages/foo/src/generated/…` — they are not anchored to the workspace root.\n\nFiles matching either excluded setting get no baseline and never open a diff. Changing these settings rebuilds the baseline, so already-open pending diffs for a newly excluded path stay open until you resolve them."
+        },
         "ai-cli-diff-view.baselineScanConcurrency": {
           "type": "number",
           "default": 4,

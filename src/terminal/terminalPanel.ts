@@ -14,9 +14,11 @@ import {
   BurstDetectionSettings,
   CursorStyle,
   DEFAULT_BURST_DETECTION_SETTINGS,
+  DEFAULT_EXCLUSION_SETTINGS,
   DEFAULT_FILE_LIMIT_SETTINGS,
   DEFAULT_SETTINGS,
   DEFAULT_SOUND_NOTIFICATION_SETTINGS,
+  ExclusionSettings,
   FileLimitSettings,
   MAX_FILE_LINES_CEILING,
   IncomingMessage,
@@ -302,7 +304,53 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       ...this.loadBurstDetectionSettings(),
       ...this.loadSoundNotificationSettings(),
       ...this.loadFileLimitSettings(),
+      ...this.loadExclusionSettings(),
     };
+  }
+
+  private loadExclusionSettings(): ExclusionSettings {
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    return {
+      excludedPathSegments: this.normalizeExclusionList(
+        config.get<string[]>('excludedPathSegments', DEFAULT_EXCLUSION_SETTINGS.excludedPathSegments)
+      ),
+      excludedPathPatterns: this.normalizeExclusionList(
+        config.get<string[]>('excludedPathPatterns', DEFAULT_EXCLUSION_SETTINGS.excludedPathPatterns)
+      ),
+    };
+  }
+
+  private async saveExclusionSettings(incoming: Partial<ExclusionSettings>): Promise<void> {
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    await Promise.all([
+      config.update(
+        'excludedPathSegments',
+        this.normalizeExclusionList(incoming.excludedPathSegments),
+        vscode.ConfigurationTarget.Global
+      ),
+      config.update(
+        'excludedPathPatterns',
+        this.normalizeExclusionList(incoming.excludedPathPatterns),
+        vscode.ConfigurationTarget.Global
+      ),
+    ]);
+  }
+
+  /** Trim, drop empty entries and duplicates. Glob compilation is left to `pathExclusions.ts`. */
+  private normalizeExclusionList(values: unknown): string[] {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const value of values) {
+      if (typeof value !== 'string') { continue; }
+      const entry = value.trim();
+      if (!entry || seen.has(entry)) { continue; }
+      seen.add(entry);
+      normalized.push(entry);
+    }
+    return normalized;
   }
 
   private loadFileLimitSettings(): FileLimitSettings {
@@ -656,6 +704,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.saveBurstDetectionSettings(incoming),
             this.saveSoundNotificationSettings(incoming),
             this.saveFileLimitSettings(incoming),
+            this.saveExclusionSettings(incoming),
           ]).then(() => {
             this.webview?.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           });
