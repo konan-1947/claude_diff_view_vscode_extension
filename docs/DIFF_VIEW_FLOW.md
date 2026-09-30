@@ -70,7 +70,8 @@ WorkspaceWatcher.start()
   └── vscode.workspace.createFileSystemWatcher('**/*')
        ↓ onDidChange / onDidCreate
          handleExternalWrite(uri):
-         - skip nếu isExcludedPathSegment (node_modules, bin/obj, ...)
+         - skip nếu isExcludedPathSegment (node_modules, bin/obj, ... + setting
+           excludedPathSegments / excludedPathPatterns của người dùng)
          - skip nếu vừa save bởi VS Code (< 2s)
          - debounce per-file 500ms
          - skip nếu không phải text file hoặc ngoài workspace
