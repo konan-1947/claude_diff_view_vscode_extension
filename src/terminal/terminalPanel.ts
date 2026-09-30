@@ -29,6 +29,23 @@ import {
 const SETTINGS_KEY = 'ai-cli-diff-view.terminal.settings';
 const INTRODUCE_SEEN_KEY = 'ai-cli-diff-view.introduce.seen';
 
+function imageMimeType(filePath: string): string | undefined {
+  const extension = path.extname(filePath).toLowerCase();
+  const types: Record<string, string> = {
+    '.apng': 'image/apng',
+    '.avif': 'image/avif',
+    '.bmp': 'image/bmp',
+    '.gif': 'image/gif',
+    '.ico': 'image/x-icon',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.webp': 'image/webp',
+  };
+  return types[extension];
+}
+
 interface SessionRecord {
   pty: PtySession;
   subs: vscode.Disposable[];
@@ -807,6 +824,20 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private async postFilePreview(filePath: string): Promise<void> {
     if (!this.webview || !this.filePreviewOpen) { return; }
     const uri = vscode.Uri.file(filePath);
+    const mimeType = imageMimeType(filePath);
+    if (mimeType) {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      if (!this.webview || !this.filePreviewOpen) { return; }
+      void this.webview.postMessage({
+        type: 'filePreviewData',
+        kind: 'image',
+        path: filePath,
+        label: this.displayPath(filePath),
+        mimeType,
+        data: `data:${mimeType};base64,${Buffer.from(bytes).toString('base64')}`,
+      });
+      return;
+    }
     const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.fsPath === filePath);
     const document = openDocument ?? await vscode.workspace.openTextDocument(uri);
     if (!this.webview || !this.filePreviewOpen) { return; }

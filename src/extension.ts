@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { DiffManager } from './diff/diffManager';
 import { DiffEditorProvider, DIFF_EDITOR_VIEW_TYPE } from './diff/diffWebviewPanel';
 import { IAiRunner } from './runner/aiRunner';
@@ -447,12 +448,30 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   );
 
   const autoRouteTab = (tab: vscode.Tab): void => {
-    if (!(tab.input instanceof vscode.TabInputText)) { return; }
+    const input = tab.input;
+    const isTextTab = input instanceof vscode.TabInputText;
+    const isMarkdownCustomEditor = input instanceof vscode.TabInputCustom &&
+      input.viewType !== DIFF_EDITOR_VIEW_TYPE &&
+      isMarkdownPath(input.uri.fsPath);
+    const isImageCustomEditor = input instanceof vscode.TabInputCustom &&
+      input.viewType !== DIFF_EDITOR_VIEW_TYPE &&
+      isImagePath(input.uri.fsPath);
+    const isMarkdownPreviewWebview = input instanceof vscode.TabInputWebview &&
+      input.viewType === 'markdown.preview';
+    if (!isTextTab && !isMarkdownCustomEditor && !isImageCustomEditor && !isMarkdownPreviewWebview) { return; }
     // A tab becomes `changed` when the user edits it. Never close a dirty
     // document from the auto-router: doing so makes VS Code show its
     // save/discard confirmation and can discard edits before auto-save runs.
     if (tab.isDirty) { return; }
-    const fsPath = tab.input.uri.fsPath;
+    const fsPath = isTextTab
+      ? input.uri.fsPath
+      : (isMarkdownCustomEditor || isImageCustomEditor)
+        ? input.uri.fsPath
+        : lastActiveMarkdownPath;
+    // The built-in Markdown preview is a URI-less webview. If the source file
+    // is no longer the active editor, there is no safe way to associate that
+    // webview with a workspace file, so leave it alone.
+    if (!fsPath || (!isTextTab && !isMarkdownPath(fsPath) && !isImagePath(fsPath))) { return; }
     if (agentModeActive && agentModeTerminal) {
       void vscode.window.tabGroups.close(tab).then(() => {
         agentModeTerminal?.openFileInAgent(fsPath);
@@ -470,8 +489,42 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     })();
   };
 
+  function isMarkdownPath(filePath: string): boolean {
+    const extension = path.extname(filePath).toLowerCase();
+    return extension === '.md' || extension === '.markdown' || extension === '.mdx';
+  }
+
+  function isImagePath(filePath: string): boolean {
+    return /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i.test(filePath);
+  }
+
+  // `TabInputWebview` does not expose the document behind the built-in
+  // Markdown preview. Keep the last active Markdown document so that opening
+  // `Open Preview` in Agent Mode can still be routed into the central preview.
+  let lastActiveMarkdownPath: string | undefined;
+  const rememberActiveMarkdownPath = (): void => {
+    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const activeInput = activeTab?.input;
+    const activePath = activeInput instanceof vscode.TabInputText ||
+      activeInput instanceof vscode.TabInputCustom
+      ? activeInput.uri.fsPath
+      : undefined;
+    if (activePath && isMarkdownPath(activePath)) {
+      lastActiveMarkdownPath = activePath;
+    }
+  };
+  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
+    if (editor && isMarkdownPath(editor.document.uri.fsPath)) {
+      lastActiveMarkdownPath = editor.document.uri.fsPath;
+    }
+  }));
+  rememberActiveMarkdownPath();
+
   context.subscriptions.push(
     vscode.window.tabGroups.onDidChangeTabs((e) => {
+      // Keep the source path current when the user switches to a Markdown
+      // custom editor before invoking the URI-less built-in preview command.
+      rememberActiveMarkdownPath();
       for (const tab of e.opened) { autoRouteTab(tab); }
       for (const tab of e.changed) { autoRouteTab(tab); }
     })

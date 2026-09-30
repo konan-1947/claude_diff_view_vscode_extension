@@ -521,6 +521,78 @@ function buildTerminalHtml(args) {
   }
   #file-preview-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #file-preview-editor { flex: 1 1 auto; min-height: 0; }
+  .file-preview-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  #file-preview-mode {
+    padding: 3px 8px;
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    background: var(--vscode-button-secondaryBackground, transparent);
+    border: 1px solid var(--vscode-button-border, rgba(128,128,128,.45));
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+  }
+  #file-preview-mode:hover { background: var(--vscode-toolbar-hoverBackground); }
+  #file-preview-markdown {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 24px 30px 42px;
+    color: var(--vscode-editor-foreground, var(--vscode-foreground));
+    background: var(--vscode-editor-background, #1e1e1e);
+    font-family: var(--vscode-font-family);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  #file-preview-markdown[hidden] { display: none; }
+  #file-preview-markdown h1, #file-preview-markdown h2, #file-preview-markdown h3,
+  #file-preview-markdown h4, #file-preview-markdown h5, #file-preview-markdown h6 {
+    margin: 1.25em 0 .55em;
+    color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
+    line-height: 1.25;
+  }
+  #file-preview-markdown h1 { padding-bottom: .25em; border-bottom: 1px solid var(--vscode-panel-border); font-size: 1.8em; }
+  #file-preview-markdown h2 { padding-bottom: .2em; border-bottom: 1px solid var(--vscode-panel-border); font-size: 1.45em; }
+  #file-preview-markdown h3 { font-size: 1.2em; }
+  #file-preview-markdown p { margin: .75em 0; }
+  #file-preview-markdown ul, #file-preview-markdown ol { padding-left: 1.8em; }
+  #file-preview-markdown li + li { margin-top: .25em; }
+  #file-preview-markdown blockquote {
+    margin: 1em 0;
+    padding: .15em 1em;
+    color: var(--vscode-descriptionForeground);
+    border-left: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-focusBorder));
+    background: var(--vscode-textBlockQuote-background, rgba(127,127,127,.12));
+  }
+  #file-preview-markdown pre {
+    overflow: auto;
+    padding: 12px 14px;
+    border-radius: 4px;
+    background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.16));
+  }
+  #file-preview-markdown code {
+    padding: .12em .3em;
+    border-radius: 3px;
+    background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.16));
+    font-family: var(--vscode-editor-font-family, monospace);
+  }
+  #file-preview-markdown pre code { padding: 0; background: transparent; }
+  #file-preview-markdown a { color: var(--vscode-textLink-foreground, #3794ff); }
+  #file-preview-markdown hr { border: 0; border-top: 1px solid var(--vscode-panel-border); }
+  #file-preview-markdown table { width: 100%; margin: 1em 0; border-collapse: collapse; }
+  #file-preview-markdown th, #file-preview-markdown td { padding: 6px 9px; border: 1px solid var(--vscode-panel-border); text-align: left; }
+  #file-preview-markdown th { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,.16)); }
+  #file-preview-image {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: 20px;
+    background: var(--vscode-editor-background, #1e1e1e);
+  }
+  #file-preview-image[hidden] { display: none; }
+  #file-preview-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .diff-preview-head {
     flex: 0 0 auto;
     display: flex;
@@ -1028,9 +1100,14 @@ ${FONT_OPTIONS.map((f) => {
       <section class="file-preview-card" role="dialog" aria-label="File preview">
         <header class="file-preview-head">
           <strong id="file-preview-path">Loading file…</strong>
-          <span>Ctrl+S to save</span>
+          <div class="file-preview-actions">
+            <button id="file-preview-mode" type="button" hidden>Edit source</button>
+            <span id="file-preview-hint">Ctrl+S to save</span>
+          </div>
         </header>
         <div id="file-preview-editor"></div>
+        <article id="file-preview-markdown" hidden></article>
+        <div id="file-preview-image" hidden></div>
       </section>
     </div>
     <div id="introduce-overlay" hidden>
