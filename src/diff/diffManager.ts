@@ -176,6 +176,10 @@ export class DiffManager {
       for (const tab of group.tabs) {
         if (!(tab.input instanceof vscode.TabInputText)) { continue; }
         if (normalizePath(tab.input.uri.fsPath) === absPath) {
+          // Preserve unsaved user edits. Closing a dirty text tab here would
+          // trigger VS Code's save/discard dialog while an external change is
+          // being routed to the custom diff editor.
+          if (tab.isDirty) { continue; }
           targets.push(tab);
         }
       }

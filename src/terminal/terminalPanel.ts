@@ -64,6 +64,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private pendingAgentFilePreviewPath?: string;
   private readonly _onDidChangePreviewActiveFile = new vscode.EventEmitter<string | undefined>();
   public readonly onDidChangePreviewActiveFile = this._onDidChangePreviewActiveFile.event;
+  private readonly _onDidChangePreviewVisibility = new vscode.EventEmitter<boolean>();
+  public readonly onDidChangePreviewVisibility = this._onDidChangePreviewVisibility.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -115,6 +117,22 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     void this.webview?.postMessage({ type: 'agentModeState', active });
   }
 
+  toggleDiffPreview(): void {
+    void this.webview?.postMessage({ type: 'toggleDiffPreview' });
+  }
+
+  togglePage(): void {
+    void this.webview?.postMessage({ type: 'togglePage' });
+  }
+
+  showIntroduce(): void {
+    void this.webview?.postMessage({ type: 'openIntroduce' });
+  }
+
+  showSettings(): void {
+    void this.webview?.postMessage({ type: 'openSettings' });
+  }
+
   openPendingFileInAgent(filePath: string): boolean {
     if (!this.agentModeActive || !this.diffManager.hasPendingDiff(filePath)) {
       return false;
@@ -122,6 +140,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.filePreviewOpen = false;
     this.filePreviewPath = undefined;
     this.diffPreviewOpen = true;
+    this._onDidChangePreviewVisibility.fire(true);
     this._onDidChangePreviewActiveFile.fire(filePath);
     if (this.webview) {
       void this.webview.postMessage({ type: 'showDiffPreview', path: filePath });
@@ -139,6 +158,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       return this.openPendingFileInAgent(filePath);
     }
     this.diffPreviewOpen = false;
+    this._onDidChangePreviewVisibility.fire(false);
     this.filePreviewOpen = true;
     this.filePreviewPath = filePath;
     if (this.webview) {
@@ -157,8 +177,11 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       if (this.view) {
         this.view.show(false);
       } else {
-        this.panel?.reveal(vscode.ViewColumn.Active, false);
+        this.panel?.reveal(vscode.ViewColumn.Active, true);
       }
+      // Revealing the webview is not enough when the editor group was focused
+      // by the pending-files view; put the cursor back in xterm as well.
+      void this.webview.postMessage({ type: 'focusTerminal' });
     } catch {
       // view may not be resolvable yet; ignore.
     }
@@ -647,10 +670,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         case 'requestDiffPreview':
           this.diffPreviewOpen = true;
+          this._onDidChangePreviewVisibility.fire(true);
           this.postDiffPreviewFiles();
           return;
         case 'closeDiffPreview':
           this.diffPreviewOpen = false;
+          this._onDidChangePreviewVisibility.fire(false);
           this._onDidChangePreviewActiveFile.fire(undefined);
           return;
         case 'previewActiveFile':
@@ -658,6 +683,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         case 'requestFilePreview':
           this.filePreviewOpen = true;
+          this._onDidChangePreviewVisibility.fire(true);
           this.filePreviewPath = msg.path;
           void this.postFilePreview(msg.path).catch((err: unknown) => {
             this.postFilePreviewError(msg.path, err);
@@ -665,6 +691,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         case 'closeFilePreview':
           this.filePreviewOpen = false;
+          this._onDidChangePreviewVisibility.fire(false);
           this.filePreviewPath = undefined;
           return;
         case 'filePreviewEdit':
@@ -839,6 +866,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.pendingAgentFilePath = undefined;
     this.pendingAgentFilePreviewPath = undefined;
     this._onDidChangePreviewActiveFile.dispose();
+    this._onDidChangePreviewVisibility.dispose();
   }
 
   private disposeSessions(): void {

@@ -88,7 +88,7 @@
       }
     }
 
-    fileList.replaceChildren();
+    if (fileList) { fileList.replaceChildren(); }
     for (const item of metadata) {
       let state = files.get(item.path);
       if (!state) {
@@ -99,7 +99,7 @@
       } else {
         state.meta = item;
       }
-      fileList.appendChild(createFileLink(state));
+      if (fileList) { fileList.appendChild(createFileLink(state)); }
     }
 
     updateSummary();
@@ -142,7 +142,7 @@
     toggle.className = 'aggregate-file-toggle';
     toggle.type = 'button';
     toggle.title = 'Collapse file';
-    toggle.textContent = '⌄';
+    setToggleIcon(toggle, false);
     toggle.addEventListener('click', () => toggleCollapsed(files.get(meta.path)));
 
     const pathEl = document.createElement('span');
@@ -290,7 +290,7 @@
     state.loading.hidden = true;
     state.groups = buildGroups(data.hunks);
     state.stats.innerHTML = statsText(state);
-    const link = fileList.querySelector('[data-path="' + cssEscape(filePath) + '"] .file-stats');
+    const link = fileList?.querySelector('[data-path="' + cssEscape(filePath) + '"] .file-stats');
     if (link) { link.innerHTML = statsText(state); }
     updateSummary();
     renderHunkActions(state);
@@ -330,6 +330,31 @@
           wordWrap: 'off',
         });
         state.editor.setModel(state.modifiedModel);
+        // Monaco owns wheel events inside each file card. Hand off only the
+        // overscroll at its top/bottom to the aggregate preview so a long
+        // review can continue naturally into the next file.
+        const wheelHandoff = (event) => {
+          if (!content || !event.deltaY) { return; }
+          const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+            ? 16
+            : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+              ? content.clientHeight
+              : 1;
+          const delta = event.deltaY * unit;
+          const scrollTop = state.editor.getScrollTop();
+          const maxScrollTop = Math.max(0, state.editor.getScrollHeight() - state.editor.getLayoutInfo().height);
+          const atTop = scrollTop <= 1;
+          const atBottom = scrollTop >= maxScrollTop - 1;
+          if ((delta < 0 && atTop) || (delta > 0 && atBottom)) {
+            event.preventDefault();
+            event.stopPropagation();
+            content.scrollBy({ top: delta, behavior: 'auto' });
+          }
+        };
+        state.editorHost.addEventListener('wheel', wheelHandoff, { capture: true, passive: false });
+        state.editorDisposables.push({
+          dispose: () => state.editorHost.removeEventListener('wheel', wheelHandoff, { capture: true }),
+        });
         state.modifiedListener = state.modifiedModel.onDidChangeContent(() => {
           if (state.suppressEdit || !state.data) { return; }
           state.data.currentContent = state.modifiedModel.getValue();
@@ -556,12 +581,17 @@
     if (!state) { return; }
     state.collapsed = !state.collapsed;
     state.section.classList.toggle('is-collapsed', state.collapsed);
-    state.toggle.textContent = state.collapsed ? '›' : '⌄';
+    setToggleIcon(state.toggle, state.collapsed);
     state.toggle.title = state.collapsed ? 'Expand file' : 'Collapse file';
     updateToggleAllLabel();
     requestAnimationFrame(() => {
       try { state.editor?.layout(); } catch (_) { /* ignore */ }
     });
+  }
+
+  function setToggleIcon(button, collapsed) {
+    const path = collapsed ? 'M8 4l6 6-6 6' : 'M4 7l6 6 6-6';
+    button.innerHTML = '<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + path + '"></path></svg>';
   }
 
   function setCollapsed(state, collapsed) {
@@ -615,7 +645,7 @@
     observer = null;
     for (const state of files.values()) { disposeState(state); }
     files.clear();
-    fileList.replaceChildren();
+    if (fileList) { fileList.replaceChildren(); }
     content.replaceChildren(status);
     setStatus('', false);
   }

@@ -90,6 +90,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   let agentModeTerminal: TerminalPanelProvider | undefined;
   let agentModeTabsState: AgentModeTabsState | undefined;
   const agentChangesPanel = new AgentChangesPanel(
+    context.extensionUri,
     diffManager,
     (filePath) => {
       if (agentModeActive) {
@@ -97,9 +98,18 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       }
       void diffManager.openDiff(filePath);
       return true;
-    }
+    },
+    {
+      toggleDiff: () => agentModeTerminal?.toggleDiffPreview(),
+      showIntroduce: () => agentModeTerminal?.showIntroduce(),
+      showSettings: () => agentModeTerminal?.showSettings(),
+      toggleAgentMode: () => { void vscode.commands.executeCommand('ai-cli-diff-view.toggleAgentMode'); },
+    },
   );
-  context.subscriptions.push(agentChangesPanel);
+  context.subscriptions.push(
+    agentChangesPanel,
+    vscode.window.registerWebviewViewProvider(AgentChangesPanel.viewType, agentChangesPanel),
+  );
 
   context.subscriptions.push(
     { dispose: () => diffManager.disposeAll() },
@@ -240,7 +250,12 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
         if (agentModeActive && agentModeTerminal === terminal) {
           agentChangesPanel.setActiveFile(filePath);
         }
-      })
+      }),
+      terminal.onDidChangePreviewVisibility((open) => {
+        if (agentModeActive && agentModeTerminal === terminal) {
+          agentChangesPanel.setPreviewOpen(open);
+        }
+      }),
     );
     debugLog('agent-mode:central terminal panel created');
 
@@ -418,6 +433,10 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   const autoRouteTab = (tab: vscode.Tab): void => {
     if (!(tab.input instanceof vscode.TabInputText)) { return; }
+    // A tab becomes `changed` when the user edits it. Never close a dirty
+    // document from the auto-router: doing so makes VS Code show its
+    // save/discard confirmation and can discard edits before auto-save runs.
+    if (tab.isDirty) { return; }
     const fsPath = tab.input.uri.fsPath;
     if (agentModeActive && agentModeTerminal) {
       void vscode.window.tabGroups.close(tab).then(() => {

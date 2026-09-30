@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
-  "version": "3.7.0",
+  "version": "4.0.2",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
@@ -139,6 +139,7 @@
         {
           "id": "ai-cli-diff-view.agentChanges",
           "name": "PENDING FILES",
+          "type": "webview",
           "when": "ai-cli-diff-view.agentModeActive || ai-cli-diff-view.terminalVisible && ai-cli-diff-view.terminalFilesPage"
         }
       ],
