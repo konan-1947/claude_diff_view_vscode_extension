@@ -13,3 +13,4 @@ node_modules/**
 **/*.ts
 !node_modules/node-pty/**/*.d.ts
 **/*.map
+!out/**

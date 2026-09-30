@@ -39,8 +39,12 @@ interface SessionRecord {
 
 export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ai-cli-diff-view.terminal';
+  public static readonly panelViewType = 'ai-cli-diff-view.terminalPanel';
 
   private view?: vscode.WebviewView;
+  private panel?: vscode.WebviewPanel;
+  private webview?: vscode.Webview;
+  private webviewMessageDisposable?: vscode.Disposable;
   private sessions = new Map<string, SessionRecord>();
   private nextSessionNum = 0;
 
@@ -48,7 +52,20 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private lastPrompt = '';
   private errorMessage = '';
   private diffDisposable?: vscode.Disposable;
+  private workspaceDiffDisposable?: vscode.Disposable;
+  private themeDisposable?: vscode.Disposable;
   private lastTerminalFocused = false;
+  private agentModeActive = false;
+  private focusWhenReady = false;
+  private diffPreviewOpen = false;
+  private filePreviewOpen = false;
+  private filePreviewPath?: string;
+  private pendingAgentFilePath?: string;
+  private pendingAgentFilePreviewPath?: string;
+  private readonly _onDidChangePreviewActiveFile = new vscode.EventEmitter<string | undefined>();
+  public readonly onDidChangePreviewActiveFile = this._onDidChangePreviewActiveFile.event;
+  private readonly _onDidChangePreviewVisibility = new vscode.EventEmitter<boolean>();
+  public readonly onDidChangePreviewVisibility = this._onDidChangePreviewVisibility.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -56,6 +73,19 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   ) {
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
       this.postFilesUpdate();
+      if (this.diffPreviewOpen) {
+        this.postDiffPreviewFiles();
+      }
+    });
+    this.workspaceDiffDisposable = vscode.workspace.onDidChangeTextDocument((event) => {
+      if (this.diffPreviewOpen && this.diffManager.hasPendingDiff(event.document.uri.fsPath)) {
+        void this.postDiffPreviewFile(event.document.uri.fsPath);
+      }
+    });
+    this.themeDisposable = vscode.window.onDidChangeActiveColorTheme(() => {
+      if (this.diffPreviewOpen) {
+        void this.webview?.postMessage({ type: 'diffPreviewTheme', theme: currentMonacoTheme() });
+      }
     });
   }
 
@@ -82,16 +112,81 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.postFilesUpdate();
   }
 
+  setAgentMode(active: boolean): void {
+    this.agentModeActive = active;
+    void this.webview?.postMessage({ type: 'agentModeState', active });
+  }
+
+  toggleDiffPreview(): void {
+    void this.webview?.postMessage({ type: 'toggleDiffPreview' });
+  }
+
+  togglePage(): void {
+    void this.webview?.postMessage({ type: 'togglePage' });
+  }
+
+  showIntroduce(): void {
+    void this.webview?.postMessage({ type: 'openIntroduce' });
+  }
+
+  showSettings(): void {
+    void this.webview?.postMessage({ type: 'openSettings' });
+  }
+
+  openPendingFileInAgent(filePath: string): boolean {
+    if (!this.agentModeActive || !this.diffManager.hasPendingDiff(filePath)) {
+      return false;
+    }
+    this.filePreviewOpen = false;
+    this.filePreviewPath = undefined;
+    this.diffPreviewOpen = true;
+    this._onDidChangePreviewVisibility.fire(true);
+    this._onDidChangePreviewActiveFile.fire(filePath);
+    if (this.webview) {
+      void this.webview.postMessage({ type: 'showDiffPreview', path: filePath });
+    } else {
+      this.pendingAgentFilePath = filePath;
+    }
+    return true;
+  }
+
+  openFileInAgent(filePath: string): boolean {
+    if (!this.agentModeActive) {
+      return false;
+    }
+    if (this.diffManager.hasPendingDiff(filePath)) {
+      return this.openPendingFileInAgent(filePath);
+    }
+    this.diffPreviewOpen = false;
+    this._onDidChangePreviewVisibility.fire(false);
+    this.filePreviewOpen = true;
+    this.filePreviewPath = filePath;
+    if (this.webview) {
+      void this.webview.postMessage({ type: 'showFilePreview', path: filePath });
+    } else {
+      this.pendingAgentFilePreviewPath = filePath;
+    }
+    return true;
+  }
+
   focusTerminal(): void {
-    if (!this.view) {
+    if (!this.webview) {
       return;
     }
     try {
-      this.view.show(false);
+      if (this.view) {
+        this.view.show(false);
+      } else {
+        this.panel?.reveal(vscode.ViewColumn.Active, true);
+      }
+      // Revealing the webview is not enough when the editor group was focused
+      // by the pending-files view; put the cursor back in xterm as well.
+      void this.webview.postMessage({ type: 'focusTerminal' });
     } catch {
       // view may not be resolvable yet; ignore.
     }
-    void this.view.webview.postMessage({ type: 'focusTerminal' });
+    this.focusWhenReady = true;
+    void this.webview.postMessage({ type: 'focusTerminal' });
   }
 
   wasTerminalFocused(): boolean {
@@ -99,7 +194,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private postFilesUpdate(): void {
-    if (!this.view) {
+    if (!this.webview) {
       return;
     }
     const html = buildPendingFilesInnerHtml({
@@ -109,14 +204,14 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       lastPrompt: this.lastPrompt,
       errorMessage: this.errorMessage,
     });
-    void this.view.webview.postMessage({ type: 'filesUpdate', html });
+    void this.webview.postMessage({ type: 'filesUpdate', html });
   }
 
   private fileIconsBase(): string {
-    if (!this.view) {
+    if (!this.webview) {
       return '';
     }
-    return this.view.webview
+    return this.webview
       .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons'))
       .toString() + '/';
   }
@@ -128,13 +223,13 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const pty = new PtySession();
     const subs: vscode.Disposable[] = [
       pty.onData((data) => {
-        this.view?.webview.postMessage({ type: 'data', id, data });
+        this.webview?.postMessage({ type: 'data', id, data });
       }),
       pty.onExit((code) => {
-        this.view?.webview.postMessage({ type: 'exit', id, code });
+        this.webview?.postMessage({ type: 'exit', id, code });
       }),
       pty.onError((message) => {
-        this.view?.webview.postMessage({ type: 'error', id, message });
+        this.webview?.postMessage({ type: 'error', id, message });
       }),
     ];
     const safeCols = Math.max(1, cols | 0);
@@ -142,7 +237,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
     pty.start(cwd, safeCols, safeRows);
     this.sessions.set(id, { pty, subs, title, cols: safeCols, rows: safeRows });
-    this.view?.webview.postMessage({ type: 'sessionCreated', id, title });
+    this.webview?.postMessage({ type: 'sessionCreated', id, title });
     return { id, title };
   }
 
@@ -156,7 +251,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     }
     try { rec.pty.dispose(); } catch { /* ignore */ }
     this.sessions.delete(id);
-    this.view?.webview.postMessage({ type: 'sessionClosed', id });
+    this.webview?.postMessage({ type: 'sessionClosed', id });
   }
 
   private loadSettings(): TerminalSettings {
@@ -341,26 +436,88 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
+    console.log('[ai-cli-diff-view] terminal:resolveWebviewView:start');
     this.view = webviewView;
+    this.panel = undefined;
+    this.attachWebview(webviewView.webview);
+    console.log('[ai-cli-diff-view] terminal:resolveWebviewView:complete');
+  }
+
+  openWebviewPanel(): vscode.WebviewPanel {
+    const panel = vscode.window.createWebviewPanel(
+      TerminalPanelProvider.panelViewType,
+      'Agent Terminal',
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      }
+    );
+    this.panel = panel;
+    this.view = undefined;
+    this.attachWebview(panel.webview);
+    panel.onDidDispose(() => {
+      this.panel = undefined;
+      this.dispose();
+    }, null, this.context.subscriptions);
+    return panel;
+  }
+
+  startFresh(): void {
+    this.disposeSessions();
+    this.render();
+  }
+
+  resetSessions(): void {
+    this.disposeSessions();
+  }
+
+  private attachWebview(webview: vscode.Webview): void {
+    this.webview = webview;
     const xtermDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm');
     const iconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons');
     const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
+    const monacoDir = vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'monaco-editor', 'min');
+    const webviewDir = vscode.Uri.joinPath(this.context.extensionUri, 'res', 'webview');
 
-    webviewView.webview.options = {
+    webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir, iconsDir, introDir],
+      localResourceRoots: [xtermDir, iconsDir, introDir, monacoDir, webviewDir],
     };
 
-    webviewView.webview.onDidReceiveMessage((msg: IncomingMessage) => {
+    this.webviewMessageDisposable?.dispose();
+    this.webviewMessageDisposable = webview.onDidReceiveMessage((msg: IncomingMessage) => {
       if (!msg || typeof msg !== 'object') {
         return;
       }
       switch (msg.type) {
+        case 'toggleAgentMode':
+          console.log('[ai-cli-diff-view] terminal:toggleAgentMode');
+          void vscode.commands.executeCommand('ai-cli-diff-view.toggleAgentMode');
+          return;
+        case 'showPendingFiles':
+          void vscode.commands.executeCommand('ai-cli-diff-view.showPendingFiles');
+          return;
         case 'ready':
           // Push initial files page state once the webview is ready.
           this.postFilesUpdate();
+          this.setAgentMode(this.agentModeActive);
+          if (this.focusWhenReady) {
+            this.focusWhenReady = false;
+            void this.webview?.postMessage({ type: 'focusTerminal' });
+          }
+          if (this.pendingAgentFilePath) {
+            const filePath = this.pendingAgentFilePath;
+            this.pendingAgentFilePath = undefined;
+            void this.webview?.postMessage({ type: 'showDiffPreview', path: filePath });
+          }
+          if (this.pendingAgentFilePreviewPath) {
+            const filePath = this.pendingAgentFilePreviewPath;
+            this.pendingAgentFilePreviewPath = undefined;
+            void this.webview?.postMessage({ type: 'showFilePreview', path: filePath });
+          }
           if (!this.context.globalState.get<boolean>(INTRODUCE_SEEN_KEY)) {
-            void this.view?.webview.postMessage({ type: 'showIntroduce' });
+            void this.webview?.postMessage({ type: 'showIntroduce' });
           }
           return;
         case 'createSession':
@@ -401,13 +558,13 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           const id = msg.id;
           const subs: vscode.Disposable[] = [
             pty.onData((data) => {
-              this.view?.webview.postMessage({ type: 'data', id, data });
+              this.webview?.postMessage({ type: 'data', id, data });
             }),
             pty.onExit((code) => {
-              this.view?.webview.postMessage({ type: 'exit', id, code });
+              this.webview?.postMessage({ type: 'exit', id, code });
             }),
             pty.onError((message) => {
-              this.view?.webview.postMessage({ type: 'error', id, message });
+              this.webview?.postMessage({ type: 'error', id, message });
             }),
           ];
           const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
@@ -416,12 +573,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         }
         case 'getSettings':
-          this.view?.webview.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
+          this.webview?.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           return;
         case 'installFont': {
           const font = findInstallableForPrimary(msg.primary || '');
           if (!font) {
-            this.view?.webview.postMessage({
+            this.webview?.postMessage({
               type: 'installError',
               primary: msg.primary,
               error: 'No installer registered for this font.',
@@ -429,15 +586,15 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             return;
           }
           const primary = font.primary;
-          this.view?.webview.postMessage({
+          this.webview?.postMessage({
             type: 'installProgress',
             primary,
             message: 'Starting…',
           });
           void installFont(font, (m) => {
-            this.view?.webview.postMessage({ type: 'installProgress', primary, message: m });
+            this.webview?.postMessage({ type: 'installProgress', primary, message: m });
           }).then((result) => {
-            this.view?.webview.postMessage({
+            this.webview?.postMessage({
               type: 'installDone',
               primary,
               targetDir: result.targetDir,
@@ -445,7 +602,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             });
           }).catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
-            this.view?.webview.postMessage({ type: 'installError', primary, error: message });
+            this.webview?.postMessage({ type: 'installError', primary, error: message });
           });
           return;
         }
@@ -465,7 +622,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             if (typeof value !== 'string') {
               return;
             }
-            this.view?.webview.postMessage({
+            this.webview?.postMessage({
               type: 'fileExtensionsPromptResult',
               action: msg.action,
               previousValue: msg.value,
@@ -500,14 +657,81 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.saveSoundNotificationSettings(incoming),
             this.saveFileLimitSettings(incoming),
           ]).then(() => {
-            this.view?.webview.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
+            this.webview?.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           });
           return;
         }
         case 'openFile':
           if (msg.path && typeof msg.path === 'string') {
-            void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
+            if (!this.openFileInAgent(msg.path)) {
+              void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
+            }
           }
+          return;
+        case 'requestDiffPreview':
+          this.diffPreviewOpen = true;
+          this._onDidChangePreviewVisibility.fire(true);
+          this.postDiffPreviewFiles();
+          return;
+        case 'closeDiffPreview':
+          this.diffPreviewOpen = false;
+          this._onDidChangePreviewVisibility.fire(false);
+          this._onDidChangePreviewActiveFile.fire(undefined);
+          return;
+        case 'previewActiveFile':
+          this._onDidChangePreviewActiveFile.fire(msg.path);
+          return;
+        case 'requestFilePreview':
+          this.filePreviewOpen = true;
+          this._onDidChangePreviewVisibility.fire(true);
+          this.filePreviewPath = msg.path;
+          void this.postFilePreview(msg.path).catch((err: unknown) => {
+            this.postFilePreviewError(msg.path, err);
+          });
+          return;
+        case 'closeFilePreview':
+          this.filePreviewOpen = false;
+          this._onDidChangePreviewVisibility.fire(false);
+          this.filePreviewPath = undefined;
+          return;
+        case 'filePreviewEdit':
+          void this.applyFilePreviewEdit(msg.path, msg.content).catch((err: unknown) => {
+            this.postFilePreviewError(msg.path, err);
+          });
+          return;
+        case 'filePreviewSave':
+          void this.saveFilePreview(msg.path).catch((err: unknown) => {
+            this.postFilePreviewError(msg.path, err);
+          });
+          return;
+        case 'requestDiffPreviewFile':
+          void this.postDiffPreviewFile(msg.path);
+          return;
+        case 'previewEditModified':
+          void this.diffManager.applyPreviewEdit(msg.path, msg.newCurrent).catch((err: unknown) => {
+            this.postDiffPreviewError(msg.path, err);
+          });
+          return;
+        case 'previewSaveFile':
+          void this.diffManager.savePreviewFile(msg.path).catch((err: unknown) => {
+            this.postDiffPreviewError(msg.path, err);
+          });
+          return;
+        case 'previewAcceptHunk':
+          void this.diffManager.acceptHunkFromPreview(msg.path, msg.newOriginal, msg.newCurrent)
+            .catch((err: unknown) => this.postDiffPreviewError(msg.path, err));
+          return;
+        case 'previewRejectHunk':
+          void this.diffManager.rejectHunkFromPreview(msg.path, msg.newOriginal, msg.newCurrent)
+            .catch((err: unknown) => this.postDiffPreviewError(msg.path, err));
+          return;
+        case 'previewAcceptFile':
+          void this.diffManager.acceptFromPreview(msg.path)
+            .catch((err: unknown) => this.postDiffPreviewError(msg.path, err));
+          return;
+        case 'previewRejectFile':
+          void this.diffManager.revertFromPreview(msg.path)
+            .catch((err: unknown) => this.postDiffPreviewError(msg.path, err));
           return;
         case 'introduceSeen':
           void this.context.globalState.update(INTRODUCE_SEEN_KEY, true);
@@ -519,7 +743,9 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           // Webview reports its width dropped below ~1/4 of screen width.
           // Close the auxiliary bar (where extension.ts moves the panel on first run).
           // Best-effort: if user moved the panel elsewhere, this still tries the aux bar.
-          void vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+          if (this.view) {
+            void vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+          }
           return;
       }
     });
@@ -528,7 +754,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private render(): void {
-    if (!this.view) {
+    if (!this.webview) {
       return;
     }
     const filesInner = buildPendingFilesInnerHtml({
@@ -539,14 +765,111 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       errorMessage: this.errorMessage,
     });
 
-    this.view.webview.html = buildTerminalHtml({
-      webview: this.view.webview,
+    this.webview.html = buildTerminalHtml({
+      webview: this.webview,
       extensionUri: this.context.extensionUri,
       filesInnerHtml: filesInner,
     });
   }
 
+  private postDiffPreviewFiles(): void {
+    if (!this.webview || !this.diffPreviewOpen) {
+      return;
+    }
+    const files = this.diffManager.getPendingFiles().map((filePath) => ({
+      path: filePath,
+      label: this.displayPath(filePath),
+    }));
+    void this.webview.postMessage({ type: 'diffPreviewFiles', files });
+  }
+
+  private async postDiffPreviewFile(filePath: string): Promise<void> {
+    if (!this.webview || !this.diffPreviewOpen) {
+      return;
+    }
+    const file = await this.diffManager.getDiffPreviewFile(filePath);
+    if (!this.webview || !this.diffPreviewOpen) {
+      return;
+    }
+    void this.webview.postMessage({
+      type: 'diffPreviewFile',
+      path: filePath,
+      file,
+      theme: currentMonacoTheme(),
+    });
+  }
+
+  private postDiffPreviewError(filePath: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    void this.webview?.postMessage({ type: 'diffPreviewError', path: filePath, message });
+  }
+
+  private async postFilePreview(filePath: string): Promise<void> {
+    if (!this.webview || !this.filePreviewOpen) { return; }
+    const uri = vscode.Uri.file(filePath);
+    const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.fsPath === filePath);
+    const document = openDocument ?? await vscode.workspace.openTextDocument(uri);
+    if (!this.webview || !this.filePreviewOpen) { return; }
+    void this.webview.postMessage({
+      type: 'filePreviewData',
+      path: filePath,
+      label: this.displayPath(filePath),
+      content: document.getText(),
+      language: document.languageId,
+      theme: currentMonacoTheme(),
+    });
+  }
+
+  private async applyFilePreviewEdit(filePath: string, content: string): Promise<void> {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(document.uri, new vscode.Range(0, 0, document.lineCount, 0), content);
+    await vscode.workspace.applyEdit(edit);
+  }
+
+  private async saveFilePreview(filePath: string): Promise<void> {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    await document.save();
+  }
+
+  private postFilePreviewError(filePath: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    void this.webview?.postMessage({ type: 'filePreviewError', path: filePath, message });
+  }
+
+  private displayPath(filePath: string): string {
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath));
+    if (!workspaceFolder) {
+      return path.basename(filePath);
+    }
+    const relative = path.relative(workspaceFolder.uri.fsPath, filePath);
+    return relative || path.basename(filePath);
+  }
+
   dispose(): void {
+    this.disposeSessions();
+    this.webviewMessageDisposable?.dispose();
+    this.webviewMessageDisposable = undefined;
+    this.webview = undefined;
+    this.view = undefined;
+    this.panel = undefined;
+    this.focusWhenReady = false;
+    this.diffDisposable?.dispose();
+    this.diffDisposable = undefined;
+    this.workspaceDiffDisposable?.dispose();
+    this.workspaceDiffDisposable = undefined;
+    this.themeDisposable?.dispose();
+    this.themeDisposable = undefined;
+    this.diffPreviewOpen = false;
+    this.filePreviewOpen = false;
+    this.filePreviewPath = undefined;
+    this.pendingAgentFilePath = undefined;
+    this.pendingAgentFilePreviewPath = undefined;
+    this._onDidChangePreviewActiveFile.dispose();
+    this._onDidChangePreviewVisibility.dispose();
+  }
+
+  private disposeSessions(): void {
     for (const rec of this.sessions.values()) {
       for (const d of rec.subs) {
         try { d.dispose(); } catch { /* ignore */ }
@@ -554,8 +877,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       try { rec.pty.dispose(); } catch { /* ignore */ }
     }
     this.sessions.clear();
-    this.diffDisposable?.dispose();
-    this.diffDisposable = undefined;
   }
 }
 
@@ -566,4 +887,13 @@ function resolveShellName(): string {
     (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
   const base = path.basename(shell);
   return base.replace(/\.exe$/i, '');
+}
+
+function currentMonacoTheme(): string {
+  switch (vscode.window.activeColorTheme.kind) {
+    case vscode.ColorThemeKind.Light: return 'vs';
+    case vscode.ColorThemeKind.HighContrast: return 'hc-black';
+    case vscode.ColorThemeKind.HighContrastLight: return 'hc-light';
+    default: return 'vs-dark';
+  }
 }

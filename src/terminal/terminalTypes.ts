@@ -57,6 +57,8 @@ export const MAX_FILE_LINES_CEILING = 200000;
 
 export type IncomingMessage =
   | { type: 'ready' }
+  | { type: 'toggleAgentMode' }
+  | { type: 'showPendingFiles' }
   | { type: 'createSession'; cols: number; rows: number }
   | { type: 'closeSession'; id: string }
   | { type: 'input'; id: string; data: string }
@@ -68,6 +70,20 @@ export type IncomingMessage =
   | { type: 'installFont'; primary: string }
   | { type: 'reloadWindow' }
   | { type: 'openFile'; path: string }
+  | { type: 'requestDiffPreview' }
+  | { type: 'closeDiffPreview' }
+  | { type: 'previewActiveFile'; path?: string }
+  | { type: 'requestDiffPreviewFile'; path: string }
+  | { type: 'previewEditModified'; path: string; newCurrent: string }
+  | { type: 'previewSaveFile'; path: string }
+  | { type: 'previewAcceptHunk'; path: string; newOriginal: string; newCurrent: string }
+  | { type: 'previewRejectHunk'; path: string; newOriginal: string; newCurrent: string }
+  | { type: 'previewAcceptFile'; path: string }
+  | { type: 'previewRejectFile'; path: string }
+  | { type: 'requestFilePreview'; path: string }
+  | { type: 'closeFilePreview' }
+  | { type: 'filePreviewEdit'; path: string; content: string }
+  | { type: 'filePreviewSave'; path: string }
   | { type: 'introduceSeen' }
   | { type: 'terminalFocusState'; focused: boolean }
   | { type: 'viewTooNarrow' };

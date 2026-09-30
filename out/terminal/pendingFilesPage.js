@@ -1,0 +1,383 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PENDING_FILES_CSS = void 0;
+exports.buildPendingFilesInnerHtml = buildPendingFilesInnerHtml;
+const path = __importStar(require("path"));
+const vscode = __importStar(require("vscode"));
+/** HTML inserted into #files-wrap. Pure function of the inputs above. */
+function buildPendingFilesInnerHtml(ctx) {
+    const pending = ctx.diffManager.getPendingFiles();
+    const treeModel = buildPendingTreeModel(pending);
+    const pendingTreeHtml = pending.length === 0 ? '' : renderPendingTreeHtml(treeModel, 0, ctx.iconBase);
+    let statusHtml = '';
+    if (ctx.sessionState === 'running') {
+        statusHtml = `
+      <div class="banner banner-run">
+        <span class="banner-icon">&#8635;</span>
+        <div class="banner-text">
+          <div class="banner-title">Running</div>
+          <div class="banner-detail">${escapeHtml(ctx.lastPrompt || '(no prompt)')}</div>
+        </div>
+      </div>`;
+    }
+    else if (ctx.sessionState === 'error') {
+        statusHtml = `
+      <div class="banner banner-err">
+        <span class="banner-icon">&#9888;</span>
+        <div class="banner-text">
+          <div class="banner-title">Session failed</div>
+          <div class="banner-detail">${escapeHtml(ctx.errorMessage || 'Unknown error')}</div>
+        </div>
+      </div>`;
+    }
+    const pendingBlock = pending.length === 0
+        ? `<div class="empty-pending">No pending file changes</div>`
+        : `
+      <div class="section-title">
+        <span>Pending changes</span>
+        <span class="badge">${pending.length}</span>
+      </div>
+      <div class="file-tree" id="file-tree">${pendingTreeHtml}</div>`;
+    return `
+    <div class="scroll-region">
+      ${statusHtml}
+      <div class="section">
+        ${pendingBlock}
+      </div>
+    </div>
+  `;
+}
+/** CSS rules for the pending files page. Inlined into the unified webview's <style>. */
+exports.PENDING_FILES_CSS = `
+  #files-wrap {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--vscode-sideBar-background);
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+  }
+  #files-wrap .scroll-region {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    user-select: none;
+  }
+  #files-wrap .banner {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.25));
+    background: var(--vscode-editor-inactiveSelectionBackground, rgba(128,128,128,0.08));
+  }
+  #files-wrap .banner-run .banner-icon { color: var(--vscode-charts-yellow, #cca700); font-size: 16px; line-height: 1.2; }
+  #files-wrap .banner-err {
+    border-color: var(--vscode-inputValidation-errorBorder, rgba(241,76,76,0.45));
+    background: var(--vscode-inputValidation-errorBackground, rgba(241,76,76,0.08));
+  }
+  #files-wrap .banner-err .banner-icon { color: var(--vscode-errorForeground, #f14c4c); }
+  #files-wrap .banner-title { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; }
+  #files-wrap .banner-detail { margin-top: 4px; font-size: 12px; line-height: 1.45; opacity: 0.95; word-break: break-word; }
+  #files-wrap .section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+    margin-bottom: 6px;
+  }
+  #files-wrap .badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+  }
+  #files-wrap .file-tree {
+    display: flex;
+    flex-direction: column;
+    font-size: 13px;
+    line-height: 22px;
+    color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  }
+  #files-wrap .tree-node { outline: none; }
+  #files-wrap .tree-node > .tree-row-folder { list-style: none; cursor: pointer; }
+  #files-wrap .tree-node > .tree-row-folder::-webkit-details-marker { display: none; }
+  #files-wrap .tree-node > .tree-row-folder::marker { content: ''; }
+  #files-wrap .tree-row {
+    display: flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 1px 4px;
+    margin: 0;
+    border: none;
+    border-radius: 2px;
+    background: transparent;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 22px;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  #files-wrap .tree-row:hover { background: var(--vscode-list-hoverBackground); }
+  #files-wrap .tree-row:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+  }
+  #files-wrap .tree-twist {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    margin-right: 1px;
+    color: var(--vscode-icon-foreground);
+    opacity: 0.9;
+  }
+  #files-wrap .tree-twist-file { flex-shrink: 0; width: 16px; height: 16px; margin-right: 1px; }
+  #files-wrap .tree-node:not([open]) .tree-chev-open { display: none !important; }
+  #files-wrap .tree-node[open] .tree-chev-closed { display: none !important; }
+  #files-wrap .tree-node:not([open]) .tree-ico-open { display: none !important; }
+  #files-wrap .tree-node[open] .tree-ico-closed { display: none !important; }
+  #files-wrap .tree-ico-slot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    margin-right: 4px;
+    color: var(--vscode-icon-foreground);
+  }
+  #files-wrap .tree-row-file .tree-ico-slot { opacity: 0.92; }
+  #files-wrap .tree-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #files-wrap .tree-row-folder .tree-label { font-weight: 400; }
+  #files-wrap .tree-children { display: block; }
+  #files-wrap .empty-pending { font-size: 12px; opacity: 0.45; font-style: italic; padding: 8px 0; }
+`;
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escapeAttr(s) {
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+function workspaceFolderContaining(absPath) {
+    const norm = path.normalize(absPath);
+    for (const f of vscode.workspace.workspaceFolders ?? []) {
+        const root = path.normalize(f.uri.fsPath);
+        const rel = path.relative(root, norm);
+        if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+            return f;
+        }
+    }
+    return undefined;
+}
+function commonPathPrefix(fullPaths) {
+    if (fullPaths.length === 0) {
+        return '';
+    }
+    const split = fullPaths.map((p) => path.normalize(p).split(path.sep).filter((s) => s.length > 0));
+    const first = split[0];
+    let len = first.length;
+    for (let i = 1; i < split.length; i++) {
+        const row = split[i];
+        let j = 0;
+        while (j < len && j < row.length && first[j].toLowerCase() === row[j].toLowerCase()) {
+            j++;
+        }
+        len = j;
+    }
+    if (len === 0) {
+        return '';
+    }
+    return path.join(...first.slice(0, len));
+}
+function outsideBaseForOrphans(orphans) {
+    if (orphans.length === 0) {
+        return '';
+    }
+    if (orphans.length === 1) {
+        return path.dirname(path.normalize(orphans[0]));
+    }
+    return commonPathPrefix(orphans.map((p) => path.normalize(p)));
+}
+function addToTree(root, parts, absPath) {
+    if (parts.length === 1) {
+        root.files.push({ name: parts[0], path: absPath });
+        return;
+    }
+    const head = parts[0];
+    const tail = parts.slice(1);
+    let sub = root.subdirs.get(head);
+    if (!sub) {
+        sub = { subdirs: new Map(), files: [] };
+        root.subdirs.set(head, sub);
+    }
+    addToTree(sub, tail, absPath);
+}
+function dirBuildToJson(db) {
+    const dirs = [...db.subdirs.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, sub]) => ({ name, tree: dirBuildToJson(sub) }));
+    const files = [...db.files].sort((a, b) => a.name.localeCompare(b.name));
+    return { dirs, files };
+}
+function buildPendingTreeModel(pending) {
+    const root = { subdirs: new Map(), files: [] };
+    const orphans = pending.filter((p) => !workspaceFolderContaining(p));
+    const outsideBase = outsideBaseForOrphans(orphans);
+    for (const absPath of pending) {
+        const wf = workspaceFolderContaining(absPath);
+        let parts;
+        if (wf) {
+            const rel = path.relative(wf.uri.fsPath, path.normalize(absPath));
+            const segments = rel.split(/[/\\]/).filter(Boolean);
+            // Mirror the Agent Mode tree: even a single-folder workspace gets an
+            // explicit root node, so files at different depths have clear context.
+            parts = [wf.name, ...segments];
+        }
+        else {
+            const rel = path.relative(outsideBase, path.normalize(absPath));
+            parts = rel.split(/[/\\]/).filter(Boolean).filter((seg) => seg !== '.' && seg !== '..');
+            if (parts.length === 0) {
+                parts = [path.basename(absPath)];
+            }
+        }
+        if (parts.length) {
+            addToTree(root, parts, absPath);
+        }
+    }
+    return dirBuildToJson(root);
+}
+const EXT_ICON = {
+    ts: 'typescript', tsx: 'react_ts',
+    js: 'javascript', jsx: 'react', mjs: 'javascript', cjs: 'javascript',
+    css: 'css', scss: 'sass', sass: 'sass', less: 'less',
+    html: 'html', htm: 'html',
+    json: 'json', jsonc: 'json',
+    md: 'markdown', mdx: 'markdown',
+    py: 'python',
+    rs: 'rust',
+    go: 'go',
+    java: 'java',
+    kt: 'kotlin', kts: 'kotlin',
+    rb: 'ruby',
+    php: 'php',
+    c: 'c', cc: 'cpp', cpp: 'cpp', h: 'h', hpp: 'hpp',
+    cs: 'csharp',
+    sh: 'console', bash: 'console',
+    yaml: 'yaml', yml: 'yaml',
+    toml: 'toml',
+    xml: 'xml',
+    svg: 'svg',
+    vue: 'vue',
+    svelte: 'svelte',
+    prisma: 'prisma',
+    graphql: 'graphql',
+    dockerfile: 'docker',
+    env: 'document',
+    gitignore: 'git',
+    lock: 'lock',
+    sql: 'database',
+    zip: 'zip', gz: 'zip', tar: 'zip',
+    png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', ico: 'image',
+    pdf: 'pdf',
+    txt: 'document',
+};
+function fileIconImg(fileName, iconBase) {
+    const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
+    const iconName = EXT_ICON[ext] ?? 'file';
+    const src = escapeAttr(`${iconBase}${iconName}.svg`);
+    return `<img src="${src}" width="16" height="16" aria-hidden="true" style="flex-shrink:0;display:block;">`;
+}
+function folderImg(open, iconBase) {
+    const name = open ? 'folder-open' : 'folder';
+    const src = escapeAttr(`${iconBase}${name}.svg`);
+    return `<img src="${src}" width="16" height="16" aria-hidden="true" style="flex-shrink:0;display:block;">`;
+}
+function chevronSvg(down) {
+    return down
+        ? `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`
+        : `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+}
+function renderPendingTreeHtml(node, depth, iconBase) {
+    const indentPx = 2 + depth * 8;
+    const chunks = [];
+    for (const d of node.dirs) {
+        const inner = renderPendingTreeHtml(d.tree, depth + 1, iconBase);
+        chunks.push(`<details class="tree-node" open>` +
+            `<summary class="tree-row tree-row-folder" style="padding-left:${indentPx}px">` +
+            `<span class="tree-twist tree-chev-open">${chevronSvg(true)}</span>` +
+            `<span class="tree-twist tree-chev-closed" style="display:none">${chevronSvg(false)}</span>` +
+            `<span class="tree-ico-slot tree-ico-open">${folderImg(true, iconBase)}</span>` +
+            `<span class="tree-ico-slot tree-ico-closed" style="display:none">${folderImg(false, iconBase)}</span>` +
+            `<span class="tree-label">${escapeHtml(d.name)}</span>` +
+            `</summary>` +
+            `<div class="tree-children">${inner}</div>` +
+            `</details>`);
+    }
+    for (const f of node.files) {
+        chunks.push(`<button type="button" class="tree-row tree-row-file" data-path="${escapeAttr(f.path)}" style="padding-left:${indentPx}px">` +
+            `<span class="tree-twist tree-twist-file" aria-hidden="true"></span>` +
+            `<span class="tree-ico-slot">${fileIconImg(f.name, iconBase)}</span>` +
+            `<span class="tree-label">${escapeHtml(f.name)}</span>` +
+            `</button>`);
+    }
+    return chunks.join('');
+}
+//# sourceMappingURL=pendingFilesPage.js.map

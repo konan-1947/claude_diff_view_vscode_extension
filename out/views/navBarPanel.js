@@ -1,70 +1,85 @@
-import * as vscode from 'vscode';
-
-export interface NavInfo {
-  currentIdx: number;
-  total: number;
-  prevName: string;
-  nextName: string;
-  canPrev: boolean;
-  canNext: boolean;
-}
-
-export class NavBarPanel implements vscode.WebviewViewProvider {
-  public static readonly viewType = 'ai-cli-diff-view.navBar';
-
-  private view?: vscode.WebviewView;
-  private navInfo?: NavInfo;
-  private activeFilePath?: string;
-
-  constructor(private readonly extensionUri: vscode.Uri) {}
-
-  resolveWebviewView(webviewView: vscode.WebviewView): void {
-    this.view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [this.extensionUri],
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
     };
-    webviewView.webview.onDidReceiveMessage((msg: { command: string }) => {
-      switch (msg.command) {
-        case 'acceptAllChanges': vscode.commands.executeCommand('ai-cli-diff-view.acceptAllChanges'); break;
-      }
-    });
-    this.render();
-  }
-
-  update(navInfo: NavInfo | undefined): void {
-    this.navInfo = navInfo;
-    this.render();
-  }
-
-  setActiveFile(filePath: string | undefined): void {
-    this.activeFilePath = filePath;
-    this.render();
-  }
-
-  private render(): void {
-    if (!this.view) { return; }
-    this.view.webview.html = this.buildHtml();
-  }
-
-  private buildHtml(): string {
-    const info = this.navInfo;
-    const bgNoDiffUri = this.view!.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_ngu.png'),
-    ).toString();
-    const bgHasDiffUri = this.view!.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_diff.png'),
-    ).toString();
-    const bodyClass = info ? 'has-diff' : 'no-diff';
-
-    const controls = info ? `
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NavBarPanel = void 0;
+const vscode = __importStar(require("vscode"));
+class NavBarPanel {
+    constructor(extensionUri) {
+        this.extensionUri = extensionUri;
+    }
+    resolveWebviewView(webviewView) {
+        this.view = webviewView;
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this.extensionUri],
+        };
+        webviewView.webview.onDidReceiveMessage((msg) => {
+            switch (msg.command) {
+                case 'acceptAllChanges':
+                    vscode.commands.executeCommand('ai-cli-diff-view.acceptAllChanges');
+                    break;
+            }
+        });
+        this.render();
+    }
+    update(navInfo) {
+        this.navInfo = navInfo;
+        this.render();
+    }
+    setActiveFile(filePath) {
+        this.activeFilePath = filePath;
+        this.render();
+    }
+    render() {
+        if (!this.view) {
+            return;
+        }
+        this.view.webview.html = this.buildHtml();
+    }
+    buildHtml() {
+        const info = this.navInfo;
+        const bgNoDiffUri = this.view.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_ngu.png')).toString();
+        const bgHasDiffUri = this.view.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_diff.png')).toString();
+        const bodyClass = info ? 'has-diff' : 'no-diff';
+        const controls = info ? `
       <div class="controls">
         <div class="line line-all-changes">
           <button class="btn btn-accept-all" onclick="send('acceptAllChanges')">Accept All Changes</button>
         </div>
       </div>` : `<div class="empty">No pending diffs</div>`;
-
-    return `<!DOCTYPE html>
+        return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -216,9 +231,11 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   </script>
 </body>
 </html>`;
-  }
+    }
 }
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+exports.NavBarPanel = NavBarPanel;
+NavBarPanel.viewType = 'ai-cli-diff-view.navBar';
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+//# sourceMappingURL=navBarPanel.js.map

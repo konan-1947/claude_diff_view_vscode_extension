@@ -61,7 +61,10 @@ export class WorkspaceWatcher {
   /** Khoảng cách tối thiểu giữa 2 write để coi là 2 cụm khác nhau (và ghi lại hint activeTab mới). */
   private static readonly ACTIVE_TAB_CAPTURE_GAP_MS = 500;
 
-  constructor(private readonly diffManager: DiffManager) {
+  constructor(
+    private readonly diffManager: DiffManager,
+    private readonly shouldAutoOpenDiff: () => boolean = () => true
+  ) {
     this.snapshots = new BaselineStore();
     this.baselineScanner = new BaselineScanner(this.snapshots);
   }
@@ -410,9 +413,9 @@ export class WorkspaceWatcher {
         // dung hiện tại làm baseline rồi thôi. Mở diff ở đây sẽ hiện cả file là
         // "thêm mới", và Revert all trên diff đó sẽ xoá mất file.
         if (this.snapshots.consumeSizeSkipped(absPath)) { return; }
-        if (newContent.trim()) {
-          this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
-        }
+        // A new empty file still needs a pending snapshot: accepting keeps it,
+        // while reverting removes it. It has no content hunk to render.
+        this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
         return;
       }
 
@@ -445,6 +448,11 @@ export class WorkspaceWatcher {
     fromBurstDump = false
   ): void {
     this.diffManager.loadSnapshot(filePath, originalContent, fileExistedBefore);
+    // Agent Mode owns review in its central preview. Keep the pending snapshot
+    // so its changes sidebar refreshes, but never steal the main editor focus.
+    if (!this.shouldAutoOpenDiff()) {
+      return;
+    }
     this.diffManager.openDiff(filePath, fromBurstDump ? { preserveFocus: true } : undefined).catch((err: unknown) => {
       console.error('[ai-cli-diff-view] workspaceWatcher openDiff failed:', err);
     });
