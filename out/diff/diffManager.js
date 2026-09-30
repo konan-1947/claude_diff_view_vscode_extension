@@ -75,6 +75,8 @@ class DiffManager {
         this.context = context;
         this._onDidChangeDiffs = new vscode.EventEmitter();
         this.onDidChangeDiffs = this._onDidChangeDiffs.event;
+        this._onWillWriteFile = new vscode.EventEmitter();
+        this.onWillWriteFile = this._onWillWriteFile.event;
         this.snapshots = new Map();
         /** filePath (normalized) -> active webview panel. */
         this.panels = new Map();
@@ -235,6 +237,7 @@ class DiffManager {
             ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
             : undefined;
         if (snapshot.fileExistedBefore) {
+            this._onWillWriteFile.fire({ filePath: absPath, content: snapshot.content });
             await this.writeFile(absPath, snapshot.content);
         }
         else {
@@ -384,6 +387,7 @@ class DiffManager {
             }
         }
         else {
+            this._onWillWriteFile.fire({ filePath: absPath, content: snapshot.content });
             await this.writeFile(absPath, snapshot.content);
         }
         this.snapshots.delete(absPath);
@@ -414,6 +418,7 @@ class DiffManager {
         if (!snapshot) {
             return;
         }
+        this._onWillWriteFile.fire({ filePath: absPath, content: newCurrent });
         await this.writeFile(absPath, newCurrent, { fromLf: true });
         if (newOriginal === newCurrent) {
             if (!snapshot.fileExistedBefore && newCurrent.length === 0) {
@@ -617,6 +622,7 @@ class DiffManager {
             return;
         }
         // newCurrent từ webview ở LF -> writeFile khôi phục EOL thật của file.
+        this._onWillWriteFile.fire({ filePath: absPath, content: newCurrent });
         await this.writeFile(absPath, newCurrent, { fromLf: true });
         if (newOriginal === newCurrent) {
             if (!snapshot.fileExistedBefore && newCurrent.length === 0) {

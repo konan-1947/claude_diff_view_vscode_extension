@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
@@ -159,6 +159,10 @@
       {
         "command": "ai-cli-diff-view.toggleAgentMode",
         "title": "AI CLI Diff: Toggle Agent Mode"
+      },
+      {
+        "command": "ai-cli-diff-view.showExtensionInfo",
+        "title": "AI CLI Diff: Open Extension Page"
       },
       {
         "command": "ai-cli-diff-view.focusAgentTerminal",

@@ -82,6 +82,9 @@ async function activateExtension(context) {
     const diffManager = new diffManager_1.DiffManager(context);
     let agentModeActive = false;
     const workspaceWatcher = new workspaceWatcher_1.WorkspaceWatcher(diffManager, () => !agentModeActive);
+    context.subscriptions.push(diffManager.onWillWriteFile(({ filePath, content }) => {
+        workspaceWatcher.markInternalWrite(filePath, content);
+    }));
     const gitBranchWatcher = new gitBranchWatcher_1.GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
     const navigationManager = new navigationManager_1.NavigationManager(diffManager);
     debugLog('activate:core services constructed');
@@ -107,6 +110,9 @@ async function activateExtension(context) {
     }, {
         toggleDiff: () => agentModeTerminal?.toggleDiffPreview(),
         showIntroduce: () => agentModeTerminal?.showIntroduce(),
+        showExtensionInfo: () => {
+            void vscode.env.openExternal(vscode.Uri.parse('https://marketplace.visualstudio.com/items?itemName=konan1947.ai-cli-diff-view'));
+        },
         showSettings: () => agentModeTerminal?.showSettings(),
         toggleAgentMode: () => { void vscode.commands.executeCommand('ai-cli-diff-view.toggleAgentMode'); },
     });
@@ -327,7 +333,9 @@ async function activateExtension(context) {
         }
         agentModeTerminal.focusTerminal();
         void hideEditorTabs();
-    }), vscode.commands.registerCommand('ai-cli-diff-view.toggleAgentMode', () => (agentModeActive ? exitAgentMode() : enterAgentMode())));
+    }), vscode.commands.registerCommand('ai-cli-diff-view.toggleAgentMode', () => (agentModeActive ? exitAgentMode() : enterAgentMode())), vscode.commands.registerCommand('ai-cli-diff-view.showExtensionInfo', () => {
+        void vscode.env.openExternal(vscode.Uri.parse('https://marketplace.visualstudio.com/items?itemName=konan1947.ai-cli-diff-view'));
+    }));
     debugLog('activate:agent-mode command registered');
     context.subscriptions.push(vscode.window.onDidChangeWindowState((state) => {
         if (!agentModeActive && state.focused && terminalPanel.wasTerminalFocused()) {

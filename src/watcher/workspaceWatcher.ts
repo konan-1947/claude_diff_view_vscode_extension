@@ -31,6 +31,8 @@ export class WorkspaceWatcher {
   private lastProcessed = new Map<string, number>();
   /** Lưu thời điểm VS Code vừa Save file (để bỏ qua watcher trigger từ chính VS Code) */
   private savedFilesByVsCode = new Map<string, number>();
+  /** Writes initiated by the extension itself, such as Reject/rollback. */
+  private internalWrites = new Map<string, { contents: string[]; updatedAt: number }>();
   private readonly snapshots: BaselineStore;
   private readonly baselineScanner: BaselineScanner;
   private readonly pendingTimers = new Set<NodeJS.Timeout>();
@@ -41,6 +43,7 @@ export class WorkspaceWatcher {
   private static readonly LAST_PROCESSED_TTL_MS = 60_000;
   /** VS Code save guard window is 2s — same safety multiplier. */
   private static readonly SAVED_BY_VSCODE_TTL_MS = 10_000;
+  private static readonly INTERNAL_WRITE_TTL_MS = 10_000;
   /**
    * Cờ "đang trong external batch operation" (vd: git checkout đổi branch).
    * Trong window này, mọi external write chỉ cập nhật baseline mà KHÔNG tạo diff.
@@ -150,6 +153,7 @@ export class WorkspaceWatcher {
       // là file mới và Revert all sẽ xoá mất file. Vẫn ghi nhận VS Code vừa lưu
       // để FileSystemWatcher không hiểu nhầm đây là external write.
       const text = doc.getText();
+      this.consumeInternalWrite(filePath, text);
       if (exceedsLineLimit(text)) {
         this.snapshots.markSizeSkipped(filePath);
       } else {
@@ -173,6 +177,47 @@ export class WorkspaceWatcher {
         this.savedFilesByVsCode.delete(key);
       }
     }
+    for (const [key, write] of this.internalWrites) {
+      if (now - write.updatedAt > WorkspaceWatcher.INTERNAL_WRITE_TTL_MS) {
+        this.internalWrites.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Register content that the extension is about to write. Direct
+   * workspace.fs.writeFile() does not emit onDidSaveTextDocument, so the
+   * filesystem watcher needs this marker to avoid opening a reverse diff.
+   */
+  markInternalWrite(filePath: string, content: string): void {
+    const key = this.normalizePath(filePath);
+    const pending = this.internalWrites.get(key);
+    const normalized = this.normalizeContent(content);
+    if (pending) {
+      pending.contents.push(normalized);
+      pending.updatedAt = Date.now();
+    } else {
+      this.internalWrites.set(key, { contents: [normalized], updatedAt: Date.now() });
+    }
+  }
+
+  private consumeInternalWrite(filePath: string, content: string): boolean {
+    const key = this.normalizePath(filePath);
+    const pending = this.internalWrites.get(key);
+    if (!pending) { return false; }
+
+    const matchIndex = pending.contents.indexOf(this.normalizeContent(content));
+    if (matchIndex === -1) { return false; }
+
+    // A delayed filesystem event may contain the newest result of several
+    // internal writes. The newest matching content subsumes earlier markers.
+    pending.contents.splice(0, matchIndex + 1);
+    if (pending.contents.length === 0) {
+      this.internalWrites.delete(key);
+    } else {
+      pending.updatedAt = Date.now();
+    }
+    return true;
   }
 
   private watchWorkspaceFolders(): void {
@@ -385,6 +430,13 @@ export class WorkspaceWatcher {
       }
 
       const newContentRaw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+
+      if (this.consumeInternalWrite(absPath, newContentRaw)) {
+        // Keep the watcher baseline in sync, but do not turn Reject/rollback
+        // into a new pending diff.
+        this.snapshots.set(absPath, newContentRaw);
+        return;
+      }
 
       // File vượt giới hạn số dòng -> coi như không tồn tại với extension:
       // không giữ baseline, không mở diff. Xoá cả baseline cũ phòng khi file

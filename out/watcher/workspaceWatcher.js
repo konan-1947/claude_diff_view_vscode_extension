@@ -62,6 +62,8 @@ class WorkspaceWatcher {
         this.lastProcessed = new Map();
         /** Lưu thời điểm VS Code vừa Save file (để bỏ qua watcher trigger từ chính VS Code) */
         this.savedFilesByVsCode = new Map();
+        /** Writes initiated by the extension itself, such as Reject/rollback. */
+        this.internalWrites = new Map();
         this.pendingTimers = new Set();
         /** Directory-create events waiting for one settled subtree reconciliation. */
         this.pendingDirectoryScans = new Map();
@@ -158,6 +160,7 @@ class WorkspaceWatcher {
             // là file mới và Revert all sẽ xoá mất file. Vẫn ghi nhận VS Code vừa lưu
             // để FileSystemWatcher không hiểu nhầm đây là external write.
             const text = doc.getText();
+            this.consumeInternalWrite(filePath, text);
             if ((0, fileSizeLimit_1.exceedsLineLimit)(text)) {
                 this.snapshots.markSizeSkipped(filePath);
             }
@@ -181,6 +184,49 @@ class WorkspaceWatcher {
                 this.savedFilesByVsCode.delete(key);
             }
         }
+        for (const [key, write] of this.internalWrites) {
+            if (now - write.updatedAt > WorkspaceWatcher.INTERNAL_WRITE_TTL_MS) {
+                this.internalWrites.delete(key);
+            }
+        }
+    }
+    /**
+     * Register content that the extension is about to write. Direct
+     * workspace.fs.writeFile() does not emit onDidSaveTextDocument, so the
+     * filesystem watcher needs this marker to avoid opening a reverse diff.
+     */
+    markInternalWrite(filePath, content) {
+        const key = this.normalizePath(filePath);
+        const pending = this.internalWrites.get(key);
+        const normalized = this.normalizeContent(content);
+        if (pending) {
+            pending.contents.push(normalized);
+            pending.updatedAt = Date.now();
+        }
+        else {
+            this.internalWrites.set(key, { contents: [normalized], updatedAt: Date.now() });
+        }
+    }
+    consumeInternalWrite(filePath, content) {
+        const key = this.normalizePath(filePath);
+        const pending = this.internalWrites.get(key);
+        if (!pending) {
+            return false;
+        }
+        const matchIndex = pending.contents.indexOf(this.normalizeContent(content));
+        if (matchIndex === -1) {
+            return false;
+        }
+        // A delayed filesystem event may contain the newest result of several
+        // internal writes. The newest matching content subsumes earlier markers.
+        pending.contents.splice(0, matchIndex + 1);
+        if (pending.contents.length === 0) {
+            this.internalWrites.delete(key);
+        }
+        else {
+            pending.updatedAt = Date.now();
+        }
+        return true;
     }
     watchWorkspaceFolders() {
         const folders = vscode.workspace.workspaceFolders;
@@ -372,6 +418,12 @@ class WorkspaceWatcher {
                 return;
             }
             const newContentRaw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+            if (this.consumeInternalWrite(absPath, newContentRaw)) {
+                // Keep the watcher baseline in sync, but do not turn Reject/rollback
+                // into a new pending diff.
+                this.snapshots.set(absPath, newContentRaw);
+                return;
+            }
             // File vượt giới hạn số dòng -> coi như không tồn tại với extension:
             // không giữ baseline, không mở diff. Xoá cả baseline cũ phòng khi file
             // vừa vượt ngưỡng (hoặc user vừa hạ setting xuống).
@@ -512,6 +564,7 @@ WorkspaceWatcher.DIRECTORY_SETTLE_MS = 300;
 WorkspaceWatcher.LAST_PROCESSED_TTL_MS = 60000;
 /** VS Code save guard window is 2s — same safety multiplier. */
 WorkspaceWatcher.SAVED_BY_VSCODE_TTL_MS = 10000;
+WorkspaceWatcher.INTERNAL_WRITE_TTL_MS = 10000;
 /** Khoảng cách tối thiểu giữa 2 write để coi là 2 cụm khác nhau (và ghi lại hint activeTab mới). */
 WorkspaceWatcher.ACTIVE_TAB_CAPTURE_GAP_MS = 500;
 //# sourceMappingURL=workspaceWatcher.js.map

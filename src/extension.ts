@@ -62,6 +62,11 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   const diffManager       = new DiffManager(context);
   let agentModeActive = false;
   const workspaceWatcher  = new WorkspaceWatcher(diffManager, () => !agentModeActive);
+  context.subscriptions.push(
+    diffManager.onWillWriteFile(({ filePath, content }) => {
+      workspaceWatcher.markInternalWrite(filePath, content);
+    })
+  );
   const gitBranchWatcher  = new GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
   const navigationManager = new NavigationManager(diffManager);
   debugLog('activate:core services constructed');
@@ -102,6 +107,11 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     {
       toggleDiff: () => agentModeTerminal?.toggleDiffPreview(),
       showIntroduce: () => agentModeTerminal?.showIntroduce(),
+      showExtensionInfo: () => {
+        void vscode.env.openExternal(vscode.Uri.parse(
+          'https://marketplace.visualstudio.com/items?itemName=konan1947.ai-cli-diff-view'
+        ));
+      },
       showSettings: () => agentModeTerminal?.showSettings(),
       toggleAgentMode: () => { void vscode.commands.executeCommand('ai-cli-diff-view.toggleAgentMode'); },
     },
@@ -394,7 +404,12 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     }),
     vscode.commands.registerCommand('ai-cli-diff-view.toggleAgentMode', () => (
       agentModeActive ? exitAgentMode() : enterAgentMode()
-    ))
+    )),
+    vscode.commands.registerCommand('ai-cli-diff-view.showExtensionInfo', () => {
+      void vscode.env.openExternal(vscode.Uri.parse(
+        'https://marketplace.visualstudio.com/items?itemName=konan1947.ai-cli-diff-view'
+      ));
+    })
   );
   debugLog('activate:agent-mode command registered');
 

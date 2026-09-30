@@ -54,9 +54,16 @@ export interface DiffPreviewMetadata {
   hunks: number;
 }
 
+export interface InternalFileWrite {
+  filePath: string;
+  content: string;
+}
+
 export class DiffManager {
   private _onDidChangeDiffs = new vscode.EventEmitter<void>();
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
+  private _onWillWriteFile = new vscode.EventEmitter<InternalFileWrite>();
+  public readonly onWillWriteFile = this._onWillWriteFile.event;
 
   private snapshots: Map<string, SnapshotState> = new Map();
   private readonly store: SnapshotStore;
@@ -244,6 +251,7 @@ export class DiffManager {
         : undefined;
 
     if (snapshot.fileExistedBefore) {
+      this._onWillWriteFile.fire({ filePath: absPath, content: snapshot.content });
       await this.writeFile(absPath, snapshot.content);
     } else {
       await this.deleteFile(absPath);
@@ -401,6 +409,7 @@ export class DiffManager {
         if (!isFileNotFound(err)) { throw err; }
       }
     } else {
+      this._onWillWriteFile.fire({ filePath: absPath, content: snapshot.content });
       await this.writeFile(absPath, snapshot.content);
     }
     this.snapshots.delete(absPath);
@@ -437,6 +446,7 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return; }
+    this._onWillWriteFile.fire({ filePath: absPath, content: newCurrent });
     await this.writeFile(absPath, newCurrent, { fromLf: true });
     if (newOriginal === newCurrent) {
       if (!snapshot.fileExistedBefore && newCurrent.length === 0) {
@@ -668,6 +678,7 @@ export class DiffManager {
     if (!snapshot) { return; }
 
     // newCurrent từ webview ở LF -> writeFile khôi phục EOL thật của file.
+    this._onWillWriteFile.fire({ filePath: absPath, content: newCurrent });
     await this.writeFile(absPath, newCurrent, { fromLf: true });
 
     if (newOriginal === newCurrent) {
