@@ -46,10 +46,18 @@ export function applySoundNotifications(enabled: boolean): void {
 
   let settings: Record<string, unknown> = {};
   let fileExists = true;
+  let raw: string | undefined;
   try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    raw = fs.readFileSync(settingsPath, 'utf8');
   } catch {
     fileExists = false;
+  }
+  if (raw !== undefined && raw.trim()) {
+    try {
+      settings = JSON.parse(raw);
+    } catch {
+      return; // malformed user config — never overwrite it with {}
+    }
   }
 
   if (!enabled && !fileExists) {
