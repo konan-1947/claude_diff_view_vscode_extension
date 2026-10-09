@@ -23,6 +23,20 @@ import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
 interface ExternalWriteOptions {
   burstHoldOverride?: boolean;
   readDelayMs?: number;
+  /** When the FS event was originally received (kept across queueing). */
+  eventAtOverride?: number;
+}
+
+/**
+ * Optional gate: decides whether an external write was made by the agent.
+ * When absent or disabled, every external write is treated as an agent edit
+ * (previous behaviour, needed for Codex/Qwen which have no hooks).
+ */
+export interface EditAttribution {
+  isEnabled(): boolean;
+  isAgentWrite(absPath: string, eventAt: number): Promise<boolean>;
+  /** Called when a real change was ignored as not-the-agent's. */
+  onIgnoredWrite?(absPath: string): void;
 }
 
 export class WorkspaceWatcher {
@@ -50,7 +64,7 @@ export class WorkspaceWatcher {
   private readonly burstMeter = new WriteBurstMeter();
   /** Giữ external write đến khi initial baseline scan hoàn tất. */
   private baselineScansInProgress = 0;
-  private readonly queuedExternalWrites = new Map<string, { burstHold: boolean; readDelayMs: number }>();
+  private readonly queuedExternalWrites = new Map<string, { burstHold: boolean; readDelayMs: number; eventAt: number }>();
   /** Thời gian giữ file vượt ngưỡng burst chờ xác nhận git trước khi mở diff bình thường. */
   private holdMs = 2000;
   /** File vượt ngưỡng burst, đang chờ xác nhận git (xem resolveOrHold/scheduleHoldResolve). */
@@ -63,7 +77,8 @@ export class WorkspaceWatcher {
 
   constructor(
     private readonly diffManager: DiffManager,
-    private readonly shouldAutoOpenDiff: () => boolean = () => true
+    private readonly shouldAutoOpenDiff: () => boolean = () => true,
+    private readonly attribution?: EditAttribution
   ) {
     this.snapshots = new BaselineStore();
     this.baselineScanner = new BaselineScanner(this.snapshots);
@@ -221,6 +236,7 @@ export class WorkspaceWatcher {
           this.handleExternalWrite(vscode.Uri.file(filePath), {
             burstHoldOverride: queuedWrite.burstHold,
             readDelayMs: queuedWrite.readDelayMs,
+            eventAtOverride: queuedWrite.eventAt,
           });
         }
       }
@@ -316,6 +332,7 @@ export class WorkspaceWatcher {
   ): void {
     const absPath = this.normalizePath(uri.fsPath);
     const readDelayMs = options.readDelayMs ?? 200;
+    const eventAt = options.eventAtOverride ?? Date.now();
 
     // Đo tốc độ ghi TRƯỚC mọi filter bên dưới — xem writeBurstMeter.ts. Capture
     // quyết định NGAY tại thời điểm raw event tới (chính xác nhất so với cửa
@@ -346,19 +363,19 @@ export class WorkspaceWatcher {
     if (!this.isInWorkspace(absPath)) { return; }
 
     if (this.baselineScansInProgress > 0) {
-      this.queuedExternalWrites.set(absPath, { burstHold, readDelayMs });
+      this.queuedExternalWrites.set(absPath, { burstHold, readDelayMs, eventAt });
       return;
     }
 
     if (readDelayMs <= 0) {
-      void this.processExternalWrite(uri, absPath, burstHold);
+      void this.processExternalWrite(uri, absPath, burstHold, eventAt);
       return;
     }
 
     // Đọc nội dung mới sau một chút để đảm bảo write xong.
     const timer = setTimeout(() => {
       this.pendingTimers.delete(timer);
-      void this.processExternalWrite(uri, absPath, burstHold);
+      void this.processExternalWrite(uri, absPath, burstHold, eventAt);
     }, readDelayMs);
     this.pendingTimers.add(timer);
   }
@@ -366,7 +383,8 @@ export class WorkspaceWatcher {
   private async processExternalWrite(
     uri: vscode.Uri,
     absPath: string,
-    burstHold: boolean
+    burstHold: boolean,
+    eventAt: number
   ): Promise<void> {
     // Re-check immediately before reading in case VS Code saved the document
     // while this write was waiting for its settle delay.
@@ -413,6 +431,9 @@ export class WorkspaceWatcher {
         // dung hiện tại làm baseline rồi thôi. Mở diff ở đây sẽ hiện cả file là
         // "thêm mới", và Revert all trên diff đó sẽ xoá mất file.
         if (this.snapshots.consumeSizeSkipped(absPath)) { return; }
+        // Baseline is already refreshed above; a write the agent didn't make
+        // (copying a file in, git, a formatter…) must not open a diff.
+        if (!(await this.isAgentWrite(absPath, eventAt))) { return; }
         // A new empty file still needs a pending snapshot: accepting keeps it,
         // while reverting removes it. It has no content hunk to render.
         this.resolveOrHold(absPath, '', newContentRaw, false, burstHold);
@@ -433,11 +454,23 @@ export class WorkspaceWatcher {
       this.snapshots.set(absPath, newContentRaw);
 
       if (!this.diffManager.hasPendingDiff(absPath)) {
+        if (!(await this.isAgentWrite(absPath, eventAt))) { return; }
         this.resolveOrHold(absPath, oldContentRaw!, newContentRaw, true, burstHold);
       }
     } catch {
       // file đang bị lock, không có quyền đọc hoặc đã bị xóa — bỏ qua
     }
+  }
+
+  private async isAgentWrite(absPath: string, eventAt: number): Promise<boolean> {
+    if (!this.attribution?.isEnabled()) { return true; }
+    try {
+      if (await this.attribution.isAgentWrite(absPath, eventAt)) { return true; }
+    } catch {
+      return true; // fail open: a broken gate must not hide agent edits
+    }
+    this.attribution.onIgnoredWrite?.(absPath);
+    return false;
   }
 
   private triggerDiff(

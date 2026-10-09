@@ -11,6 +11,7 @@ import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
 import { AgentChangesPanel } from './views/agentChangesPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
+import { setupClaudeEditAttribution } from './attribution/setupClaudeAttribution';
 
 const LOG_PREFIX = '[ai-cli-diff-view]';
 const AGENT_MODE_TABS_STATE_KEY = 'ai-cli-diff-view.agentMode.editorTabsState';
@@ -61,7 +62,8 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   const diffManager       = new DiffManager(context);
   let agentModeActive = false;
-  const workspaceWatcher  = new WorkspaceWatcher(diffManager, () => !agentModeActive);
+  const editAttribution   = setupClaudeEditAttribution(context, debugLog);
+  const workspaceWatcher  = new WorkspaceWatcher(diffManager, () => !agentModeActive, editAttribution);
   const gitBranchWatcher  = new GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
   const navigationManager = new NavigationManager(diffManager);
   debugLog('activate:core services constructed');
