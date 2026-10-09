@@ -57,13 +57,24 @@ export function applySoundNotifications(enabled: boolean): void {
   }
 
   const hooks = { ...(settings['hooks'] as Record<string, unknown> | undefined ?? {}) };
+  const before = JSON.stringify(settings['hooks'] ?? {});
 
-  if (enabled) {
-    hooks['Notification'] = soundHookEntry('C:\\Windows\\Media\\Alarm10.wav');
-    hooks['Stop'] = soundHookEntry('C:\\Windows\\Media\\tada.wav');
-  } else {
-    delete hooks['Notification'];
-    delete hooks['Stop'];
+  // Only add/remove OUR entries (identified by SoundPlayer in the command).
+  // Replacing the whole key used to wipe any other Notification/Stop hooks the
+  // user had configured.
+  const setOurs = (key: string, wavPath: string) => {
+    const list = Array.isArray(hooks[key]) ? (hooks[key] as Array<{ hooks?: Array<{ command?: unknown }> }>) : [];
+    const others = list.filter(g => !(g.hooks ?? []).some(
+      h => typeof h.command === 'string' && h.command.includes('System.Media.SoundPlayer')
+    ));
+    const next = enabled ? [...others, ...(soundHookEntry(wavPath) as unknown[])] : others;
+    if (next.length > 0) { hooks[key] = next; } else { delete hooks[key]; }
+  };
+  setOurs('Notification', 'C:\\Windows\\Media\\Alarm10.wav');
+  setOurs('Stop', 'C:\\Windows\\Media\\tada.wav');
+
+  if (JSON.stringify(hooks) === before) {
+    return; // no semantic change → don't touch settings.json
   }
 
   settings['hooks'] = hooks;
