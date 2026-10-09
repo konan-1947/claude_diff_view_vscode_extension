@@ -67,6 +67,21 @@ console.log('settings.json installer');
   const r3 = JSON.parse(I.computeHookSettings(r1.content, false, 'linux').content);
   ok(JSON.stringify(r3) === JSON.stringify(user), 'uninstall restores exactly the original config');
   ok(I.computeHookSettings('{ broken', true, 'linux').parseError, 'malformed settings.json → refuse to write');
+  {
+    const r = I.computeHookSettings('{ broken', false, 'linux');
+    ok(!r.parseError && !r.changed, 'feature off + unparseable file without our hook → silent no-op (startup case)');
+  }
+  ok(I.computeHookSettings('{ broken ' + 'ai-cli-diff-view/claude-events', false, 'linux').parseError,
+    'feature off + unparseable file that contains our hook → refuse to write');
+  {
+    const withBom = '\uFEFF' + raw;
+    const rb = I.computeHookSettings(withBom, true, 'linux');
+    ok(!rb.parseError && rb.changed, 'UTF-8 BOM settings.json parses (Notepad/PowerShell)');
+    ok(rb.content.startsWith('\uFEFF') && JSON.parse(rb.content.slice(1)).model === 'opus', 'BOM preserved, settings kept');
+    const ru = I.computeHookSettings(rb.content, false, 'linux').content;
+    ok(ru.startsWith('\uFEFF') && JSON.stringify(JSON.parse(ru.slice(1))) === JSON.stringify(user),
+      'BOM file: uninstall restores original settings');
+  }
   const w = JSON.parse(I.computeHookSettings('', true, 'win32').content);
   ok(w.hooks.PreToolUse[0].hooks[0].shell === 'powershell', 'Windows uses powershell hook');
 }

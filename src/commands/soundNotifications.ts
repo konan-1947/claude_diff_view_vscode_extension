@@ -52,9 +52,17 @@ export function applySoundNotifications(enabled: boolean): void {
   } catch {
     fileExists = false;
   }
-  if (raw !== undefined && raw.trim()) {
+  // Turning sound off with no sound hook in the file: nothing to do. This runs
+  // on every Apply in the settings panel, so don't even parse the file.
+  if (!enabled && raw !== undefined && !raw.includes('System.Media.SoundPlayer')) {
+    return;
+  }
+  // Windows editors often save with a UTF-8 BOM, which JSON.parse rejects.
+  const bom = raw?.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const body = bom ? raw!.slice(1) : raw;
+  if (body !== undefined && body.trim()) {
     try {
-      settings = JSON.parse(raw);
+      settings = JSON.parse(body);
     } catch {
       return; // malformed user config — never overwrite it with {}
     }
@@ -93,5 +101,5 @@ export function applySoundNotifications(enabled: boolean): void {
     }
     fs.mkdirSync(settingsDir, { recursive: true });
   }
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  fs.writeFileSync(settingsPath, bom + JSON.stringify(settings, null, 2), 'utf8');
 }

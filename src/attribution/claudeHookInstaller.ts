@@ -92,12 +92,24 @@ export function computeHookSettings(
   enabled: boolean,
   platform: string = process.platform
 ): { content: string; changed: boolean; parseError?: boolean } {
+  // Disabling with none of our entries in the file: nothing to remove, so
+  // don't even parse it. (This runs on every startup while the feature is
+  // off; it must stay silent for files we can't parse.)
+  if (!enabled && !(raw.includes(OWNER_MARKER) && raw.includes(EVENTS_MARKER))) {
+    return { content: raw, changed: false };
+  }
+
+  // Windows editors (Notepad, PowerShell 5.1 `-Encoding utf8`) often save
+  // with a UTF-8 BOM, which JSON.parse rejects. Parse without it and keep it.
+  const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const body = bom ? raw.slice(1) : raw;
+
   let settings: Record<string, unknown>;
-  if (!raw.trim()) {
+  if (!body.trim()) {
     settings = {};
   } else {
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(body);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         return { content: raw, changed: false, parseError: true };
       }
@@ -130,7 +142,7 @@ export function computeHookSettings(
   }
 
   const after = JSON.stringify(settings);
-  return { content: JSON.stringify(settings, null, 2) + '\n', changed: before !== after };
+  return { content: bom + JSON.stringify(settings, null, 2) + '\n', changed: before !== after };
 }
 
 export type HookApplyResult = 'unchanged' | 'installed' | 'removed' | 'parseError' | 'writeError';
