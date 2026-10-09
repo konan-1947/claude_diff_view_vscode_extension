@@ -168,10 +168,12 @@ export class ClaudeAttribution {
   }
 
   /**
-   * @param absPath normalized absolute path of the written file
+   * @param absPath absolute path of the written file (normalized here, the
+   *                same way event paths are, so callers can pass any form)
    * @param writeAt when the watcher received the write event (ms)
    */
   isClaudeWrite(absPath: string, writeAt: number): boolean {
+    const target = normalizeFsPath(absPath);
     for (const span of this.spans.values()) {
       if (writeAt < span.start) { continue; }
       const maxLife = span.kind === 'bash' ? this.timings.bashWindowMaxMs : this.timings.fileClaimMaxMs;
@@ -180,7 +182,7 @@ export class ClaudeAttribution {
         : span.start + maxLife;
       if (writeAt > closesAt) { continue; }
 
-      if (span.kind === 'file' && span.paths.has(absPath)) { return true; }
+      if (span.kind === 'file' && span.paths.has(target)) { return true; }
       if (span.kind === 'bash' && this.attributeBash()) { return true; }
     }
     return false;

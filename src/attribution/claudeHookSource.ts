@@ -15,7 +15,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { ClaudeAttribution, normalizeFsPath, parseHookEvent } from './claudeAttribution';
+import { ClaudeAttribution, parseHookEvent } from './claudeAttribution';
 import { getClaudeEventsDir } from './claudeHookInstaller';
 
 const FILE_MAX_AGE_MS = 30 * 60_000;
@@ -34,7 +34,7 @@ export class ClaudeHookSource {
 
   async isClaudeWrite(absPath: string, writeAt: number): Promise<boolean> {
     await this.refresh();
-    return this.attribution.isClaudeWrite(normalizeFsPath(absPath), writeAt);
+    return this.attribution.isClaudeWrite(absPath, writeAt);
   }
 
   hasSeenAnyEvent(): boolean {

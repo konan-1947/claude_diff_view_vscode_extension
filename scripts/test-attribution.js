@@ -72,17 +72,33 @@ console.log('settings.json installer');
 }
 
 (async () => {
-  console.log('End-to-end: real hook command → event files → source');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
-  const cmd = JSON.parse(I.computeHookSettings('', true, 'linux').content).hooks.PreToolUse[0].hooks[0].command;
-  const run = (payload) => cp.execSync(cmd, { input: JSON.stringify(payload), env: { ...process.env, HOME: home }, shell: '/bin/sh' });
-  run({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_use_id: 'x1', session_id: 's', cwd: '/ws', tool_input: { file_path: '/ws/thư mục/ghi chú.md' } });
-  const dir = path.join(home, '.ai-cli-diff-view', 'claude-events');
-  const files = fs.readdirSync(dir);
-  ok(files.length === 1 && files[0].endsWith('.json'), 'hook wrote exactly one .json event file (no leftover .tmp)');
-  const src = new S.ClaudeHookSource(new A.ClaudeAttribution(), dir);
-  ok(await src.isClaudeWrite('/ws/thư mục/ghi chú.md', Date.now()), 'non-ASCII (Vietnamese) path attributed end-to-end');
-  ok(!(await src.isClaudeWrite('/ws/copied.txt', Date.now())), 'copied file not attributed end-to-end');
-  ok(src.hasSeenAnyEvent(), 'source reports hook is alive');
+  const isWin = process.platform === 'win32';
+  const hasPwsh = (() => { try { cp.execSync('pwsh -NoProfile -c "exit 0"', { stdio: 'ignore' }); return true; } catch { return false; } })();
+  const vnFile = isWin ? 'C:\\ws\\thư mục\\ghi chú.md' : '/ws/thư mục/ghi chú.md';
+  const payload = { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_use_id: 'x1', session_id: 's',
+    cwd: isWin ? 'C:\\ws' : '/ws', tool_input: { file_path: vnFile } };
+
+  async function endToEnd(label, platform, shell, homeVar) {
+    console.log(`End-to-end (${label}): real hook command → event files → source`);
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+    const cmd = JSON.parse(I.computeHookSettings('', true, platform).content).hooks.PreToolUse[0].hooks[0].command;
+    cp.execSync(cmd, { input: Buffer.from(JSON.stringify(payload), 'utf8'), env: { ...process.env, [homeVar]: home }, shell });
+    const dir = path.join(home, '.ai-cli-diff-view', 'claude-events');
+    const files = fs.readdirSync(dir);
+    ok(files.length === 1 && files[0].endsWith('.json'), `${label}: hook wrote exactly one .json event file (no leftover .tmp)`);
+    ok(JSON.parse(fs.readFileSync(path.join(dir, files[0]), 'utf8')).tool_input.file_path === vnFile,
+      `${label}: Vietnamese path stored byte-exact`);
+    const src = new S.ClaudeHookSource(new A.ClaudeAttribution(), dir);
+    ok(await src.isClaudeWrite(vnFile, Date.now()), `${label}: non-ASCII path attributed`);
+    ok(!(await src.isClaudeWrite(isWin ? 'C:\\ws\\copied.txt' : '/ws/copied.txt', Date.now())), `${label}: copied file not attributed`);
+    ok(src.hasSeenAnyEvent(), `${label}: source reports hook is alive`);
+  }
+
+  if (isWin) {
+    await endToEnd('Windows PowerShell', 'win32', 'powershell.exe', 'USERPROFILE');
+  } else {
+    await endToEnd('sh', 'linux', '/bin/sh', 'HOME');
+    if (hasPwsh) { await endToEnd('pwsh', 'win32', 'pwsh', 'USERPROFILE'); }
+  }
   console.log(`\n${pass} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });

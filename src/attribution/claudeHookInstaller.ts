@@ -43,17 +43,19 @@ interface HookGroup {
 
 function hookCommand(platform: string): HookCommand {
   if (platform === 'win32') {
-    // UTF-8 stdin matters for non-ASCII paths (e.g. Vietnamese folder names).
+    // Copy stdin as raw bytes: no text decoding, so non-ASCII paths (e.g.
+    // Vietnamese folder names) survive regardless of the console code page.
+    // (Setting [Console]::InputEncoding instead can throw when the hook runs
+    // without a console attached, which is how Claude Code runs hooks.)
     return {
       type: 'command',
       shell: 'powershell',
       timeout: 5,
       command: [
-        '[Console]::InputEncoding=[Text.Encoding]::UTF8',
         `$d=Join-Path $env:USERPROFILE '.${OWNER_MARKER}\\${EVENTS_MARKER}'`,
         'New-Item -ItemType Directory -Force -Path $d | Out-Null',
         "$t=Join-Path $d ('.'+[guid]::NewGuid().ToString()+'.tmp')",
-        '[IO.File]::WriteAllText($t,[Console]::In.ReadToEnd())',
+        '$o=[IO.File]::Create($t); [Console]::OpenStandardInput().CopyTo($o); $o.Close()',
         "Move-Item -LiteralPath $t -Destination (Join-Path $d ([guid]::NewGuid().ToString()+'.json'))",
         'exit 0',
       ].join('; '),
