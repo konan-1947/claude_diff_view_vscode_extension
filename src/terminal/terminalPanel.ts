@@ -14,9 +14,11 @@ import {
   BurstDetectionSettings,
   CursorStyle,
   DEFAULT_BURST_DETECTION_SETTINGS,
+  DEFAULT_EXCLUSION_SETTINGS,
   DEFAULT_FILE_LIMIT_SETTINGS,
   DEFAULT_SETTINGS,
   DEFAULT_SOUND_NOTIFICATION_SETTINGS,
+  ExclusionSettings,
   FileLimitSettings,
   MAX_FILE_LINES_CEILING,
   IncomingMessage,
@@ -302,7 +304,46 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       ...this.loadBurstDetectionSettings(),
       ...this.loadSoundNotificationSettings(),
       ...this.loadFileLimitSettings(),
+      ...this.loadExclusionSettings(),
     };
+  }
+
+  private loadExclusionSettings(): ExclusionSettings {
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    return {
+      excludedPaths: this.normalizeExclusionList(
+        config.get<string[]>('excludedPaths', DEFAULT_EXCLUSION_SETTINGS.excludedPaths)
+      ),
+    };
+  }
+
+  private async saveExclusionSettings(incoming: Partial<ExclusionSettings>): Promise<void> {
+    const next = this.normalizeExclusionList(incoming.excludedPaths);
+    const current = this.loadExclusionSettings().excludedPaths;
+    // Every write fires onDidChangeConfiguration → baseline rescan, so skip the
+    // update when Apply was pressed for some unrelated setting.
+    if (next.length === current.length && next.every((entry, i) => entry === current[i])) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    await config.update('excludedPaths', next, vscode.ConfigurationTarget.Global);
+  }
+
+  /** Trim, drop empty entries and duplicates. Pattern parsing is left to `pathExclusions.ts`. */
+  private normalizeExclusionList(values: unknown): string[] {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const value of values) {
+      if (typeof value !== 'string') { continue; }
+      const entry = value.trim();
+      if (!entry || seen.has(entry)) { continue; }
+      seen.add(entry);
+      normalized.push(entry);
+    }
+    return normalized;
   }
 
   private loadFileLimitSettings(): FileLimitSettings {
@@ -609,28 +650,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
         case 'reloadWindow':
           void vscode.commands.executeCommand('workbench.action.reloadWindow');
           return;
-        case 'promptFileExtensions': {
-          const isEdit = msg.action === 'edit';
-          void vscode.window.showInputBox({
-            title: isEdit ? 'Edit file extension' : 'New file extension',
-            prompt: isEdit
-              ? 'Enter one file extension.'
-              : 'Enter one extension or multiple extensions separated by commas.',
-            value: isEdit && typeof msg.value === 'string' ? msg.value : '',
-            placeHolder: isEdit ? '.env' : '.env, .blade.php, .proto',
-          }).then((value) => {
-            if (typeof value !== 'string') {
-              return;
-            }
-            this.webview?.postMessage({
-              type: 'fileExtensionsPromptResult',
-              action: msg.action,
-              previousValue: msg.value,
-              value,
-            });
-          });
-          return;
-        }
         case 'updateSettings': {
           const next = this.loadSettings();
           const incoming = msg.settings ?? next;
@@ -656,6 +675,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.saveBurstDetectionSettings(incoming),
             this.saveSoundNotificationSettings(incoming),
             this.saveFileLimitSettings(incoming),
+            this.saveExclusionSettings(incoming),
           ]).then(() => {
             this.webview?.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           });

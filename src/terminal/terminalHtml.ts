@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
 import { PENDING_FILES_CSS } from './pendingFilesPage';
-import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
+import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 
 interface FontOption {
   label: string;
@@ -35,6 +35,9 @@ export interface BuildTerminalHtmlArgs {
   extensionUri: vscode.Uri;
   filesInnerHtml: string;
 }
+
+/** Icon "i" cho nút mở mô tả cạnh tiêu đề setting — cùng hình với nút Introduce. */
+const INFO_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
 
 export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const { webview, extensionUri, filesInnerHtml } = args;
@@ -382,9 +385,61 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     align-items: flex-start;
     flex-direction: column;
   }
-  .field.file-ext-field > label {
+  .field.file-ext-field > label,
+  .field.file-ext-field > .label-row {
     flex: none;
   }
+  .label-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9));
+    cursor: pointer;
+  }
+  .info-btn:hover,
+  .info-btn[aria-expanded="true"] {
+    color: var(--vscode-foreground);
+    background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18));
+  }
+  .info-btn:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  }
+  .setting-info {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border-left: 2px solid var(--vscode-textLink-foreground, #3794ff);
+    background: var(--vscode-textBlockQuote-background, rgba(128,128,128,0.1));
+    color: var(--vscode-foreground);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .setting-info[hidden] { display: none; }
+  .info-examples {
+    width: 100%;
+    margin: 6px 0;
+    border-collapse: collapse;
+  }
+  .info-examples th,
+  .info-examples td {
+    padding: 3px 6px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.22));
+  }
+  .info-examples th { font-weight: 600; }
+  .info-examples td:first-child { white-space: nowrap; }
   .field.indent { padding-left: 16px; }
   .color-row { display: flex; align-items: center; gap: 8px; }
   .color-row span { font-family: var(--vscode-editor-font-family, monospace); opacity: 0.7; font-size: 11px; }
@@ -428,6 +483,31 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .file-ext-table tbody tr.selected {
     color: var(--vscode-list-activeSelectionForeground, #ffffff);
     background: var(--vscode-list-activeSelectionBackground, #094771);
+  }
+  .file-ext-table td:has(> .list-cell-input) {
+    padding: 2px;
+  }
+  .file-ext-table tr.list-add-row td {
+    border-bottom: none;
+  }
+  .list-cell-input {
+    width: 100%;
+    padding: 2px 4px;
+    background: transparent;
+    color: var(--vscode-input-foreground, var(--vscode-foreground));
+    border: 1px solid transparent;
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: 12px;
+    box-sizing: border-box;
+    outline: none;
+  }
+  .list-cell-input::placeholder {
+    color: var(--vscode-input-placeholderForeground, rgba(128,128,128,0.8));
+  }
+  .list-cell-input:focus {
+    background: var(--vscode-input-background, #2a2a2a);
+    border-color: var(--vscode-focusBorder, #007fd4);
   }
   .file-ext-actions {
     display: flex;
@@ -927,7 +1007,24 @@ ${FONT_OPTIONS.map((f) => {
         </div>
         <div class="setting-help">Plays a sound when Claude finishes a turn or needs input (Windows only). Writes to <code>~/.claude/settings.json</code>.</div>
         <div class="field file-ext-field">
-          <label>Custom file extensions</label>
+          <div class="label-row">
+            <label>Custom file extensions</label>
+            <button class="info-btn" type="button" data-info="info-file-ext" aria-expanded="false"
+              title="About custom file extensions" aria-label="About custom file extensions">${INFO_ICON_SVG}</button>
+          </div>
+          <div id="info-file-ext" class="setting-info" hidden>
+            Files with these extensions are treated as text and tracked for AI edits, on top of
+            the built-in list (<code>.ts</code>, <code>.py</code>, <code>.md</code>, …). Add one
+            when edits to a file type you use never open a diff. Applies to every repo you open.
+            <table class="info-examples">
+              <tr><th>Type</th><th>Tracks</th></tr>
+              <tr><td><code>.prisma</code></td><td><code>schema.prisma</code>, <code>db/user.prisma</code></td></tr>
+              <tr><td><code>tf</code></td><td>same as <code>.tf</code> — the leading dot is optional</td></tr>
+              <tr><td><code>.tf, .hcl</code></td><td>adds both at once</td></tr>
+            </table>
+            Type in the last row and press Enter; separate several with commas. Double-click a
+            row to edit it, select it and press Delete to remove it.
+          </div>
           <div class="file-ext-controls">
             <div class="file-ext-list">
               <table class="file-ext-table" aria-label="Custom file extensions">
@@ -942,7 +1039,51 @@ ${FONT_OPTIONS.map((f) => {
               <button id="btn-ext-edit" class="btn btn-secondary" type="button">Edit...</button>
               <button id="btn-ext-delete" class="btn btn-secondary" type="button">Delete</button>
             </div>
-            <div class="setting-help">New accepts one extension or multiple extensions separated by commas.</div>
+          </div>
+        </div>
+        <div class="field file-ext-field">
+          <div class="label-row">
+            <label>Excluded paths</label>
+            <button class="info-btn" type="button" data-info="info-excluded-paths" aria-expanded="false"
+              title="About excluded paths" aria-label="About excluded paths">${INFO_ICON_SVG}</button>
+          </div>
+          <div id="info-excluded-paths" class="setting-info" hidden>
+            Paths that are never tracked — no baseline, no diff. Uses <code>.gitignore</code>
+            syntax, matched relative to each workspace folder's root, so it never matches folders
+            outside the repo. Applies to every repo you open.
+            <table class="info-examples">
+              <tr><th>Pattern</th><th>Excludes</th></tr>
+              <tr><td><code>*.html</code></td><td>every <code>.html</code> file, at any depth</td></tr>
+              <tr><td><code>.omx</code></td><td>anything named exactly <code>.omx</code> (e.g. the <code>.omx/</code> folder), at any depth</td></tr>
+              <tr><td><code>generated/</code></td><td>every folder named <code>generated</code> and everything inside</td></tr>
+              <tr><td><code>/docs</code></td><td>only <code>docs</code> at the repo root — <code>src/docs</code> is still tracked</td></tr>
+              <tr><td><code>src/gen/**</code></td><td>everything under <code>src/gen</code>; <code>*</code> stays within one folder, <code>**</code> spans folders</td></tr>
+              <tr><td><code>*.log</code> + <code>!keep.log</code></td><td>every <code>.log</code> file except <code>keep.log</code></td></tr>
+            </table>
+            Watch out: <code>.html</code> on its own only matches something named exactly
+            <code>.html</code>. To exclude all HTML files, use <code>*.html</code>.
+            <br><br>
+            Adds to the built-in list (<code>node_modules</code>, <code>.git</code>,
+            <code>build</code>, <code>dist</code>, <code>out</code>, …), which cannot be re-included.
+            Diffs already open for a newly excluded file stay until you Accept or Reject them.
+            <br><br>
+            Type in the last row and press Enter; separate several with commas. Double-click a
+            row to edit it, select it and press Delete to remove it.
+          </div>
+          <div class="file-ext-controls">
+            <div class="file-ext-list">
+              <table class="file-ext-table" aria-label="Excluded paths">
+                <thead>
+                  <tr><th>Pattern</th></tr>
+                </thead>
+                <tbody id="excluded-path-body"></tbody>
+              </table>
+            </div>
+            <div class="file-ext-actions">
+              <button id="btn-excl-new" class="btn btn-secondary" type="button">New...</button>
+              <button id="btn-excl-edit" class="btn btn-secondary" type="button">Edit...</button>
+              <button id="btn-excl-delete" class="btn btn-secondary" type="button">Delete</button>
+            </div>
           </div>
         </div>
 
@@ -1068,7 +1209,7 @@ ${FONT_OPTIONS.map((f) => {
         return;
       }
 
-      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS })};
+      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS, ...DEFAULT_EXCLUSION_SETTINGS })};
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
       const termHost = document.getElementById('term-host');
@@ -1453,12 +1594,6 @@ ${FONT_OPTIONS.map((f) => {
           showError('PTY error: ' + msg.message);
         } else if (msg.type === 'settings') {
           applySettings(msg.settings);
-        } else if (msg.type === 'fileExtensionsPromptResult') {
-          if (msg.action === 'edit') {
-            applyEditedFileExtension(msg.previousValue, msg.value);
-          } else {
-            addFileExtensions(msg.value);
-          }
         } else if (msg.type === 'installProgress') {
           setInstallStatus(msg.message || 'Installing…', '');
         } else if (msg.type === 'installDone') {
@@ -1631,13 +1766,7 @@ ${FONT_OPTIONS.map((f) => {
       const fBurstThreshold = document.getElementById('f-burst-threshold');
       const fBurstHold = document.getElementById('f-burst-hold');
       const fMaxFileLines = document.getElementById('f-max-file-lines');
-      const fileExtBody = document.getElementById('file-ext-body');
-      const btnExtNew = document.getElementById('btn-ext-new');
-      const btnExtEdit = document.getElementById('btn-ext-edit');
-      const btnExtDelete = document.getElementById('btn-ext-delete');
       const customRows = document.querySelectorAll('.custom-only');
-      let fileExtensions = [];
-      let selectedFileExt = '';
 
       function parseFileExtensions(value) {
         const seen = new Set();
@@ -1653,64 +1782,203 @@ ${FONT_OPTIONS.map((f) => {
         return result;
       }
 
-      function renderFileExtensions() {
-        fileExtBody.innerHTML = '';
-        fileExtensions.forEach((ext) => {
-          const row = document.createElement('tr');
-          row.dataset.ext = ext;
-          row.className = ext === selectedFileExt ? 'selected' : '';
-          const cell = document.createElement('td');
-          cell.textContent = ext;
-          row.appendChild(cell);
-          row.addEventListener('click', () => {
-            selectedFileExt = ext;
-            renderFileExtensions();
+      // Pattern .gitignore: giữ nguyên hoa/thường, không tự thêm dấu chấm.
+      function parseExcludedPaths(value) {
+        const seen = new Set();
+        const result = [];
+        String(value || '').split(/[,\\n]/).forEach((part) => {
+          const trimmed = part.trim();
+          if (!trimmed || seen.has(trimmed)) return;
+          seen.add(trimmed);
+          result.push(trimmed);
+        });
+        return result;
+      }
+
+      // Bảng New/Edit/Delete dùng chung cho Custom file extensions và Excluded paths.
+      // Nhập trực tiếp trong bảng: dòng cuối luôn là ô thêm mới (Enter để thêm,
+      // nhiều mục cách nhau bằng dấu phẩy); double-click / Edit sửa ngay tại dòng.
+      function createListEditor(body, btnNew, btnEdit, btnDelete, parse, placeholder) {
+        let items = [];
+        let selected = '';
+        let editing = '';   // item đang sửa tại chỗ, '' = không sửa
+        let addInput;
+
+        function add(raw) {
+          const additions = parse(raw);
+          if (!additions.length) return;
+          const seen = new Set(items);
+          additions.forEach((item) => {
+            if (!seen.has(item)) {
+              seen.add(item);
+              items.push(item);
+            }
           });
-          row.addEventListener('dblclick', () => editSelectedFileExtension());
-          fileExtBody.appendChild(row);
-        });
-        const hasSelection = fileExtensions.includes(selectedFileExt);
-        btnExtEdit.disabled = !hasSelection;
-        btnExtDelete.disabled = !hasSelection;
-      }
-
-      function setFileExtensions(values) {
-        fileExtensions = parseFileExtensions(Array.isArray(values) ? values.join('\\n') : '');
-        if (!fileExtensions.includes(selectedFileExt)) {
-          selectedFileExt = fileExtensions[0] || '';
+          selected = additions[additions.length - 1];
         }
-        renderFileExtensions();
-      }
 
-      function addFileExtensions(raw) {
-        const additions = parseFileExtensions(raw);
-        if (!additions.length) return;
-        const seen = new Set(fileExtensions);
-        additions.forEach((ext) => {
-          if (!seen.has(ext)) {
-            seen.add(ext);
-            fileExtensions.push(ext);
+        function applyEdit(previousValue, nextValue) {
+          if (!items.includes(previousValue)) return;
+          const next = parse(nextValue)[0];
+          if (!next) return;
+          const idx = items.indexOf(previousValue);
+          items = items.filter((item) => item !== previousValue && item !== next);
+          items.splice(Math.min(idx, items.length), 0, next);
+          selected = next;
+        }
+
+        // Ô nhập trong bảng. onCommit chạy đúng một lần (Enter hoặc rời ô);
+        // Escape huỷ. stopPropagation để phím không lọt xuống terminal/overlay.
+        function createCellInput(value, onCommit, onCancel) {
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'list-cell-input';
+          input.spellcheck = false;
+          input.value = value;
+          let done = false;
+          const finish = (commit) => {
+            if (done) return;
+            done = true;
+            if (commit) { onCommit(input.value); } else { onCancel(); }
+          };
+          input.addEventListener('keydown', (event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              finish(true);
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              finish(false);
+            }
+          });
+          input.addEventListener('blur', () => finish(true));
+          return input;
+        }
+
+        function render(focus) {
+          body.innerHTML = '';
+          items.forEach((item) => {
+            const row = document.createElement('tr');
+            row.className = item === selected ? 'selected' : '';
+            const cell = document.createElement('td');
+            if (item === editing) {
+              const input = createCellInput(
+                item,
+                (value) => { editing = ''; applyEdit(item, value); render(); },
+                () => { editing = ''; render(); }
+              );
+              cell.appendChild(input);
+              if (focus === 'edit') {
+                setTimeout(() => { input.focus(); input.select(); }, 0);
+              }
+            } else {
+              cell.textContent = item;
+              cell.title = item;
+              row.addEventListener('click', () => {
+                if (selected === item) return;
+                selected = item;
+                render();
+              });
+              row.addEventListener('dblclick', () => startEdit(item));
+            }
+            row.appendChild(cell);
+            body.appendChild(row);
+          });
+
+          const addRow = document.createElement('tr');
+          addRow.className = 'list-add-row';
+          const addCell = document.createElement('td');
+          addInput = createCellInput(
+            '',
+            (value) => {
+              const isEnter = document.activeElement === addInput;
+              // Rời ô trống thì không render lại — tránh dựng lại bảng ngay lúc
+              // người dùng đang click chọn một dòng khác.
+              if (!value.trim() && !isEnter) return;
+              add(value);
+              // Enter thì giữ con trỏ ở ô thêm mới để gõ tiếp mục sau.
+              render(isEnter ? 'add' : undefined);
+            },
+            () => render()
+          );
+          addInput.placeholder = placeholder;
+          addCell.appendChild(addInput);
+          addRow.appendChild(addCell);
+          body.appendChild(addRow);
+          if (focus === 'add') {
+            setTimeout(() => addInput.focus(), 0);
           }
+
+          const hasSelection = items.includes(selected);
+          btnEdit.disabled = !hasSelection;
+          btnDelete.disabled = !hasSelection;
+        }
+
+        function startEdit(item) {
+          if (!items.includes(item)) return;
+          selected = item;
+          editing = item;
+          render('edit');
+        }
+
+        btnNew.addEventListener('click', () => addInput.focus());
+        btnEdit.addEventListener('click', () => startEdit(selected));
+        btnDelete.addEventListener('click', () => {
+          if (!items.includes(selected)) return;
+          const idx = items.indexOf(selected);
+          items = items.filter((item) => item !== selected);
+          selected = items[Math.min(idx, items.length - 1)] || '';
+          render();
         });
-        selectedFileExt = additions[additions.length - 1];
-        renderFileExtensions();
+
+        return {
+          // Mục đang gõ dở (chưa Enter) vẫn được tính khi bấm Apply.
+          get: () => {
+            if (addInput && addInput.value.trim()) {
+              add(addInput.value);
+              addInput.value = '';
+            }
+            return items.slice();
+          },
+          set(values) {
+            items = parse(Array.isArray(values) ? values.join('\\n') : '');
+            editing = '';
+            if (!items.includes(selected)) {
+              selected = items[0] || '';
+            }
+            render();
+          },
+        };
       }
 
-      function editSelectedFileExtension() {
-        if (!fileExtensions.includes(selectedFileExt)) return;
-        vscode.postMessage({ type: 'promptFileExtensions', action: 'edit', value: selectedFileExt });
-      }
+      const listEditors = {
+        fileExtensions: createListEditor(
+          document.getElementById('file-ext-body'),
+          document.getElementById('btn-ext-new'),
+          document.getElementById('btn-ext-edit'),
+          document.getElementById('btn-ext-delete'),
+          parseFileExtensions,
+          'Type an extension, e.g. .prisma, and press Enter'
+        ),
+        excludedPaths: createListEditor(
+          document.getElementById('excluded-path-body'),
+          document.getElementById('btn-excl-new'),
+          document.getElementById('btn-excl-edit'),
+          document.getElementById('btn-excl-delete'),
+          parseExcludedPaths,
+          '*.html'
+        ),
+      };
 
-      function applyEditedFileExtension(previousValue, nextValue) {
-        if (!fileExtensions.includes(previousValue)) return;
-        const next = parseFileExtensions(nextValue)[0];
-        if (!next) return;
-        const idx = fileExtensions.indexOf(previousValue);
-        fileExtensions = fileExtensions.filter((ext) => ext !== previousValue && ext !== next);
-        fileExtensions.splice(Math.min(idx, fileExtensions.length), 0, next);
-        selectedFileExt = next;
-        renderFileExtensions();
-      }
+      // Nút "i" cạnh tiêu đề setting: mở/đóng khung mô tả ngay bên dưới.
+      document.querySelectorAll('.info-btn[data-info]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const panel = document.getElementById(btn.dataset.info);
+          if (!panel) return;
+          panel.hidden = !panel.hidden;
+          btn.setAttribute('aria-expanded', String(!panel.hidden));
+        });
+      });
 
       function populateForm(s) {
         fFontFamily.value = s.fontFamily;
@@ -1736,7 +2004,8 @@ ${FONT_OPTIONS.map((f) => {
         fCursorStyle.value = s.cursorStyle;
         fCursorBlink.checked = s.cursorBlink;
         fSoundNotifications.checked = s.soundNotificationsEnabled;
-        setFileExtensions(s.supportedFileExtensions);
+        listEditors.fileExtensions.set(s.supportedFileExtensions);
+        listEditors.excludedPaths.set(s.excludedPaths);
         fBurstEnabled.checked = s.burstDetectionEnabled;
         fBurstWindow.value = String(s.burstDetectionWindowMs);
         fBurstThreshold.value = String(s.burstDetectionThreshold);
@@ -1768,13 +2037,14 @@ ${FONT_OPTIONS.map((f) => {
           cursorStyle: fCursorStyle.value,
           cursorBlink: !!fCursorBlink.checked,
           soundNotificationsEnabled: !!fSoundNotifications.checked,
-          supportedFileExtensions: fileExtensions.slice(),
+          supportedFileExtensions: listEditors.fileExtensions.get(),
           burstDetectionEnabled: !!fBurstEnabled.checked,
           burstDetectionWindowMs: isFinite(burstWindow) ? Math.min(5000, Math.max(50, burstWindow)) : DEFAULTS.burstDetectionWindowMs,
           burstDetectionThreshold: isFinite(burstThreshold) ? Math.min(500, Math.max(2, burstThreshold)) : DEFAULTS.burstDetectionThreshold,
           burstDetectionHoldMs: isFinite(burstHold) ? Math.min(10000, Math.max(500, burstHold)) : DEFAULTS.burstDetectionHoldMs,
           // 0 = tắt giới hạn, nên chặn dưới là 0 chứ không phải một mức tối thiểu.
           maxFileLines: isFinite(maxFileLines) ? Math.min(200000, Math.max(0, maxFileLines)) : DEFAULTS.maxFileLines,
+          excludedPaths: listEditors.excludedPaths.get(),
         };
       }
 
@@ -1841,17 +2111,6 @@ ${FONT_OPTIONS.map((f) => {
         const next = readForm();
         vscode.postMessage({ type: 'updateSettings', settings: next });
         overlay.hidden = true;
-      });
-      btnExtNew.addEventListener('click', () => {
-        vscode.postMessage({ type: 'promptFileExtensions', action: 'new' });
-      });
-      btnExtEdit.addEventListener('click', editSelectedFileExtension);
-      btnExtDelete.addEventListener('click', () => {
-        if (!fileExtensions.includes(selectedFileExt)) return;
-        const idx = fileExtensions.indexOf(selectedFileExt);
-        fileExtensions = fileExtensions.filter((ext) => ext !== selectedFileExt);
-        selectedFileExt = fileExtensions[Math.min(idx, fileExtensions.length - 1)] || '';
-        renderFileExtensions();
       });
       fFontFamily.addEventListener('change', updateInstallRow);
       fPreset.addEventListener('change', toggleCustomRows);

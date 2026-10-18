@@ -32,8 +32,13 @@ export interface FileLimitSettings {
   maxFileLines: number;
 }
 
+/** User-configured path exclusions. See `src/watcher/pathExclusions.ts`. */
+export interface ExclusionSettings {
+  excludedPaths: string[];
+}
+
 export interface TerminalSettingsPayload
-  extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings, FileLimitSettings {
+  extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings, FileLimitSettings, ExclusionSettings {
   supportedFileExtensions: string[];
 }
 
@@ -52,6 +57,10 @@ export const DEFAULT_FILE_LIMIT_SETTINGS: FileLimitSettings = {
   maxFileLines: 5000,
 };
 
+export const DEFAULT_EXCLUSION_SETTINGS: ExclusionSettings = {
+  excludedPaths: [],
+};
+
 /** 0 = tắt giới hạn. Trần trên chỉ để chặn nhập nhầm, không phải khuyến nghị. */
 export const MAX_FILE_LINES_CEILING = 200000;
 
@@ -66,7 +75,6 @@ export type IncomingMessage =
   | { type: 'restart'; id: string }
   | { type: 'getSettings' }
   | { type: 'updateSettings'; settings: TerminalSettingsPayload }
-  | { type: 'promptFileExtensions'; action: 'new' | 'edit'; value?: string }
   | { type: 'installFont'; primary: string }
   | { type: 'reloadWindow' }
   | { type: 'openFile'; path: string }

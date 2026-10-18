@@ -1,9 +1,11 @@
 node_modules/
-out/*
-!out/
-!out/**
+out/
 *.vsix
 .vscode-test/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
 
 *.js.map
 *.d.ts.map
