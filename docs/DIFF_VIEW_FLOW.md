@@ -71,7 +71,7 @@ WorkspaceWatcher.start()
        ↓ onDidChange / onDidCreate
          handleExternalWrite(uri):
          - skip nếu isExcludedPathSegment (node_modules, bin/obj, ... + setting
-           excludedPathSegments / excludedPathPatterns của người dùng)
+           excludedPaths kiểu .gitignore; xét trên đường dẫn tương đối trong repo)
          - skip nếu vừa save bởi VS Code (< 2s)
          - debounce per-file 500ms
          - skip nếu không phải text file hoặc ngoài workspace

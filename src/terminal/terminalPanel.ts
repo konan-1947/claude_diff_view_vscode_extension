@@ -311,32 +311,25 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private loadExclusionSettings(): ExclusionSettings {
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
     return {
-      excludedPathSegments: this.normalizeExclusionList(
-        config.get<string[]>('excludedPathSegments', DEFAULT_EXCLUSION_SETTINGS.excludedPathSegments)
-      ),
-      excludedPathPatterns: this.normalizeExclusionList(
-        config.get<string[]>('excludedPathPatterns', DEFAULT_EXCLUSION_SETTINGS.excludedPathPatterns)
+      excludedPaths: this.normalizeExclusionList(
+        config.get<string[]>('excludedPaths', DEFAULT_EXCLUSION_SETTINGS.excludedPaths)
       ),
     };
   }
 
   private async saveExclusionSettings(incoming: Partial<ExclusionSettings>): Promise<void> {
+    const next = this.normalizeExclusionList(incoming.excludedPaths);
+    const current = this.loadExclusionSettings().excludedPaths;
+    // Every write fires onDidChangeConfiguration → baseline rescan, so skip the
+    // update when Apply was pressed for some unrelated setting.
+    if (next.length === current.length && next.every((entry, i) => entry === current[i])) {
+      return;
+    }
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
-    await Promise.all([
-      config.update(
-        'excludedPathSegments',
-        this.normalizeExclusionList(incoming.excludedPathSegments),
-        vscode.ConfigurationTarget.Global
-      ),
-      config.update(
-        'excludedPathPatterns',
-        this.normalizeExclusionList(incoming.excludedPathPatterns),
-        vscode.ConfigurationTarget.Global
-      ),
-    ]);
+    await config.update('excludedPaths', next, vscode.ConfigurationTarget.Global);
   }
 
-  /** Trim, drop empty entries and duplicates. Glob compilation is left to `pathExclusions.ts`. */
+  /** Trim, drop empty entries and duplicates. Pattern parsing is left to `pathExclusions.ts`. */
   private normalizeExclusionList(values: unknown): string[] {
     if (!Array.isArray(values)) {
       return [];
@@ -657,28 +650,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
         case 'reloadWindow':
           void vscode.commands.executeCommand('workbench.action.reloadWindow');
           return;
-        case 'promptFileExtensions': {
-          const isEdit = msg.action === 'edit';
-          void vscode.window.showInputBox({
-            title: isEdit ? 'Edit file extension' : 'New file extension',
-            prompt: isEdit
-              ? 'Enter one file extension.'
-              : 'Enter one extension or multiple extensions separated by commas.',
-            value: isEdit && typeof msg.value === 'string' ? msg.value : '',
-            placeHolder: isEdit ? '.env' : '.env, .blade.php, .proto',
-          }).then((value) => {
-            if (typeof value !== 'string') {
-              return;
-            }
-            this.webview?.postMessage({
-              type: 'fileExtensionsPromptResult',
-              action: msg.action,
-              previousValue: msg.value,
-              value,
-            });
-          });
-          return;
-        }
         case 'updateSettings': {
           const next = this.loadSettings();
           const incoming = msg.settings ?? next;

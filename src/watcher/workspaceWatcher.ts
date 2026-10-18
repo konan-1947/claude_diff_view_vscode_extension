@@ -130,19 +130,23 @@ export class WorkspaceWatcher {
   }
 
   /**
-   * Called when the user changes `excludedPathSegments` / `excludedPathPatterns`.
+   * Called when the user changes `excludedPaths`.
    *
    * A file that was excluded has NO baseline, so refreshing the rules without
-   * rebuilding would send its next write down the `oldContent === undefined`
+   * rescanning would send its next write down the `oldContent === undefined`
    * branch → the whole file shows up as "added", and Revert all on that diff
    * would delete it. Same failure mode that `BaselineStore.sizeSkipped` already
    * guards against for `maxFileLines`.
    *
-   * Uses a short suppress window (1000ms) instead of the 5000ms default: the
-   * user just changed a setting, there is no fs burst to swallow.
+   * Deliberately NOT `notifyExternalBatch()`: that wipes every baseline, drops
+   * burst-held AI writes and suppresses diffs as if git had just run. Here the
+   * scanner only fills in files that have no baseline yet (`snapshotFile`
+   * skips any path `hasState`), and writes arriving mid-scan are queued as usual.
    */
   rebuildBaselineAfterRuleChange(): void {
-    this.notifyExternalBatch(1000);
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      void this.watchFolder(folder.uri.fsPath);
+    }
   }
 
   private normalizePath(p: string): string {

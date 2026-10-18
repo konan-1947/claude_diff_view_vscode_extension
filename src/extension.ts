@@ -161,8 +161,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       if (e.affectsConfiguration('ai-cli-diff-view.maxFileLines')) {
         refreshFileSizeLimit();
       }
-      if (e.affectsConfiguration('ai-cli-diff-view.excludedPathSegments') ||
-          e.affectsConfiguration('ai-cli-diff-view.excludedPathPatterns')) {
+      if (e.affectsConfiguration('ai-cli-diff-view.excludedPaths')) {
         refreshPathExclusions();
         // Files that were excluded during the initial scan have no baseline, so
         // dropping an exclusion would make them look brand new — and Revert all

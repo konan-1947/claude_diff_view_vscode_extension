@@ -82,7 +82,8 @@ The watcher must also handle:
 
 - text-file rules from `fileTypeRules.ts`;
 - excluded path segments from `pathExclusions.ts`, including the
-  user-configured `excludedPathSegments` / `excludedPathPatterns`;
+  user-configured `.gitignore`-style `excludedPaths`, all matched on the path
+  relative to its workspace folder;
 - line and byte limits from `fileSizeLimit.ts`;
 - edits arriving while the initial baseline scan is still running;
 - VS Code's own save event without creating a duplicate diff;
@@ -130,11 +131,12 @@ Contributed settings are defined in `package.json`:
   text files.
 - `maxFileLines` skips files that are too large for safe diffing; `0` disables
   the limit.
-- `excludedPathSegments` and `excludedPathPatterns` add ignore rules on top of
-  the built-in list in `pathExclusions.ts`. Segment entries match whole path
-  components; pattern entries are globs matched against the whole path, where
-  `*` does not cross a `/` and `**` does. Both match at any depth, so patterns
-  are not anchored to the workspace root.
+- `excludedPaths` adds `.gitignore`-syntax rules (via the `ignore` package) on
+  top of the built-in list in `pathExclusions.ts`. Both the built-in list and
+  these rules are matched on the path relative to its workspace folder, so
+  folders above the repo never count. Changing the setting rescans only files
+  that have no baseline yet (`rebuildBaselineAfterRuleChange()`), not a full
+  `notifyExternalBatch()`.
 - `baselineScanConcurrency` controls initial scan concurrency.
 - `burstDetectionEnabled`, `burstDetectionWindowMs`,
   `burstDetectionThreshold`, and `burstDetectionHoldMs` control Git/batch-write

@@ -34,8 +34,7 @@ export interface FileLimitSettings {
 
 /** User-configured path exclusions. See `src/watcher/pathExclusions.ts`. */
 export interface ExclusionSettings {
-  excludedPathSegments: string[];
-  excludedPathPatterns: string[];
+  excludedPaths: string[];
 }
 
 export interface TerminalSettingsPayload
@@ -59,8 +58,7 @@ export const DEFAULT_FILE_LIMIT_SETTINGS: FileLimitSettings = {
 };
 
 export const DEFAULT_EXCLUSION_SETTINGS: ExclusionSettings = {
-  excludedPathSegments: [],
-  excludedPathPatterns: [],
+  excludedPaths: [],
 };
 
 /** 0 = tắt giới hạn. Trần trên chỉ để chặn nhập nhầm, không phải khuyến nghị. */
@@ -77,7 +75,6 @@ export type IncomingMessage =
   | { type: 'restart'; id: string }
   | { type: 'getSettings' }
   | { type: 'updateSettings'; settings: TerminalSettingsPayload }
-  | { type: 'promptFileExtensions'; action: 'new' | 'edit'; value?: string }
   | { type: 'installFont'; primary: string }
   | { type: 'reloadWindow' }
   | { type: 'openFile'; path: string }

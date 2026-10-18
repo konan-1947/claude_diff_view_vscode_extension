@@ -67,21 +67,13 @@
           "minimum": 0,
           "markdownDescription": "Advanced: ignore files longer than this many lines — no baseline is kept and no diff tab ever opens for them. Set to `0` to disable the limit.\n\nDiff cost grows with the **square** of how many lines differ, so a large file that gets largely rewritten can block VS Code for seconds. Files that big are also almost always generated code, bundles or lock files rather than something reviewed hunk by hunk.\n\nWhy 5000: measured across `microsoft/vscode`, 99.8% of source files fall under it (median ~112 lines, p99 ~1980). Raise it if you genuinely review very large hand-written files — the TypeScript compiler's `checker.ts` is 54,433 lines — and accept that opening such a diff may stall the editor."
         },
-        "ai-cli-diff-view.excludedPathSegments": {
+        "ai-cli-diff-view.excludedPaths": {
           "type": "array",
           "default": [],
           "items": {
             "type": "string"
           },
-          "markdownDescription": "Additional path segments to ignore, matched against whole path components at any depth. `myvendor` skips `<root>/myvendor/…` and `<root>/src/myvendor/…`.\n\nUse `ai-cli-diff-view.excludedPathPatterns` instead if your entry contains a path separator."
-        },
-        "ai-cli-diff-view.excludedPathPatterns": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "markdownDescription": "Additional path globs to ignore. Matched against the whole path with `/` separators; `*` does not cross a `/` while `**` does. e.g. `src/generated/**`, `**/*.min.js`, `packages/*/dist/**`.\n\nPatterns are matched at any depth, so `src/generated/**` also covers `<root>/packages/foo/src/generated/…` — they are not anchored to the workspace root.\n\nFiles matching either excluded setting get no baseline and never open a diff. Changing these settings rebuilds the baseline, so already-open pending diffs for a newly excluded path stay open until you resolve them."
+          "markdownDescription": "Paths that are never tracked — no baseline, no diff. Uses `.gitignore` syntax, one pattern per entry, matched relative to each workspace folder's root (never against folders outside the repo):\n\n- `generated` — any file or folder named `generated`, at any depth\n- `/generated` — only `generated` at the repo root\n- `generated/` — only folders named `generated`\n- `*.log`, `src/gen/**` — `*` stays within one folder, `**` spans folders\n- `!keep.log` — re-include something an earlier entry excluded\n\nAdds to the built-in list (`node_modules`, `.git`, `build`, `dist`, `out`, …), which cannot be re-included. Diffs already open for a newly excluded file stay until you resolve them."
         },
         "ai-cli-diff-view.baselineScanConcurrency": {
           "type": "number",
@@ -266,6 +258,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "diff": "^9.0.0",
+    "ignore": "^7.0.12",
     "material-icon-theme": "^5.32.0",
     "monaco-editor": "^0.49.0",
     "node-pty": "^1.2.0-beta.13"
