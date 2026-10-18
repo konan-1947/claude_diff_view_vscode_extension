@@ -136,7 +136,7 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
 <style>
   * { box-sizing: border-box; }
   html, body { height: 100%; }
-  body { margin: 0; padding: 5px 0; overflow: auto; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: 12px var(--vscode-font-family); }
+  body { margin: 0; padding: 5px 0; overflow-x: hidden; overflow-y: auto; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: 12px var(--vscode-font-family); }
   .panel-header { min-height: 30px; display: flex; align-items: center; gap: 3px; padding: 2px 5px 6px; border-bottom: 1px solid var(--vscode-panel-border); }
   .panel-header button { height: 23px; padding: 0 5px; color: var(--vscode-icon-foreground); background: transparent; border: 0; border-radius: 3px; cursor: pointer; font: inherit; }
   .panel-header button:hover { background: var(--vscode-toolbar-hoverBackground); }
@@ -165,7 +165,8 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
   .folder-block:hover > .folder-children::before { opacity: .28; }
   .file { border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; font: inherit; }
   .file:hover { background: var(--vscode-list-hoverBackground); }
-  .file.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+  .file.active { background: var(--vscode-list-inactiveSelectionBackground); color: var(--vscode-list-inactiveSelectionForeground, inherit); font-weight: 600; }
+  body:focus-within .file.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
   .icon { width: 16px; height: 16px; flex: 0 0 16px; object-fit: contain; }
   .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stats { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; white-space: nowrap; font-size: 11px; }

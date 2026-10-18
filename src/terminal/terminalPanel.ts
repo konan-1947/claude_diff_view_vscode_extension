@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { PtySession } from './ptySession';
 import { findInstallableForPrimary, installFont } from './fontInstaller';
 import { DiffManager } from '../diff/diffManager';
+import { sortLikePendingTree } from '../diff/treeOrder';
 import {
   buildPendingFilesInnerHtml,
   SessionState,
@@ -161,6 +162,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     }
     this.diffPreviewOpen = false;
     this._onDidChangePreviewVisibility.fire(false);
+    // Not a pending file: clear the pending-files highlight left by the previous file.
+    this._onDidChangePreviewActiveFile.fire(undefined);
     this.filePreviewOpen = true;
     this.filePreviewPath = filePath;
     if (this.webview) {
@@ -796,7 +799,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     if (!this.webview || !this.diffPreviewOpen) {
       return;
     }
-    const files = this.diffManager.getPendingFiles().map((filePath) => ({
+    const files = sortLikePendingTree(this.diffManager.getPendingFiles()).map((filePath) => ({
       path: filePath,
       label: this.displayPath(filePath),
     }));

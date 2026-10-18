@@ -1674,12 +1674,9 @@ ${FONT_OPTIONS.map((f) => {
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && (!diffPreviewOverlay.hidden || !filePreviewOverlay.hidden)) closeActivePreview();
       });
-      // A VS Code webview does not receive a DOM click when the user clicks
-      // another view (Explorer/sidebar). Treat focus leaving the terminal as
-      // an outside click so the preview does not remain stuck open.
-      window.addEventListener('blur', () => {
-        if (!diffPreviewOverlay.hidden || !filePreviewOverlay.hidden) closeActivePreview();
-      });
+      // Focus leaving this webview (Explorer/Pending Files click) deliberately
+      // does not close a preview. The host replaces it when the click opens a
+      // file; closing on blur only exposed the terminal until that arrived.
       filePreviewOverlay.addEventListener('click', (event) => {
         if (event.target === filePreviewOverlay) closeFilePreview();
       });

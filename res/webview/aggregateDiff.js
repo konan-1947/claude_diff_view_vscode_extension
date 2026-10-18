@@ -80,6 +80,8 @@
   }
 
   function renderFileList(metadata) {
+    // A reply to an earlier request can land after close() nulled the observer.
+    ensureObserver();
     const incoming = new Set(metadata.map((item) => item.path));
     for (const [filePath, state] of files) {
       if (!incoming.has(filePath)) {
@@ -102,6 +104,17 @@
       if (fileList) { fileList.appendChild(createFileLink(state)); }
     }
 
+    // Sections arrive in the order files first appeared; keep them in the same
+    // order as the Pending Files tree. Only touch the DOM when it differs.
+    const sections = metadata.map((item) => files.get(item.path)?.section).filter(Boolean);
+    const current = Array.from(content.children).filter((child) => child !== status);
+    const inOrder = sections.every((section, index) => current[index] === section);
+    if (!inOrder) {
+      const scrollTop = content.scrollTop;
+      sections.forEach((section) => content.appendChild(section));
+      content.scrollTop = scrollTop;
+    }
+
     updateSummary();
     updateToggleAllLabel();
     if (metadata.length === 0) {
@@ -122,8 +135,7 @@
     if (pendingTargetPath) {
       const target = files.get(pendingTargetPath);
       if (target) {
-        target.section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        setActive(target);
+        scrollToFile(target);
         requestFile(pendingTargetPath);
       }
       pendingTargetPath = null;
@@ -224,9 +236,8 @@
     stats.innerHTML = statsText(state);
     link.append(name, stats);
     link.addEventListener('click', () => {
-      state.section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrollToFile(state);
       requestFile(state.meta.path);
-      setActive(state);
     });
     return link;
   }
@@ -606,6 +617,46 @@
     toggleAll.title = toggleAll.textContent;
   }
 
+  // Sections load lazily and change height as they do, so a smooth scroll to a
+  // far file lands on a stale offset. Jump instantly, then keep re-aligning the
+  // target while layout settles; any user scroll input releases the pin.
+  let pinnedState = null;
+  let pinResizeObserver = null;
+  let pinTimer = null;
+
+  function releasePin() {
+    pinnedState = null;
+    if (pinResizeObserver) { pinResizeObserver.disconnect(); pinResizeObserver = null; }
+    if (pinTimer) { clearTimeout(pinTimer); pinTimer = null; }
+    content.removeEventListener('wheel', releasePin);
+    content.removeEventListener('touchstart', releasePin);
+    content.removeEventListener('mousedown', releasePin);
+    content.removeEventListener('keydown', releasePin);
+  }
+
+  function scrollToFile(state) {
+    releasePin();
+    pinnedState = state;
+    setActive(state);
+    const align = () => {
+      if (pinnedState !== state) { return; }
+      const delta = state.section.getBoundingClientRect().top - content.getBoundingClientRect().top;
+      if (Math.abs(delta) > 1) { content.scrollTop += delta; }
+    };
+    align();
+    const restartTimer = () => {
+      if (pinTimer) { clearTimeout(pinTimer); }
+      pinTimer = setTimeout(releasePin, 1200);
+    };
+    pinResizeObserver = new ResizeObserver(() => { align(); restartTimer(); });
+    for (const candidate of files.values()) { pinResizeObserver.observe(candidate.section); }
+    content.addEventListener('wheel', releasePin, { passive: true });
+    content.addEventListener('touchstart', releasePin, { passive: true });
+    content.addEventListener('mousedown', releasePin);
+    content.addEventListener('keydown', releasePin);
+    restartTimer();
+  }
+
   function setActive(state) {
     if (activePath !== state.meta.path) {
       activePath = state.meta.path;
@@ -664,7 +715,7 @@
         state.nearViewport = entry.isIntersecting;
         if (entry.isIntersecting) {
           requestFile(entry.target.dataset.path);
-          setActive(state);
+          if (!pinnedState) { setActive(state); }
           if (state.data && !state.editor) {
             ensureMonaco().then((monaco) => mountEditor(monaco, state));
           }

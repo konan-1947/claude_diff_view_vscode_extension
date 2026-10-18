@@ -91,12 +91,24 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   let agentModePanel: vscode.WebviewPanel | undefined;
   let agentModeTerminal: TerminalPanelProvider | undefined;
   let agentModeTabsState: AgentModeTabsState | undefined;
+  // Explorer only follows the active text editor, and agent mode hides those,
+  // so select the file there explicitly and then hand focus back to the agent.
+  const revealInExplorerKeepingFocus = async (filePath: string): Promise<void> => {
+    try {
+      await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(filePath));
+      agentModePanel?.reveal(undefined, false);
+    } catch {
+      // Explorer unavailable (e.g. file outside workspace); highlight sync is best-effort.
+    }
+  };
   const agentChangesPanel = new AgentChangesPanel(
     context.extensionUri,
     diffManager,
     (filePath) => {
       if (agentModeActive) {
-        return !!agentModeTerminal?.openPendingFileInAgent(filePath);
+        const opened = !!agentModeTerminal?.openPendingFileInAgent(filePath);
+        if (opened) { void revealInExplorerKeepingFocus(filePath); }
+        return opened;
       }
       void diffManager.openDiff(filePath);
       return true;
