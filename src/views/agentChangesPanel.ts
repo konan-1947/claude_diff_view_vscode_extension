@@ -110,7 +110,7 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     const metadata = this.active ? await this.diffManager.getDiffPreviewMetadata() : [];
     if (generation !== this.generation) { return; }
     this.root = this.createTree(metadata);
-    if (this.activeFilePath && !metadata.some((file) => file.filePath === this.activeFilePath)) {
+    if (this.activeFilePath && !metadata.some((file) => isSameFile(file.filePath, this.activeFilePath))) {
       this.activeFilePath = undefined;
     }
     this.render();
@@ -201,7 +201,7 @@ ${rows || '<div class="empty">No pending changes</div>'}
         return `<div class="folder-block"><button class="row folder" data-folder-toggle="true" style="padding-left:${8 + depth * 8}px"><span class="chevron" aria-hidden="true"></span><span>${escapeHtml(child.label)}</span></button><div class="folder-children" style="--tree-depth:${depth}">${this.renderChildren(child.children, depth + 1, iconBase)}</div></div>`;
       }
       const metadata = child.metadata;
-      const active = metadata.filePath === this.activeFilePath ? ' active' : '';
+      const active = isSameFile(metadata.filePath, this.activeFilePath) ? ' active' : '';
       const icon = `${iconBase}${this.fileIconName(metadata.filePath)}`;
       const stats = metadata.hunks === 0
         ? '<span class="hunks">empty</span>'
@@ -304,6 +304,12 @@ ${rows || '<div class="empty">No pending changes</div>'}
     this.diffDisposable.dispose();
     this.viewMessageDisposable?.dispose();
   }
+}
+
+/** Windows paths are case-insensitive: Explorer and pending metadata may differ only in case. */
+function isSameFile(a: string, b: string | undefined): boolean {
+  if (b === undefined) { return false; }
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 function escapeHtml(value: string): string {

@@ -10,6 +10,8 @@ import {
   SessionState,
 } from './pendingFilesPage';
 import { buildTerminalHtml } from './terminalHtml';
+import { openBeside } from '../preview/openBeside';
+import { getPreviewKind, isBinaryImage } from '../preview/previewKind';
 import { applySoundNotifications } from '../commands/soundNotifications';
 import {
   BurstDetectionSettings,
@@ -31,6 +33,7 @@ import {
 
 const SETTINGS_KEY = 'ai-cli-diff-view.terminal.settings';
 const INTRODUCE_SEEN_KEY = 'ai-cli-diff-view.introduce.seen';
+const MAX_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024;
 
 interface SessionRecord {
   pty: PtySession;
@@ -142,15 +145,17 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     if (!this.agentModeActive || !this.diffManager.hasPendingDiff(filePath)) {
       return false;
     }
+    // Explorer may spell the path with another case; use the one the pending list shows.
+    const displayPath = this.diffManager.getDisplayPath(filePath);
     this.filePreviewOpen = false;
     this.filePreviewPath = undefined;
     this.diffPreviewOpen = true;
     this._onDidChangePreviewVisibility.fire(true);
-    this._onDidChangePreviewActiveFile.fire(filePath);
+    this._onDidChangePreviewActiveFile.fire(displayPath);
     if (this.webview) {
-      void this.webview.postMessage({ type: 'showDiffPreview', path: filePath });
+      void this.webview.postMessage({ type: 'showDiffPreview', path: displayPath });
     } else {
-      this.pendingAgentFilePath = filePath;
+      this.pendingAgentFilePath = displayPath;
     }
     return true;
   }
@@ -562,10 +567,15 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
     const monacoDir = vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'monaco-editor', 'min');
     const webviewDir = vscode.Uri.joinPath(this.context.extensionUri, 'res', 'webview');
+    const previewLibDirs = ['marked', 'dompurify', 'mermaid'].map((name) => (
+      vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', name)
+    ));
+    // Workspace folders let the preview load relative images of a markdown file and image files.
+    const workspaceDirs = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri);
 
     webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir, iconsDir, introDir, monacoDir, webviewDir],
+      localResourceRoots: [xtermDir, iconsDir, introDir, monacoDir, webviewDir, ...previewLibDirs, ...workspaceDirs],
     };
 
     this.webviewMessageDisposable?.dispose();
@@ -766,6 +776,11 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.postFilePreviewError(msg.path, err);
           });
           return;
+        case 'filePreviewOpenBeside':
+          void openBeside(msg.path).catch((err: unknown) => {
+            void vscode.window.showErrorMessage(`Could not open file beside: ${err instanceof Error ? err.message : String(err)}`);
+          });
+          return;
         case 'requestDiffPreviewFile':
           void this.postDiffPreviewFile(msg.path);
           return;
@@ -869,17 +884,55 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private async postFilePreview(filePath: string): Promise<void> {
     if (!this.webview || !this.filePreviewOpen) { return; }
     const uri = vscode.Uri.file(filePath);
+    const kind = getPreviewKind(filePath);
+    const label = this.displayPath(filePath);
+    const theme = currentMonacoTheme();
+
+    if (isBinaryImage(filePath)) {
+      const stat = await vscode.workspace.fs.stat(uri);
+      if (!this.webview || !this.filePreviewOpen) { return; }
+      if (stat.size > MAX_IMAGE_PREVIEW_BYTES) {
+        throw new Error(`Image is too large to preview (${(stat.size / 1048576).toFixed(1)} MB)`);
+      }
+      this.assertInWorkspace(uri);
+      void this.webview.postMessage({
+        type: 'filePreviewData', kind, path: filePath, label, theme,
+        src: this.webview.asWebviewUri(uri).toString(),
+        size: stat.size,
+      });
+      return;
+    }
+
     const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.fsPath === filePath);
     const document = openDocument ?? await vscode.workspace.openTextDocument(uri);
     if (!this.webview || !this.filePreviewOpen) { return; }
-    void this.webview.postMessage({
+    const payload: Record<string, unknown> = {
       type: 'filePreviewData',
+      kind,
       path: filePath,
-      label: this.displayPath(filePath),
+      label,
       content: document.getText(),
       language: document.languageId,
-      theme: currentMonacoTheme(),
-    });
+      theme,
+    };
+    if (kind === 'image' || kind === 'markdown') {
+      // Webview URIs only resolve inside localResourceRoots; outside the workspace they would 404.
+      const inWorkspace = !!vscode.workspace.getWorkspaceFolder(uri);
+      if (kind === 'image') {
+        this.assertInWorkspace(uri);
+        payload.src = this.webview.asWebviewUri(uri).toString();
+      } else if (inWorkspace) {
+        const dir = vscode.Uri.file(path.dirname(filePath));
+        payload.baseUri = `${this.webview.asWebviewUri(dir).toString()}/`;
+      }
+    }
+    void this.webview.postMessage(payload);
+  }
+
+  private assertInWorkspace(uri: vscode.Uri): void {
+    if (!vscode.workspace.getWorkspaceFolder(uri)) {
+      throw new Error('File is outside the workspace, open it from the Explorer instead');
+    }
   }
 
   private async applyFilePreviewEdit(filePath: string, content: string): Promise<void> {

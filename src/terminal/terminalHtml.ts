@@ -48,7 +48,15 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const addonFitJs = `${xtermBase}/addon-fit.js`;
   const monacoBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs'));
   const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
-  const filePreviewJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'filePreview.js'));
+  const previewDir = vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'preview');
+  const previewCss = webview.asWebviewUri(vscode.Uri.joinPath(previewDir, 'preview.css'));
+  const previewScripts = ['libs', 'code', 'mermaid', 'markdown', 'image', 'csv', 'index']
+    .map((name) => webview.asWebviewUri(vscode.Uri.joinPath(previewDir, `${name}.js`)));
+  const previewLibs = {
+    marked: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'marked', 'lib', 'marked.umd.js')).toString(),
+    dompurify: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'dompurify', 'dist', 'purify.min.js')).toString(),
+    mermaid: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'mermaid', 'dist', 'mermaid.min.js')).toString(),
+  };
 
   const introBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'introduce'));
   const introSlides: IntroSlide[] = [
@@ -77,6 +85,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <link rel="stylesheet" href="${xtermCss}">
+<link rel="stylesheet" href="${previewCss}">
 <style>
   html, body { height: 100%; margin: 0; padding: 0; }
   body {
@@ -1196,8 +1205,16 @@ ${FONT_OPTIONS.map((f) => {
       <section class="file-preview-card" role="dialog" aria-label="File preview">
         <header class="file-preview-head">
           <strong id="file-preview-path">Loading file…</strong>
-          <span>Ctrl+S to save</span>
+          <span class="file-preview-head-right">
+            <span id="file-preview-modes" hidden>
+              <button type="button" data-mode="preview">Preview</button>
+              <button type="button" data-mode="source">Source</button>
+            </span>
+            <button id="file-preview-beside" type="button" hidden title="Open in a side editor with its own viewer (closes this preview)">Open in side</button>
+            <span id="file-preview-hint">Ctrl+S to save</span>
+          </span>
         </header>
+        <div id="file-preview-render" hidden></div>
         <div id="file-preview-editor"></div>
       </section>
     </div>
@@ -1230,9 +1247,10 @@ ${FONT_OPTIONS.map((f) => {
   <script nonce="${nonce}" src="${addonFitJs}"></script>
   <script nonce="${nonce}">
     window.__AI_CLI_MONACO_BASE__ = ${JSON.stringify(monacoBase.toString())};
+    window.__AI_CLI_PREVIEW_LIBS__ = ${JSON.stringify(previewLibs)};
   </script>
   <script nonce="${nonce}" src="${aggregateDiffJs}"></script>
-  <script nonce="${nonce}" src="${filePreviewJs}"></script>
+${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>`).join('\n')}
   <script nonce="${nonce}">
     (function () {
       const vscode = window.__AI_CLI_VSCODE_API__ || (
@@ -1716,6 +1734,10 @@ ${FONT_OPTIONS.map((f) => {
         btnViewDiff.textContent = 'View diff';
         btnViewDiff.title = 'Preview all pending changes';
       }
+
+      document.addEventListener('ai-cli-preview-close-request', () => {
+        if (!filePreviewOverlay.hidden) closeFilePreview();
+      });
 
       function closeActivePreview() {
         if (!diffPreviewOverlay.hidden) closeDiffPreview();

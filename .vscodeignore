@@ -15,3 +15,6 @@ node_modules/**
 !node_modules/node-pty/**/*.d.ts
 **/*.map
 !out/**
+!node_modules/marked/lib/marked.umd.js
+!node_modules/dompurify/dist/purify.min.js
+!node_modules/mermaid/dist/mermaid.min.js

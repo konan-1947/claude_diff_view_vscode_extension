@@ -92,6 +92,7 @@ export type IncomingMessage =
   | { type: 'closeFilePreview' }
   | { type: 'filePreviewEdit'; path: string; content: string }
   | { type: 'filePreviewSave'; path: string }
+  | { type: 'filePreviewOpenBeside'; path: string }
   | { type: 'introduceSeen' }
   | { type: 'terminalFocusState'; focused: boolean }
   | { type: 'viewTooNarrow' };
