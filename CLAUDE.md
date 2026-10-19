@@ -74,14 +74,24 @@ There used to be a third, hook-based pipeline (`PreToolUse`/`PostToolUse` hooks 
 
 ### Integrated terminal
 
-`src/terminal/` is an embedded PTY terminal (xterm.js webview + `node-pty`), shown by default in the Secondary Side Bar (extension.ts moves it there once via a one-time globalState flag). `src/terminal/terminalPanel.ts` (`TerminalPanelProvider`, view id `ai-cli-diff-view.terminal`) manages PTY sessions and also serves the pending-files / session-status page (`pendingFilesPage.ts`) — it plays the role the old session panel did. `ptySession.ts` wraps node-pty; `fontInstaller.ts` handles terminal fonts; `terminalHtml.ts` / `terminalTypes.ts` hold the webview shell and settings types.
+`src/terminal/` is an embedded PTY terminal (xterm.js webview + `node-pty`), shown by default in the Secondary Side Bar (extension.ts moves it there once via a one-time globalState flag). `src/terminal/terminalPanel.ts` (`TerminalPanelProvider`, view id `ai-cli-diff-view.terminal`) manages PTY sessions and also serves the pending-files / session-status page (`pendingFilesPage.ts`) — it plays the role the old session panel did. `ptySession.ts` wraps node-pty, and on Windows each spawned shell gets its environment rebuilt from the registry by `freshEnv.ts` (since `process.env` is a startup snapshot); `fontInstaller.ts` handles terminal fonts; `terminalHtml.ts` / `terminalTypes.ts` hold the webview shell and settings types.
 
 ### UI composition
 
 - `src/terminal/terminalPanel.ts` — terminal + built-in runner status + pending files (Secondary Side Bar).
+- `src/views/agentChangesPanel.ts` — "Changes" webview (`ai-cli-diff-view.agentChanges`): pending files as a folder tree with diff stats; shown in agent mode or on the terminal's files page.
+- `src/views/navBarPanel.ts` — pending-diff nav bar webview (`ai-cli-diff-view.navBar`), declared in `package.json`.
 - `src/views/diffActionPanel.ts` — diff action controls.
 
-Pending-file navigation logic lives in `src/diff/navigationManager.ts`, reachable via the `prevFile`/`nextFile` commands and their `Alt+H`/`Alt+L` keybindings (there is no dedicated nav-bar view). The `ai-cli-diff-view.hasPendingDiff` context key that gates those keybindings is kept in sync by `updatePendingContext` in `extension.ts` via `DiffManager.onDidChangeDiffs` and tab-change events.
+Pending-file navigation logic lives in `src/diff/navigationManager.ts`, reachable via the `prevFile`/`nextFile` commands and their `Alt+H`/`Alt+L` keybindings. The `ai-cli-diff-view.hasPendingDiff` context key that gates those keybindings is kept in sync by `updatePendingContext` in `extension.ts` via `DiffManager.onDidChangeDiffs` and tab-change events.
+
+### Agent mode (`toggleAgentMode`)
+
+`enterAgentMode()` / `exitAgentMode()` in `extension.ts` (flag `agentModeActive`, context key `ai-cli-diff-view.agentModeActive`) turn the terminal into a central editor-area panel (`agentModeTerminal`) and hide the other editor tabs. Consequences that span files:
+
+- `WorkspaceWatcher` is constructed with a `() => !agentModeActive` callback, so its behavior depends on this flag.
+- `autoRouteTab` re-routes tabs into the **in-panel preview** (diff / aggregate diff / file preview) instead of opening editor tabs, so the terminal keeps focus. Files the user explicitly sent to a side editor are exempted via `src/preview/openBeside.ts`.
+- Preview renderers live in `res/webview/preview/` (code, markdown, image/svg, csv/tsv, mermaid; heavy libs lazy-loaded via `libs.js`), kind detection in `src/preview/previewKind.ts`, aggregate diff in `res/webview/aggregateDiff.js`. Webview↔extension messages are typed in `src/terminal/terminalTypes.ts`. Design notes: `docs/DESIGN_AGENT_MODE_LAYOUT.md`, `docs/PREVIEW_MODULE.md` (Vietnamese; its "Hiện trạng" section describes a removed `filePreview.js`).
 
 ### Configurable text-file detection
 
