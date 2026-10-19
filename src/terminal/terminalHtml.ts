@@ -108,6 +108,12 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     font-size: 11px;
     user-select: none;
   }
+  /* Only the terminal page follows the terminal colours; the files page keeps the sidebar look. */
+  body.page-terminal #header {
+    border-bottom-color: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
+    background: var(--chrome-bg, var(--vscode-sideBar-background));
+    color: var(--chrome-fg, var(--vscode-foreground));
+  }
   #header-title {
     opacity: 0.75;
     text-transform: uppercase;
@@ -173,6 +179,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   .header-btn svg { display: block; }
   .header-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); color: var(--vscode-foreground); }
+  body.page-terminal #header .header-btn:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); color: var(--chrome-fg, var(--vscode-foreground)); }
+  body.page-terminal #header .header-btn { color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground))); }
+  body.page-terminal #header .header-separator { background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.45))); }
   .header-btn:active { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.28)); }
 
   /* Page switching */
@@ -194,8 +203,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     height: 28px;
     display: flex;
     align-items: stretch;
-    background: var(--vscode-sideBar-background);
-    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+    background: var(--chrome-bg, var(--vscode-sideBar-background));
+    border-bottom: 1px solid var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
+    color: var(--chrome-fg, var(--vscode-foreground));
     font-family: var(--vscode-font-family);
     font-size: 11px;
     user-select: none;
@@ -220,17 +230,17 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     min-width: 90px;
     max-width: 160px;
     height: 100%;
-    border-right: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.18));
+    border-right: 1px solid var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.18)));
     cursor: pointer;
     position: relative;
     overflow: hidden;
     box-sizing: border-box;
-    color: var(--vscode-foreground);
+    color: var(--chrome-fg, var(--vscode-foreground));
     opacity: 0.78;
   }
-  .tab:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.12)); opacity: 1; }
+  .tab:hover { background: var(--chrome-hover, var(--vscode-list-hoverBackground, rgba(128,128,128,0.12))); opacity: 1; }
   .tab.active {
-    background: var(--vscode-editor-background);
+    background: var(--chrome-active, var(--vscode-editor-background));
     opacity: 1;
   }
   .tab.active::after {
@@ -259,12 +269,13 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     line-height: 1;
   }
   .tab:hover .tab-close, .tab.active .tab-close { opacity: 0.7; }
-  .tab-close:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); opacity: 1; }
+  .tab-close:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); opacity: 1; }
   .tab-add {
     flex: 0 0 28px;
+    margin-right: auto;
     background: transparent;
     border: none;
-    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground)));
     cursor: pointer;
     font-size: 16px;
     line-height: 1;
@@ -272,8 +283,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     align-items: center;
     justify-content: center;
   }
-    margin-right: auto;
-  .tab-add:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); }
+  .tab-add:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
 
   #content {
     flex: 1 1 auto;
@@ -1330,9 +1340,28 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         }
       }
 
+      // The header and tab strip follow the terminal colours for fixed presets, so they
+      // do not clash with the terminal below; with the "VS Code theme" preset they keep
+      // the VS Code variables.
+      function applyChromeColors(s, theme) {
+        const root = document.documentElement.style;
+        const names = ['--chrome-bg', '--chrome-fg', '--chrome-border', '--chrome-hover', '--chrome-active'];
+        if (s.themePreset === 'vscode') {
+          names.forEach((name) => root.removeProperty(name));
+          return;
+        }
+        const fg = theme.foreground;
+        root.setProperty('--chrome-bg', 'color-mix(in srgb, ' + theme.background + ' 88%, ' + fg + ' 12%)');
+        root.setProperty('--chrome-fg', fg);
+        root.setProperty('--chrome-border', 'color-mix(in srgb, ' + fg + ' 25%, transparent)');
+        root.setProperty('--chrome-hover', 'color-mix(in srgb, ' + fg + ' 15%, transparent)');
+        root.setProperty('--chrome-active', theme.background);
+      }
+
       function applySettings(s) {
         currentSettings = s;
         const theme = resolveTheme(s);
+        applyChromeColors(s, theme);
         const wrap = document.getElementById('term-wrap');
         if (wrap) wrap.style.background = theme.background;
         for (const sess of sessions.values()) {
@@ -1403,35 +1432,6 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return tab;
       }
 
-      function activateTab(id) {
-        if (!sessions.has(id)) return;
-        if (activeId === id) return;
-        const old = sessions.get(activeId);
-        if (old) {
-          old.host.classList.remove('active');
-          old.tab.classList.remove('active');
-        }
-        const next = sessions.get(id);
-        next.host.classList.add('active');
-        next.tab.classList.add('active');
-        activeId = id;
-        // scroll the tab into view
-        try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
-        requestAnimationFrame(() => {
-          safeFitSession(next);
-          vscode.postMessage({ type: 'resize', id, cols: next.term.cols, rows: next.term.rows });
-          try { next.term.focus(); } catch (_) {}
-        });
-      }
-
-      let focusOnSessionCreated = false;
-
-      function onSessionCreated(id, title) {
-        const host = document.createElement('div');
-        host.className = 'term-pane';
-        host.dataset.id = id;
-        termHost.appendChild(host);
-
       // Programs set the terminal title with OSC 0/2 (Claude Code, PowerShell...). Follow it,
       // debounced because an agent can rewrite it many times a second.
       function shortTitle(text) {
@@ -1454,6 +1454,36 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         if (sess.id === activeId) reportPanelTitle();
       }
 
+      function activateTab(id) {
+        if (!sessions.has(id)) return;
+        if (activeId === id) return;
+        const old = sessions.get(activeId);
+        if (old) {
+          old.host.classList.remove('active');
+          old.tab.classList.remove('active');
+        }
+        const next = sessions.get(id);
+        next.host.classList.add('active');
+        next.tab.classList.add('active');
+        activeId = id;
+        // scroll the tab into view
+        try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
+        reportPanelTitle();
+        requestAnimationFrame(() => {
+          safeFitSession(next);
+          vscode.postMessage({ type: 'resize', id, cols: next.term.cols, rows: next.term.rows });
+          try { next.term.focus(); } catch (_) {}
+        });
+      }
+
+      let focusOnSessionCreated = false;
+
+      function onSessionCreated(id, title) {
+        const host = document.createElement('div');
+        host.className = 'term-pane';
+        host.dataset.id = id;
+        termHost.appendChild(host);
+
         const t = makeXterm();
         const f = new FitAddon.FitAddon();
         t.loadAddon(f);
@@ -1468,7 +1498,6 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
             // to tell alt-tab (keep "was focused") from a click on another view.
             vscode.postMessage({ type: 'terminalFocusState', focused: false });
           });
-        reportPanelTitle();
         }
 
         const tab = buildTabDom(id, title);
@@ -1500,6 +1529,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const sess = sessions.get(id);
         if (!sess) return;
         try { sess.dataDisp && sess.dataDisp.dispose(); } catch (_) {}
+        try { sess.titleDisp && sess.titleDisp.dispose(); } catch (_) {}
+        clearTimeout(sess.titleTimer);
         try { sess.term.dispose(); } catch (_) {}
         sess.host.remove();
         sess.tab.remove();
@@ -1529,8 +1560,6 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           el.style.whiteSpace = 'nowrap';
           document.body.appendChild(el);
           const w = el.offsetWidth;
-        try { sess.titleDisp && sess.titleDisp.dispose(); } catch (_) {}
-        clearTimeout(sess.titleTimer);
           document.body.removeChild(el);
           return w;
         }
