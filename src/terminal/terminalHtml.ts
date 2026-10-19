@@ -1364,6 +1364,8 @@ ${FONT_OPTIONS.map((f) => {
         });
       }
 
+      let focusOnSessionCreated = false;
+
       function onSessionCreated(id, title) {
         const host = document.createElement('div');
         host.className = 'term-pane';
@@ -1380,11 +1382,9 @@ ${FONT_OPTIONS.map((f) => {
             vscode.postMessage({ type: 'terminalFocusState', focused: true });
           });
           ta.addEventListener('blur', () => {
-            // Window-blur also fires this; ignore it so the stored state still
-            // reflects "terminal was focused" when the user alt-tabs away.
-            if (document.hasFocus()) {
-              vscode.postMessage({ type: 'terminalFocusState', focused: false });
-            }
+            // Always reported: the host compares it with the window-focus event
+            // to tell alt-tab (keep "was focused") from a click on another view.
+            vscode.postMessage({ type: 'terminalFocusState', focused: false });
           });
         }
 
@@ -1399,6 +1399,10 @@ ${FONT_OPTIONS.map((f) => {
         sessions.set(id, sess);
         activateTab(id);
         // also fit + report dims (activateTab already does this on the rAF tick)
+        if (focusOnSessionCreated) {
+          focusOnSessionCreated = false;
+          requestAnimationFrame(() => { try { t.focus(); } catch (_) {} });
+        }
       }
 
       function onSessionClosed(id) {
@@ -1616,9 +1620,20 @@ ${FONT_OPTIONS.map((f) => {
         } else if (msg.type === 'showFilePreview') {
           openFilePreview(msg.path);
         } else if (msg.type === 'focusTerminal') {
+          if (msg.onlyIfIdle) {
+            const active = document.activeElement;
+            const typing = active && active !== document.body
+              && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && !active.closest('.xterm');
+            const overlayOpen = ['diff-preview-overlay', 'file-preview-overlay', 'settings-overlay', 'introduce-overlay']
+              .some((id) => { const el = document.getElementById(id); return el && !el.hidden; });
+            if (typing || overlayOpen) return;
+          }
           const sess = sessions.get(activeId);
           if (sess) {
             requestAnimationFrame(() => { try { sess.term.focus(); } catch (_) {} });
+          } else {
+            // First session is still being spawned; focus it once it exists.
+            focusOnSessionCreated = true;
           }
         }
       });

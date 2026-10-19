@@ -58,6 +58,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private workspaceDiffDisposable?: vscode.Disposable;
   private themeDisposable?: vscode.Disposable;
   private lastTerminalFocused = false;
+  private windowBlurredAt = 0;
+  private blurTimer: NodeJS.Timeout | undefined;
   private agentModeActive = false;
   private focusWhenReady = false;
   private diffPreviewOpen = false;
@@ -182,7 +184,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       if (this.view) {
         this.view.show(false);
       } else {
-        this.panel?.reveal(vscode.ViewColumn.Active, true);
+        this.panel?.reveal(undefined, false);
       }
       // Revealing the webview is not enough when the editor group was focused
       // by the pending-files view; put the cursor back in xterm as well.
@@ -196,6 +198,43 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
   wasTerminalFocused(): boolean {
     return this.lastTerminalFocused;
+  }
+
+  /** Called by the host on every window focus change so a terminal blur can be classed as alt-tab or click-away. */
+  noteWindowFocus(focused: boolean): void {
+    if (!focused) {
+      this.windowBlurredAt = Date.now();
+    }
+  }
+
+  /**
+   * Put the cursor back in xterm without revealing the panel, so a panel the
+   * user switched away from is not pulled to the front. Returns whether the
+   * message was sent; the webview may still decline (open overlay, input).
+   */
+  restoreTerminalFocus(): boolean {
+    const visible = this.panel ? this.panel.visible && this.panel.active : true;
+    if (!this.webview || !visible) {
+      return false;
+    }
+    void this.webview.postMessage({ type: 'focusTerminal', onlyIfIdle: true });
+    return true;
+  }
+
+  private onTerminalFocusState(focused: boolean): void {
+    clearTimeout(this.blurTimer);
+    if (focused) {
+      this.lastTerminalFocused = true;
+      return;
+    }
+    // A blur caused by alt-tab is followed by (or follows) the window losing
+    // focus; a blur caused by clicking another view is not. Wait for the
+    // window event before deciding.
+    const blurredAt = Date.now();
+    this.blurTimer = setTimeout(() => {
+      const windowLost = Math.abs(this.windowBlurredAt - blurredAt) < 300;
+      this.lastTerminalFocused = windowLost;
+    }, 300);
   }
 
   private postFilesUpdate(): void {
@@ -760,7 +799,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           void this.context.globalState.update(INTRODUCE_SEEN_KEY, true);
           return;
         case 'terminalFocusState':
-          this.lastTerminalFocused = !!msg.focused;
+          this.onTerminalFocusState(!!msg.focused);
           return;
         case 'viewTooNarrow':
           // Webview reports its width dropped below ~1/4 of screen width.

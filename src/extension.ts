@@ -266,6 +266,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     agentModeTerminal = terminal;
     agentModePanel = panel;
     terminal.setAgentMode(true);
+    terminal.focusTerminal();
     context.subscriptions.push(
       terminal.onDidChangePreviewActiveFile((filePath) => {
         if (agentModeActive && agentModeTerminal === terminal) {
@@ -421,7 +422,16 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   context.subscriptions.push(
     vscode.window.onDidChangeWindowState((state) => {
-      if (!agentModeActive && state.focused && terminalPanel.wasTerminalFocused()) {
+      terminalPanel.noteWindowFocus(state.focused);
+      agentModeTerminal?.noteWindowFocus(state.focused);
+      if (!state.focused) {
+        return;
+      }
+      if (agentModeActive) {
+        if (agentModeTerminal?.wasTerminalFocused()) {
+          agentModeTerminal.restoreTerminalFocus();
+        }
+      } else if (terminalPanel.wasTerminalFocused()) {
         terminalPanel.focusTerminal();
       }
     })
