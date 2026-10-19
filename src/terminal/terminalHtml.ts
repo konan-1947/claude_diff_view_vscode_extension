@@ -669,6 +669,46 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .aggregate-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .aggregate-file-stats { margin-left: auto; flex: 0 0 auto; font-family: var(--vscode-font-family); font-size: 10px; }
   .aggregate-file-actions { display: flex; flex: 0 0 auto; gap: 4px; margin-left: 4px; }
+  .aggregate-hunk-nav {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: stretch;
+    margin-left: 6px;
+    height: 24px;
+    overflow: hidden;
+    border: 1px solid var(--vscode-button-border, rgba(128,128,128,0.4));
+    border-radius: 4px;
+    background: var(--vscode-button-secondaryBackground, transparent);
+    font-family: var(--vscode-font-family);
+    font-size: 10px;
+  }
+  .aggregate-hunk-nav[hidden] { display: none; }
+  .aggregate-hunk-nav button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    padding: 0;
+    border: 0;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    background: transparent;
+    cursor: pointer;
+  }
+  .aggregate-hunk-nav button svg { display: block; }
+  .aggregate-hunk-nav button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.22)); }
+  .aggregate-hunk-nav button:active:not(:disabled) { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.32)); }
+  .aggregate-hunk-nav button:disabled { opacity: .35; cursor: default; }
+  .aggregate-hunk-counter {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    padding: 0 6px;
+    border-left: 1px solid var(--vscode-button-border, rgba(128,128,128,0.4));
+    border-right: 1px solid var(--vscode-button-border, rgba(128,128,128,0.4));
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
   .aggregate-file-actions button,
   .aggregate-hunk-actions button {
     padding: 3px 7px;
