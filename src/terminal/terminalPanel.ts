@@ -776,6 +776,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.postFilePreviewError(msg.path, err);
           });
           return;
+        case 'sessionTitle':
+          // Only the agent-mode panel has a title of its own; the sidebar view keeps its fixed name.
+          if (this.panel) {
+            this.panel.title = typeof msg.title === 'string' && msg.title.trim() ? msg.title : 'Agent Terminal';
+          }
+          return;
         case 'filePreviewOpenBeside':
           void openBeside(msg.path).catch((err: unknown) => {
             void vscode.window.showErrorMessage(`Could not open file beside: ${err instanceof Error ? err.message : String(err)}`);

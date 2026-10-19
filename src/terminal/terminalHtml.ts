@@ -202,7 +202,8 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     min-width: 0;
   }
   .tabs {
-    flex: 1 1 auto;
+    /* Shrink-only: the + button stays right after the last tab instead of at the far edge. */
+    flex: 0 1 auto;
     display: flex;
     overflow-x: auto;
     overflow-y: hidden;
@@ -271,6 +272,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     align-items: center;
     justify-content: center;
   }
+    margin-right: auto;
   .tab-add:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); }
 
   #content {
@@ -1430,6 +1432,28 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         host.dataset.id = id;
         termHost.appendChild(host);
 
+      // Programs set the terminal title with OSC 0/2 (Claude Code, PowerShell...). Follow it,
+      // debounced because an agent can rewrite it many times a second.
+      function shortTitle(text) {
+        const clean = Array.from(String(text || '')).filter((ch) => ch.charCodeAt(0) > 31 && ch.charCodeAt(0) !== 127).join('').trim();
+        return clean.length > 60 ? clean.slice(0, 59) + '…' : clean;
+      }
+
+      function reportPanelTitle() {
+        const sess = sessions.get(activeId);
+        vscode.postMessage({ type: 'sessionTitle', title: sess ? sess.shownTitle : '' });
+      }
+
+      function applySessionTitle(sess) {
+        const title = shortTitle(sess.rawTitle) || sess.defaultTitle;
+        if (title === sess.shownTitle) return;
+        sess.shownTitle = title;
+        const titleEl = sess.tab.querySelector('.tab-title');
+        if (titleEl) titleEl.textContent = title;
+        sess.tab.title = sess.rawTitle || sess.defaultTitle;
+        if (sess.id === activeId) reportPanelTitle();
+      }
+
         const t = makeXterm();
         const f = new FitAddon.FitAddon();
         t.loadAddon(f);
@@ -1444,12 +1468,21 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
             // to tell alt-tab (keep "was focused") from a click on another view.
             vscode.postMessage({ type: 'terminalFocusState', focused: false });
           });
+        reportPanelTitle();
         }
 
         const tab = buildTabDom(id, title);
         tabsEl.appendChild(tab);
 
-        const sess = { id, term: t, fit: f, host, tab, dataDisp: null, exited: false };
+        const sess = {
+          id, term: t, fit: f, host, tab, dataDisp: null, exited: false,
+          defaultTitle: title, shownTitle: title, rawTitle: '', titleTimer: 0, titleDisp: null,
+        };
+        sess.titleDisp = t.onTitleChange((next) => {
+          sess.rawTitle = next;
+          clearTimeout(sess.titleTimer);
+          sess.titleTimer = setTimeout(() => applySessionTitle(sess), 300);
+        });
         sess.dataDisp = t.onData((data) => {
           if (sess.exited) return;
           vscode.postMessage({ type: 'input', id, data });
@@ -1496,6 +1529,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           el.style.whiteSpace = 'nowrap';
           document.body.appendChild(el);
           const w = el.offsetWidth;
+        try { sess.titleDisp && sess.titleDisp.dispose(); } catch (_) {}
+        clearTimeout(sess.titleTimer);
           document.body.removeChild(el);
           return w;
         }

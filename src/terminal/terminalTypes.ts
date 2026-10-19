@@ -95,6 +95,7 @@ export type IncomingMessage =
   | { type: 'filePreviewOpenBeside'; path: string }
   | { type: 'introduceSeen' }
   | { type: 'terminalFocusState'; focused: boolean }
+  | { type: 'sessionTitle'; title: string }
   | { type: 'viewTooNarrow' };
 
 export const DEFAULT_SETTINGS: TerminalSettings = {
