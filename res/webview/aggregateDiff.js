@@ -80,6 +80,8 @@
   }
 
   function renderFileList(metadata) {
+    // A reply to an earlier request can land after close() nulled the observer.
+    ensureObserver();
     const incoming = new Set(metadata.map((item) => item.path));
     for (const [filePath, state] of files) {
       if (!incoming.has(filePath)) {
@@ -102,6 +104,17 @@
       if (fileList) { fileList.appendChild(createFileLink(state)); }
     }
 
+    // Sections arrive in the order files first appeared; keep them in the same
+    // order as the Pending Files tree. Only touch the DOM when it differs.
+    const sections = metadata.map((item) => files.get(item.path)?.section).filter(Boolean);
+    const current = Array.from(content.children).filter((child) => child !== status);
+    const inOrder = sections.every((section, index) => current[index] === section);
+    if (!inOrder) {
+      const scrollTop = content.scrollTop;
+      sections.forEach((section) => content.appendChild(section));
+      content.scrollTop = scrollTop;
+    }
+
     updateSummary();
     updateToggleAllLabel();
     if (metadata.length === 0) {
@@ -122,8 +135,7 @@
     if (pendingTargetPath) {
       const target = files.get(pendingTargetPath);
       if (target) {
-        target.section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        setActive(target);
+        scrollToFile(target);
         requestFile(pendingTargetPath);
       }
       pendingTargetPath = null;
@@ -167,7 +179,16 @@
       vscode.postMessage({ type: 'previewRejectFile', path: meta.path });
     }));
 
-    head.append(toggle, pathEl, stats, actions);
+    const hunkNav = document.createElement('span');
+    hunkNav.className = 'aggregate-hunk-nav';
+    hunkNav.hidden = true;
+    const hunkPrev = navButton('M5 12l5-5 5 5', 'Previous change', () => gotoHunk(files.get(meta.path), -1));
+    const hunkCounter = document.createElement('span');
+    hunkCounter.className = 'aggregate-hunk-counter';
+    const hunkNext = navButton('M5 8l5 5 5-5', 'Next change', () => gotoHunk(files.get(meta.path), +1));
+    hunkNav.append(hunkPrev, hunkCounter, hunkNext);
+
+    head.append(toggle, pathEl, stats, hunkNav, actions);
 
     const body = document.createElement('div');
     body.className = 'aggregate-file-body';
@@ -187,6 +208,11 @@
       toggle,
       stats,
       hunkActions,
+      hunkNav,
+      hunkCounter,
+      hunkPrev,
+      hunkNext,
+      hunkIdx: -1,
       editorHost,
       loading,
       editor: null,
@@ -224,11 +250,62 @@
     stats.innerHTML = statsText(state);
     link.append(name, stats);
     link.addEventListener('click', () => {
-      state.section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrollToFile(state);
       requestFile(state.meta.path);
-      setActive(state);
     });
     return link;
+  }
+
+  function navButton(iconPath, title, handler) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + iconPath + '"></path></svg>';
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      handler();
+    });
+    return button;
+  }
+
+  function currentHunkIdx(state) {
+    return state.hunkIdx >= 0 && state.hunkIdx < state.groups.length ? state.hunkIdx : 0;
+  }
+
+  function updateHunkNav(state) {
+    const total = state.groups.length;
+    state.hunkNav.hidden = total === 0;
+    state.hunkCounter.textContent = total === 0 ? '0 / 0' : (currentHunkIdx(state) + 1) + ' / ' + total;
+    state.hunkPrev.disabled = total < 2;
+    state.hunkNext.disabled = total < 2;
+  }
+
+  function gotoHunk(state, direction) {
+    if (!state || state.groups.length < 2) { return; }
+    if (state.collapsed) { toggleCollapsed(state); }
+    const total = state.groups.length;
+    state.hunkIdx = (currentHunkIdx(state) + direction + total) % total;
+    updateHunkNav(state);
+    if (!state.editor) {
+      scrollToFile(state);
+      requestFile(state.meta.path);
+      return;
+    }
+    const line = state.groups[state.hunkIdx].startLine;
+    releasePin();
+    state.editor.setPosition({ lineNumber: line, column: 1 });
+    state.editor.revealLineInCenter(line);
+    // The card itself may sit partly outside the aggregate scroller.
+    requestAnimationFrame(() => {
+      if (!state.editor) { return; }
+      const lineTop = state.editorHost.getBoundingClientRect().top
+        + state.editor.getTopForLineNumber(line) - state.editor.getScrollTop();
+      const box = content.getBoundingClientRect();
+      if (lineTop < box.top + 48 || lineTop > box.bottom - 72) {
+        content.scrollBy({ top: lineTop - (box.top + box.height / 2), behavior: 'auto' });
+      }
+    });
   }
 
   function actionButton(text, kind, handler) {
@@ -289,6 +366,8 @@
     state.busy = false;
     state.loading.hidden = true;
     state.groups = buildGroups(data.hunks);
+    state.hunkIdx = -1;
+    updateHunkNav(state);
     state.stats.innerHTML = statsText(state);
     const link = fileList?.querySelector('[data-path="' + cssEscape(filePath) + '"] .file-stats');
     if (link) { link.innerHTML = statsText(state); }
@@ -381,7 +460,12 @@
             setHoveredGroup(state, findGroupAtLine(state, event.target.position.lineNumber));
           }),
           state.editor.onDidChangeCursorPosition((event) => {
-            setHoveredGroup(state, findGroupAtLine(state, event.position.lineNumber));
+            const index = findGroupAtLine(state, event.position.lineNumber);
+            setHoveredGroup(state, index);
+            if (index >= 0 && index !== state.hunkIdx) {
+              state.hunkIdx = index;
+              updateHunkNav(state);
+            }
           }),
           state.editor.onDidScrollChange(() => repositionHoveredGroup(state)),
           state.editor.onDidLayoutChange(() => repositionHoveredGroup(state))
@@ -606,6 +690,46 @@
     toggleAll.title = toggleAll.textContent;
   }
 
+  // Sections load lazily and change height as they do, so a smooth scroll to a
+  // far file lands on a stale offset. Jump instantly, then keep re-aligning the
+  // target while layout settles; any user scroll input releases the pin.
+  let pinnedState = null;
+  let pinResizeObserver = null;
+  let pinTimer = null;
+
+  function releasePin() {
+    pinnedState = null;
+    if (pinResizeObserver) { pinResizeObserver.disconnect(); pinResizeObserver = null; }
+    if (pinTimer) { clearTimeout(pinTimer); pinTimer = null; }
+    content.removeEventListener('wheel', releasePin);
+    content.removeEventListener('touchstart', releasePin);
+    content.removeEventListener('mousedown', releasePin);
+    content.removeEventListener('keydown', releasePin);
+  }
+
+  function scrollToFile(state) {
+    releasePin();
+    pinnedState = state;
+    setActive(state);
+    const align = () => {
+      if (pinnedState !== state) { return; }
+      const delta = state.section.getBoundingClientRect().top - content.getBoundingClientRect().top;
+      if (Math.abs(delta) > 1) { content.scrollTop += delta; }
+    };
+    align();
+    const restartTimer = () => {
+      if (pinTimer) { clearTimeout(pinTimer); }
+      pinTimer = setTimeout(releasePin, 1200);
+    };
+    pinResizeObserver = new ResizeObserver(() => { align(); restartTimer(); });
+    for (const candidate of files.values()) { pinResizeObserver.observe(candidate.section); }
+    content.addEventListener('wheel', releasePin, { passive: true });
+    content.addEventListener('touchstart', releasePin, { passive: true });
+    content.addEventListener('mousedown', releasePin);
+    content.addEventListener('keydown', releasePin);
+    restartTimer();
+  }
+
   function setActive(state) {
     if (activePath !== state.meta.path) {
       activePath = state.meta.path;
@@ -664,7 +788,7 @@
         state.nearViewport = entry.isIntersecting;
         if (entry.isIntersecting) {
           requestFile(entry.target.dataset.path);
-          setActive(state);
+          if (!pinnedState) { setActive(state); }
           if (state.data && !state.editor) {
             ensureMonaco().then((monaco) => mountEditor(monaco, state));
           }

@@ -59,6 +59,8 @@ export class DiffManager {
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
 
   private snapshots: Map<string, SnapshotState> = new Map();
+  /** normalized key -> path with the real on-disk case, for display only. */
+  private displayPaths: Map<string, string> = new Map();
   private readonly store: SnapshotStore;
   /** filePath (normalized) -> active webview panel. */
   private panels: Map<string, vscode.WebviewPanel> = new Map();
@@ -99,6 +101,7 @@ export class DiffManager {
     } catch (err) {
       if (isFileNotFound(err)) {
         this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
+        this.rememberDisplayPath(filePath);
         void this.store.save(this.snapshots);
       }
       return;
@@ -111,6 +114,7 @@ export class DiffManager {
       // sớm vì không có snapshot -> file lớn không mở diff, đúng như mong đợi.
       if (exceedsLineLimit(content)) { return; }
       this.snapshots.set(absPath, { content, fileExistedBefore: true });
+      this.rememberDisplayPath(filePath);
     } catch {
       // File có thể bị xóa hoặc không đọc được sau khi stat — không tạo snapshot rỗng.
       return;
@@ -196,6 +200,7 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) {
       this.snapshots.set(absPath, { content, fileExistedBefore });
+      this.rememberDisplayPath(filePath);
       void this.store.save(this.snapshots);
       this._onDidChangeDiffs.fire();
     }
@@ -268,6 +273,7 @@ export class DiffManager {
     const pendingFiles = this.getPendingFiles();
     const count = pendingFiles.length;
     this.snapshots.clear();
+    this.displayPaths.clear();
     void this.store.save(this.snapshots);
     for (const p of pendingFiles) {
       this.closePanel(normalizePath(p));
@@ -280,8 +286,33 @@ export class DiffManager {
     return this.snapshots.has(normalizePath(filePath));
   }
 
+  /** Pending files with their real on-disk case; compare with normalizePath, never with ===. */
   getPendingFiles(): string[] {
-    return Array.from(this.snapshots.keys());
+    return Array.from(this.snapshots.keys(), (key) => this.getDisplayPath(key));
+  }
+
+  /**
+   * Snapshot keys are lower-cased on Windows so lookups ignore case; anything shown
+   * to the user (or sent to a webview) should use this path instead.
+   */
+  getDisplayPath(filePath: string): string {
+    const key = normalizePath(filePath);
+    const known = this.displayPaths.get(key);
+    if (known) { return known; }
+    const onDisk = canonicalCasePath(key);
+    // Accept only a case difference: realpath also resolves symlinks/junctions,
+    // which would show a path that differs from the one in the workspace.
+    const display = normalizePath(onDisk) === key ? onDisk : key;
+    // Not cached when it equals the key: that file may be missing now and reappear with another case.
+    if (display !== key) { this.displayPaths.set(key, display); }
+    return display;
+  }
+
+  private rememberDisplayPath(filePath: string): void {
+    const key = normalizePath(filePath);
+    const resolved = path.resolve(filePath);
+    // The caller's spelling is the fallback for files that no longer exist on disk.
+    if (resolved !== key && normalizePath(resolved) === key) { this.displayPaths.set(key, resolved); }
   }
 
   getSnapshot(filePath: string): string | undefined {
@@ -329,7 +360,7 @@ export class DiffManager {
     }
 
     return {
-      filePath: absPath,
+      filePath: this.getDisplayPath(absPath),
       originalContent: originalLf,
       currentContent: currentLf,
       language: detectLanguageId(absPath),
@@ -471,6 +502,7 @@ export class DiffManager {
 
   disposeAll(): void {
     this.snapshots.clear();
+    this.displayPaths.clear();
     for (const panel of this.panels.values()) {
       panel.dispose();
     }

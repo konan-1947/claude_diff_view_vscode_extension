@@ -5,7 +5,6 @@
     window.__AI_CLI_VSCODE_API__ = acquireVsCodeApi()
   );
   const host = document.getElementById('file-preview-editor');
-  const title = document.getElementById('file-preview-path');
   let editor;
   let model;
   let activePath;
@@ -29,22 +28,10 @@
     return window.__aiCliFileMonaco;
   }
 
-  function open(path) {
-    activePath = path;
-    title.textContent = 'Loading…';
-    vscode.postMessage({ type: 'requestFilePreview', path });
-  }
-
-  function close() {
-    clearTimeout(saveTimer);
-    activePath = undefined;
-    vscode.postMessage({ type: 'closeFilePreview' });
-  }
-
-  function setFile(data) {
-    if (!data || data.path !== activePath) return;
-    title.textContent = data.label;
-    loadMonaco().then((monaco) => {
+  // Resolves once the file is in the editor; rejects if Monaco cannot load.
+  function show(data, options) {
+    activePath = data.path;
+    return loadMonaco().then((monaco) => {
       if (data.path !== activePath) return;
       applying = true;
       if (model) model.dispose();
@@ -72,14 +59,22 @@
       }
       editor.setModel(model);
       applying = false;
-      editor.focus();
-    }).catch((error) => { title.textContent = error.message; });
+      if (!options || options.focus !== false) editor.focus();
+    });
   }
 
-  window.aiCliFilePreview = { open, close };
-  window.addEventListener('message', (event) => {
-    const msg = event.data || {};
-    if (msg.type === 'filePreviewData') setFile(msg);
-    if (msg.type === 'filePreviewError') title.textContent = msg.message || 'Could not open file';
-  });
+  function getValue() {
+    return model ? model.getValue() : undefined;
+  }
+
+  function focus() {
+    if (editor) editor.focus();
+  }
+
+  function clear() {
+    clearTimeout(saveTimer);
+    activePath = undefined;
+  }
+
+  window.aiCliPreviewCode = { show, getValue, focus, clear };
 }());

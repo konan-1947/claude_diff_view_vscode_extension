@@ -12,6 +12,7 @@ import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
 import { AgentChangesPanel } from './views/agentChangesPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
+import { forgetOpenedBeside, hasOpenedBeside, isOpenedBeside, onDidChangeOpenedBeside } from './preview/openBeside';
 
 const LOG_PREFIX = '[ai-cli-diff-view]';
 const AGENT_MODE_TABS_STATE_KEY = 'ai-cli-diff-view.agentMode.editorTabsState';
@@ -91,12 +92,24 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   let agentModePanel: vscode.WebviewPanel | undefined;
   let agentModeTerminal: TerminalPanelProvider | undefined;
   let agentModeTabsState: AgentModeTabsState | undefined;
+  // Explorer only follows the active text editor, and agent mode hides those,
+  // so select the file there explicitly and then hand focus back to the agent.
+  const revealInExplorerKeepingFocus = async (filePath: string): Promise<void> => {
+    try {
+      await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(filePath));
+      agentModePanel?.reveal(undefined, false);
+    } catch {
+      // Explorer unavailable (e.g. file outside workspace); highlight sync is best-effort.
+    }
+  };
   const agentChangesPanel = new AgentChangesPanel(
     context.extensionUri,
     diffManager,
     (filePath) => {
       if (agentModeActive) {
-        return !!agentModeTerminal?.openPendingFileInAgent(filePath);
+        const opened = !!agentModeTerminal?.openPendingFileInAgent(filePath);
+        if (opened) { void revealInExplorerKeepingFocus(filePath); }
+        return opened;
       }
       void diffManager.openDiff(filePath);
       return true;
@@ -254,6 +267,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     agentModeTerminal = terminal;
     agentModePanel = panel;
     terminal.setAgentMode(true);
+    terminal.focusTerminal();
     context.subscriptions.push(
       terminal.onDidChangePreviewActiveFile((filePath) => {
         if (agentModeActive && agentModeTerminal === terminal) {
@@ -409,7 +423,16 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   context.subscriptions.push(
     vscode.window.onDidChangeWindowState((state) => {
-      if (!agentModeActive && state.focused && terminalPanel.wasTerminalFocused()) {
+      terminalPanel.noteWindowFocus(state.focused);
+      agentModeTerminal?.noteWindowFocus(state.focused);
+      if (!state.focused) {
+        return;
+      }
+      if (agentModeActive) {
+        if (agentModeTerminal?.wasTerminalFocused()) {
+          agentModeTerminal.restoreTerminalFocus();
+        }
+      } else if (terminalPanel.wasTerminalFocused()) {
         terminalPanel.focusTerminal();
       }
     })
@@ -440,7 +463,51 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     vscode.window.tabGroups.onDidChangeTabs(() => updateNavBarState())
   );
 
+  // Agent mode hides the tab bar, so a file opened beside has no close button of its own.
+  const besideStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1000);
+  besideStatus.text = '$(close) Close side editor';
+  besideStatus.tooltip = 'Close the file opened beside the agent terminal';
+  besideStatus.command = 'ai-cli-diff-view.closeBesideEditors';
+  const updateBesideStatus = (): void => {
+    if (agentModeActive && hasOpenedBeside()) { besideStatus.show(); } else { besideStatus.hide(); }
+  };
+  context.subscriptions.push(
+    besideStatus,
+    onDidChangeOpenedBeside(updateBesideStatus),
+    vscode.commands.registerCommand('ai-cli-diff-view.closeBesideEditors', async () => {
+      const tabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter((tab) => (
+        (tab.input instanceof vscode.TabInputText || tab.input instanceof vscode.TabInputCustom)
+        && isOpenedBeside(tab.input.uri.fsPath)
+      ));
+      if (tabs.length > 0) { await vscode.window.tabGroups.close(tabs); }
+      agentModeTerminal?.focusTerminal();
+    }),
+  );
+
   const autoRouteTab = (tab: vscode.Tab): void => {
+    const input = tab.input;
+    if (
+      agentModeActive
+      && (input instanceof vscode.TabInputText || input instanceof vscode.TabInputCustom)
+      && isOpenedBeside(input.uri.fsPath)
+    ) {
+      // The user sent this file to a side editor from the preview on purpose.
+      return;
+    }
+    // Custom editors (markdown/image viewers from other extensions) are not TabInputText;
+    // in agent mode they would cover the terminal, so route them to the in-panel preview too.
+    if (
+      agentModeActive && agentModeTerminal
+      && tab.input instanceof vscode.TabInputCustom
+      && tab.input.viewType !== 'ai-cli-diff-view.diffEditor'
+      && tab.input.uri.scheme === 'file'
+    ) {
+      const fsPath = tab.input.uri.fsPath;
+      void vscode.window.tabGroups.close(tab).then(() => {
+        agentModeTerminal?.openFileInAgent(fsPath);
+      });
+      return;
+    }
     if (!(tab.input instanceof vscode.TabInputText)) { return; }
     // A tab becomes `changed` when the user edits it. Never close a dirty
     // document from the auto-router: doing so makes VS Code show its
@@ -468,6 +535,11 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     vscode.window.tabGroups.onDidChangeTabs((e) => {
       for (const tab of e.opened) { autoRouteTab(tab); }
       for (const tab of e.changed) { autoRouteTab(tab); }
+      for (const tab of e.closed) {
+        if (tab.input instanceof vscode.TabInputText || tab.input instanceof vscode.TabInputCustom) {
+          forgetOpenedBeside(tab.input.uri.fsPath);
+        }
+      }
     })
   );
 

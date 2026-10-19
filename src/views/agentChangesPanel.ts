@@ -110,7 +110,7 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     const metadata = this.active ? await this.diffManager.getDiffPreviewMetadata() : [];
     if (generation !== this.generation) { return; }
     this.root = this.createTree(metadata);
-    if (this.activeFilePath && !metadata.some((file) => file.filePath === this.activeFilePath)) {
+    if (this.activeFilePath && !metadata.some((file) => isSameFile(file.filePath, this.activeFilePath))) {
       this.activeFilePath = undefined;
     }
     this.render();
@@ -124,8 +124,8 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     const rows = this.renderChildren(this.root.children, 0, iconBase);
     const header = this.showAgentActions ? `<header class="panel-header">
   <button class="view-diff" data-action="toggleDiff" title="${this.previewOpen ? 'Back to terminal' : 'View diff'}">${this.previewOpen ? 'Back to terminal' : 'View diff'}</button>
-  <button data-action="showIntroduce" title="Introduce" aria-label="Introduce"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button>
-  <button data-action="showSettings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+  <button data-action="showIntroduce" title="Introduce" aria-label="Introduce"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button>
+  <button data-action="showSettings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   <button class="agent-mode" data-action="toggleAgentMode" title="Turn off Agent mode">Tắt Agent mode</button>
 </header>` : '';
     this.view.webview.html = `<!DOCTYPE html>
@@ -136,12 +136,12 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
 <style>
   * { box-sizing: border-box; }
   html, body { height: 100%; }
-  body { margin: 0; padding: 5px 0; overflow: auto; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: 12px var(--vscode-font-family); }
-  .panel-header { min-height: 30px; display: flex; align-items: center; gap: 3px; padding: 2px 5px 6px; border-bottom: 1px solid var(--vscode-panel-border); }
-  .panel-header button { height: 23px; padding: 0 5px; color: var(--vscode-icon-foreground); background: transparent; border: 0; border-radius: 3px; cursor: pointer; font: inherit; }
+  body { margin: 0; padding: 0 0 5px; overflow-x: hidden; overflow-y: auto; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: 12px var(--vscode-font-family); }
+  .panel-header { position: sticky; top: 0; z-index: 2; background: var(--vscode-sideBar-background); min-height: 40px; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .panel-header button { min-width: 30px; height: 30px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-icon-foreground); background: transparent; border: 0; border-radius: 4px; cursor: pointer; font: inherit; font-size: 13px; line-height: 1; }
   .panel-header button:hover { background: var(--vscode-toolbar-hoverBackground); }
-  .panel-header .view-diff { padding: 0 7px; color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-button-border, rgba(128,128,128,.45)); }
-  .panel-header .agent-mode { margin-left: auto; padding: 0 7px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+  .panel-header .view-diff { padding: 0 12px; color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-button-border, rgba(128,128,128,.45)); }
+  .panel-header .agent-mode { margin-left: auto; padding: 0 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
   .row { width: 100%; min-height: 22px; display: flex; align-items: center; padding: 2px 8px; gap: 5px; }
   .folder { color: var(--vscode-foreground); font-weight: 500; border: 0; background: transparent; text-align: left; cursor: pointer; font: inherit; }
   .folder:hover { background: var(--vscode-list-hoverBackground); }
@@ -165,7 +165,8 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
   .folder-block:hover > .folder-children::before { opacity: .28; }
   .file { border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; font: inherit; }
   .file:hover { background: var(--vscode-list-hoverBackground); }
-  .file.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+  .file.active { background: var(--vscode-list-inactiveSelectionBackground); color: var(--vscode-list-inactiveSelectionForeground, inherit); font-weight: 600; }
+  body:focus-within .file.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
   .icon { width: 16px; height: 16px; flex: 0 0 16px; object-fit: contain; }
   .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stats { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; white-space: nowrap; font-size: 11px; }
@@ -200,7 +201,7 @@ ${rows || '<div class="empty">No pending changes</div>'}
         return `<div class="folder-block"><button class="row folder" data-folder-toggle="true" style="padding-left:${8 + depth * 8}px"><span class="chevron" aria-hidden="true"></span><span>${escapeHtml(child.label)}</span></button><div class="folder-children" style="--tree-depth:${depth}">${this.renderChildren(child.children, depth + 1, iconBase)}</div></div>`;
       }
       const metadata = child.metadata;
-      const active = metadata.filePath === this.activeFilePath ? ' active' : '';
+      const active = isSameFile(metadata.filePath, this.activeFilePath) ? ' active' : '';
       const icon = `${iconBase}${this.fileIconName(metadata.filePath)}`;
       const stats = metadata.hunks === 0
         ? '<span class="hunks">empty</span>'
@@ -303,6 +304,12 @@ ${rows || '<div class="empty">No pending changes</div>'}
     this.diffDisposable.dispose();
     this.viewMessageDisposable?.dispose();
   }
+}
+
+/** Windows paths are case-insensitive: Explorer and pending metadata may differ only in case. */
+function isSameFile(a: string, b: string | undefined): boolean {
+  if (b === undefined) { return false; }
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 function escapeHtml(value: string): string {

@@ -4,11 +4,14 @@ import * as vscode from 'vscode';
 import { PtySession } from './ptySession';
 import { findInstallableForPrimary, installFont } from './fontInstaller';
 import { DiffManager } from '../diff/diffManager';
+import { sortLikePendingTree } from '../diff/treeOrder';
 import {
   buildPendingFilesInnerHtml,
   SessionState,
 } from './pendingFilesPage';
 import { buildTerminalHtml } from './terminalHtml';
+import { openBeside } from '../preview/openBeside';
+import { getPreviewKind, isBinaryImage } from '../preview/previewKind';
 import { applySoundNotifications } from '../commands/soundNotifications';
 import {
   BurstDetectionSettings,
@@ -30,6 +33,7 @@ import {
 
 const SETTINGS_KEY = 'ai-cli-diff-view.terminal.settings';
 const INTRODUCE_SEEN_KEY = 'ai-cli-diff-view.introduce.seen';
+const MAX_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024;
 
 interface SessionRecord {
   pty: PtySession;
@@ -57,6 +61,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private workspaceDiffDisposable?: vscode.Disposable;
   private themeDisposable?: vscode.Disposable;
   private lastTerminalFocused = false;
+  private windowBlurredAt = 0;
+  private blurTimer: NodeJS.Timeout | undefined;
   private agentModeActive = false;
   private focusWhenReady = false;
   private diffPreviewOpen = false;
@@ -139,15 +145,17 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     if (!this.agentModeActive || !this.diffManager.hasPendingDiff(filePath)) {
       return false;
     }
+    // Explorer may spell the path with another case; use the one the pending list shows.
+    const displayPath = this.diffManager.getDisplayPath(filePath);
     this.filePreviewOpen = false;
     this.filePreviewPath = undefined;
     this.diffPreviewOpen = true;
     this._onDidChangePreviewVisibility.fire(true);
-    this._onDidChangePreviewActiveFile.fire(filePath);
+    this._onDidChangePreviewActiveFile.fire(displayPath);
     if (this.webview) {
-      void this.webview.postMessage({ type: 'showDiffPreview', path: filePath });
+      void this.webview.postMessage({ type: 'showDiffPreview', path: displayPath });
     } else {
-      this.pendingAgentFilePath = filePath;
+      this.pendingAgentFilePath = displayPath;
     }
     return true;
   }
@@ -161,6 +169,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     }
     this.diffPreviewOpen = false;
     this._onDidChangePreviewVisibility.fire(false);
+    // Not a pending file: clear the pending-files highlight left by the previous file.
+    this._onDidChangePreviewActiveFile.fire(undefined);
     this.filePreviewOpen = true;
     this.filePreviewPath = filePath;
     if (this.webview) {
@@ -179,7 +189,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       if (this.view) {
         this.view.show(false);
       } else {
-        this.panel?.reveal(vscode.ViewColumn.Active, true);
+        this.panel?.reveal(undefined, false);
       }
       // Revealing the webview is not enough when the editor group was focused
       // by the pending-files view; put the cursor back in xterm as well.
@@ -193,6 +203,43 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
   wasTerminalFocused(): boolean {
     return this.lastTerminalFocused;
+  }
+
+  /** Called by the host on every window focus change so a terminal blur can be classed as alt-tab or click-away. */
+  noteWindowFocus(focused: boolean): void {
+    if (!focused) {
+      this.windowBlurredAt = Date.now();
+    }
+  }
+
+  /**
+   * Put the cursor back in xterm without revealing the panel, so a panel the
+   * user switched away from is not pulled to the front. Returns whether the
+   * message was sent; the webview may still decline (open overlay, input).
+   */
+  restoreTerminalFocus(): boolean {
+    const visible = this.panel ? this.panel.visible && this.panel.active : true;
+    if (!this.webview || !visible) {
+      return false;
+    }
+    void this.webview.postMessage({ type: 'focusTerminal', onlyIfIdle: true });
+    return true;
+  }
+
+  private onTerminalFocusState(focused: boolean): void {
+    clearTimeout(this.blurTimer);
+    if (focused) {
+      this.lastTerminalFocused = true;
+      return;
+    }
+    // A blur caused by alt-tab is followed by (or follows) the window losing
+    // focus; a blur caused by clicking another view is not. Wait for the
+    // window event before deciding.
+    const blurredAt = Date.now();
+    this.blurTimer = setTimeout(() => {
+      const windowLost = Math.abs(this.windowBlurredAt - blurredAt) < 300;
+      this.lastTerminalFocused = windowLost;
+    }, 300);
   }
 
   private postFilesUpdate(): void {
@@ -520,10 +567,15 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
     const monacoDir = vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'monaco-editor', 'min');
     const webviewDir = vscode.Uri.joinPath(this.context.extensionUri, 'res', 'webview');
+    const previewLibDirs = ['marked', 'dompurify', 'mermaid'].map((name) => (
+      vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', name)
+    ));
+    // Workspace folders let the preview load relative images of a markdown file and image files.
+    const workspaceDirs = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri);
 
     webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir, iconsDir, introDir, monacoDir, webviewDir],
+      localResourceRoots: [xtermDir, iconsDir, introDir, monacoDir, webviewDir, ...previewLibDirs, ...workspaceDirs],
     };
 
     this.webviewMessageDisposable?.dispose();
@@ -724,6 +776,17 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.postFilePreviewError(msg.path, err);
           });
           return;
+        case 'sessionTitle':
+          // Only the agent-mode panel has a title of its own; the sidebar view keeps its fixed name.
+          if (this.panel) {
+            this.panel.title = typeof msg.title === 'string' && msg.title.trim() ? msg.title : 'Agent Terminal';
+          }
+          return;
+        case 'filePreviewOpenBeside':
+          void openBeside(msg.path).catch((err: unknown) => {
+            void vscode.window.showErrorMessage(`Could not open file beside: ${err instanceof Error ? err.message : String(err)}`);
+          });
+          return;
         case 'requestDiffPreviewFile':
           void this.postDiffPreviewFile(msg.path);
           return;
@@ -757,7 +820,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           void this.context.globalState.update(INTRODUCE_SEEN_KEY, true);
           return;
         case 'terminalFocusState':
-          this.lastTerminalFocused = !!msg.focused;
+          this.onTerminalFocusState(!!msg.focused);
           return;
         case 'viewTooNarrow':
           // Webview reports its width dropped below ~1/4 of screen width.
@@ -796,7 +859,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     if (!this.webview || !this.diffPreviewOpen) {
       return;
     }
-    const files = this.diffManager.getPendingFiles().map((filePath) => ({
+    const files = sortLikePendingTree(this.diffManager.getPendingFiles()).map((filePath) => ({
       path: filePath,
       label: this.displayPath(filePath),
     }));
@@ -827,17 +890,55 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private async postFilePreview(filePath: string): Promise<void> {
     if (!this.webview || !this.filePreviewOpen) { return; }
     const uri = vscode.Uri.file(filePath);
+    const kind = getPreviewKind(filePath);
+    const label = this.displayPath(filePath);
+    const theme = currentMonacoTheme();
+
+    if (isBinaryImage(filePath)) {
+      const stat = await vscode.workspace.fs.stat(uri);
+      if (!this.webview || !this.filePreviewOpen) { return; }
+      if (stat.size > MAX_IMAGE_PREVIEW_BYTES) {
+        throw new Error(`Image is too large to preview (${(stat.size / 1048576).toFixed(1)} MB)`);
+      }
+      this.assertInWorkspace(uri);
+      void this.webview.postMessage({
+        type: 'filePreviewData', kind, path: filePath, label, theme,
+        src: this.webview.asWebviewUri(uri).toString(),
+        size: stat.size,
+      });
+      return;
+    }
+
     const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.fsPath === filePath);
     const document = openDocument ?? await vscode.workspace.openTextDocument(uri);
     if (!this.webview || !this.filePreviewOpen) { return; }
-    void this.webview.postMessage({
+    const payload: Record<string, unknown> = {
       type: 'filePreviewData',
+      kind,
       path: filePath,
-      label: this.displayPath(filePath),
+      label,
       content: document.getText(),
       language: document.languageId,
-      theme: currentMonacoTheme(),
-    });
+      theme,
+    };
+    if (kind === 'image' || kind === 'markdown') {
+      // Webview URIs only resolve inside localResourceRoots; outside the workspace they would 404.
+      const inWorkspace = !!vscode.workspace.getWorkspaceFolder(uri);
+      if (kind === 'image') {
+        this.assertInWorkspace(uri);
+        payload.src = this.webview.asWebviewUri(uri).toString();
+      } else if (inWorkspace) {
+        const dir = vscode.Uri.file(path.dirname(filePath));
+        payload.baseUri = `${this.webview.asWebviewUri(dir).toString()}/`;
+      }
+    }
+    void this.webview.postMessage(payload);
+  }
+
+  private assertInWorkspace(uri: vscode.Uri): void {
+    if (!vscode.workspace.getWorkspaceFolder(uri)) {
+      throw new Error('File is outside the workspace, open it from the Explorer instead');
+    }
   }
 
   private async applyFilePreviewEdit(filePath: string, content: string): Promise<void> {

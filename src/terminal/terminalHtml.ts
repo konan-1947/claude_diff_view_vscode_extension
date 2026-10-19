@@ -48,7 +48,15 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const addonFitJs = `${xtermBase}/addon-fit.js`;
   const monacoBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs'));
   const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
-  const filePreviewJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'filePreview.js'));
+  const previewDir = vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'preview');
+  const previewCss = webview.asWebviewUri(vscode.Uri.joinPath(previewDir, 'preview.css'));
+  const previewScripts = ['libs', 'code', 'mermaid', 'markdown', 'image', 'csv', 'index']
+    .map((name) => webview.asWebviewUri(vscode.Uri.joinPath(previewDir, `${name}.js`)));
+  const previewLibs = {
+    marked: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'marked', 'lib', 'marked.umd.js')).toString(),
+    dompurify: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'dompurify', 'dist', 'purify.min.js')).toString(),
+    mermaid: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'mermaid', 'dist', 'mermaid.min.js')).toString(),
+  };
 
   const introBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'introduce'));
   const introSlides: IntroSlide[] = [
@@ -77,6 +85,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <link rel="stylesheet" href="${xtermCss}">
+<link rel="stylesheet" href="${previewCss}">
 <style>
   html, body { height: 100%; margin: 0; padding: 0; }
   body {
@@ -98,6 +107,12 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     font-family: var(--vscode-font-family);
     font-size: 11px;
     user-select: none;
+  }
+  /* Only the terminal page follows the terminal colours; the files page keeps the sidebar look. */
+  body.page-terminal #header {
+    border-bottom-color: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
+    background: var(--chrome-bg, var(--vscode-sideBar-background));
+    color: var(--chrome-fg, var(--vscode-foreground));
   }
   #header-title {
     opacity: 0.75;
@@ -164,6 +179,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   .header-btn svg { display: block; }
   .header-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); color: var(--vscode-foreground); }
+  body.page-terminal #header .header-btn:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); color: var(--chrome-fg, var(--vscode-foreground)); }
+  body.page-terminal #header .header-btn { color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground))); }
+  body.page-terminal #header .header-separator { background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.45))); }
   .header-btn:active { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.28)); }
 
   /* Page switching */
@@ -185,15 +203,17 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     height: 28px;
     display: flex;
     align-items: stretch;
-    background: var(--vscode-sideBar-background);
-    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+    background: var(--chrome-bg, var(--vscode-sideBar-background));
+    border-bottom: 1px solid var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
+    color: var(--chrome-fg, var(--vscode-foreground));
     font-family: var(--vscode-font-family);
     font-size: 11px;
     user-select: none;
     min-width: 0;
   }
   .tabs {
-    flex: 1 1 auto;
+    /* Shrink-only: the + button stays right after the last tab instead of at the far edge. */
+    flex: 0 1 auto;
     display: flex;
     overflow-x: auto;
     overflow-y: hidden;
@@ -210,17 +230,17 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     min-width: 90px;
     max-width: 160px;
     height: 100%;
-    border-right: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.18));
+    border-right: 1px solid var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.18)));
     cursor: pointer;
     position: relative;
     overflow: hidden;
     box-sizing: border-box;
-    color: var(--vscode-foreground);
+    color: var(--chrome-fg, var(--vscode-foreground));
     opacity: 0.78;
   }
-  .tab:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.12)); opacity: 1; }
+  .tab:hover { background: var(--chrome-hover, var(--vscode-list-hoverBackground, rgba(128,128,128,0.12))); opacity: 1; }
   .tab.active {
-    background: var(--vscode-editor-background);
+    background: var(--chrome-active, var(--vscode-editor-background));
     opacity: 1;
   }
   .tab.active::after {
@@ -249,12 +269,13 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     line-height: 1;
   }
   .tab:hover .tab-close, .tab.active .tab-close { opacity: 0.7; }
-  .tab-close:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); opacity: 1; }
+  .tab-close:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); opacity: 1; }
   .tab-add {
     flex: 0 0 28px;
+    margin-right: auto;
     background: transparent;
     border: none;
-    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground)));
     cursor: pointer;
     font-size: 16px;
     line-height: 1;
@@ -262,7 +283,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     align-items: center;
     justify-content: center;
   }
-  .tab-add:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); }
+  .tab-add:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
 
   #content {
     flex: 1 1 auto;
@@ -669,6 +690,46 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .aggregate-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .aggregate-file-stats { margin-left: auto; flex: 0 0 auto; font-family: var(--vscode-font-family); font-size: 10px; }
   .aggregate-file-actions { display: flex; flex: 0 0 auto; gap: 4px; margin-left: 4px; }
+  .aggregate-hunk-nav {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: stretch;
+    margin-left: 6px;
+    height: 24px;
+    overflow: hidden;
+    border: 1px solid var(--vscode-button-border, rgba(128,128,128,0.4));
+    border-radius: 4px;
+    background: var(--vscode-button-secondaryBackground, transparent);
+    font-family: var(--vscode-font-family);
+    font-size: 10px;
+  }
+  .aggregate-hunk-nav[hidden] { display: none; }
+  .aggregate-hunk-nav button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    padding: 0;
+    border: 0;
+    color: var(--vscode-icon-foreground, var(--vscode-foreground));
+    background: transparent;
+    cursor: pointer;
+  }
+  .aggregate-hunk-nav button svg { display: block; }
+  .aggregate-hunk-nav button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.22)); }
+  .aggregate-hunk-nav button:active:not(:disabled) { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.32)); }
+  .aggregate-hunk-nav button:disabled { opacity: .35; cursor: default; }
+  .aggregate-hunk-counter {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    padding: 0 6px;
+    border-left: 1px solid var(--vscode-button-border, rgba(128,128,128,0.4));
+    border-right: 1px solid var(--vscode-button-border, rgba(128,128,128,0.4));
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
   .aggregate-file-actions button,
   .aggregate-hunk-actions button {
     padding: 3px 7px;
@@ -1156,8 +1217,16 @@ ${FONT_OPTIONS.map((f) => {
       <section class="file-preview-card" role="dialog" aria-label="File preview">
         <header class="file-preview-head">
           <strong id="file-preview-path">Loading file…</strong>
-          <span>Ctrl+S to save</span>
+          <span class="file-preview-head-right">
+            <span id="file-preview-modes" hidden>
+              <button type="button" data-mode="preview">Preview</button>
+              <button type="button" data-mode="source">Source</button>
+            </span>
+            <button id="file-preview-beside" type="button" hidden title="Open in a side editor with its own viewer (closes this preview)">Open in side</button>
+            <span id="file-preview-hint">Ctrl+S to save</span>
+          </span>
         </header>
+        <div id="file-preview-render" hidden></div>
         <div id="file-preview-editor"></div>
       </section>
     </div>
@@ -1190,9 +1259,10 @@ ${FONT_OPTIONS.map((f) => {
   <script nonce="${nonce}" src="${addonFitJs}"></script>
   <script nonce="${nonce}">
     window.__AI_CLI_MONACO_BASE__ = ${JSON.stringify(monacoBase.toString())};
+    window.__AI_CLI_PREVIEW_LIBS__ = ${JSON.stringify(previewLibs)};
   </script>
   <script nonce="${nonce}" src="${aggregateDiffJs}"></script>
-  <script nonce="${nonce}" src="${filePreviewJs}"></script>
+${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>`).join('\n')}
   <script nonce="${nonce}">
     (function () {
       const vscode = window.__AI_CLI_VSCODE_API__ || (
@@ -1270,9 +1340,28 @@ ${FONT_OPTIONS.map((f) => {
         }
       }
 
+      // The header and tab strip follow the terminal colours for fixed presets, so they
+      // do not clash with the terminal below; with the "VS Code theme" preset they keep
+      // the VS Code variables.
+      function applyChromeColors(s, theme) {
+        const root = document.documentElement.style;
+        const names = ['--chrome-bg', '--chrome-fg', '--chrome-border', '--chrome-hover', '--chrome-active'];
+        if (s.themePreset === 'vscode') {
+          names.forEach((name) => root.removeProperty(name));
+          return;
+        }
+        const fg = theme.foreground;
+        root.setProperty('--chrome-bg', 'color-mix(in srgb, ' + theme.background + ' 88%, ' + fg + ' 12%)');
+        root.setProperty('--chrome-fg', fg);
+        root.setProperty('--chrome-border', 'color-mix(in srgb, ' + fg + ' 25%, transparent)');
+        root.setProperty('--chrome-hover', 'color-mix(in srgb, ' + fg + ' 15%, transparent)');
+        root.setProperty('--chrome-active', theme.background);
+      }
+
       function applySettings(s) {
         currentSettings = s;
         const theme = resolveTheme(s);
+        applyChromeColors(s, theme);
         const wrap = document.getElementById('term-wrap');
         if (wrap) wrap.style.background = theme.background;
         for (const sess of sessions.values()) {
@@ -1314,16 +1403,6 @@ ${FONT_OPTIONS.map((f) => {
             navigator.clipboard.writeText(t.getSelection()).catch(() => {});
             return false;
           }
-          // Ctrl/Cmd+V pastes from clipboard. preventDefault stops the browser's
-          // own paste event from firing, otherwise xterm's native paste handler
-          // would also process the clipboard and we'd get duplicated text.
-          if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'v' || e.key === 'V')) {
-            e.preventDefault();
-            navigator.clipboard.readText().then((text) => {
-              if (text) t.paste(text);
-            }).catch(() => {});
-            return false;
-          }
           return true;
         });
         return t;
@@ -1353,6 +1432,28 @@ ${FONT_OPTIONS.map((f) => {
         return tab;
       }
 
+      // Programs set the terminal title with OSC 0/2 (Claude Code, PowerShell...). Follow it,
+      // debounced because an agent can rewrite it many times a second.
+      function shortTitle(text) {
+        const clean = Array.from(String(text || '')).filter((ch) => ch.charCodeAt(0) > 31 && ch.charCodeAt(0) !== 127).join('').trim();
+        return clean.length > 60 ? clean.slice(0, 59) + '…' : clean;
+      }
+
+      function reportPanelTitle() {
+        const sess = sessions.get(activeId);
+        vscode.postMessage({ type: 'sessionTitle', title: sess ? sess.shownTitle : '' });
+      }
+
+      function applySessionTitle(sess) {
+        const title = shortTitle(sess.rawTitle) || sess.defaultTitle;
+        if (title === sess.shownTitle) return;
+        sess.shownTitle = title;
+        const titleEl = sess.tab.querySelector('.tab-title');
+        if (titleEl) titleEl.textContent = title;
+        sess.tab.title = sess.rawTitle || sess.defaultTitle;
+        if (sess.id === activeId) reportPanelTitle();
+      }
+
       function activateTab(id) {
         if (!sessions.has(id)) return;
         if (activeId === id) return;
@@ -1367,12 +1468,15 @@ ${FONT_OPTIONS.map((f) => {
         activeId = id;
         // scroll the tab into view
         try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
+        reportPanelTitle();
         requestAnimationFrame(() => {
           safeFitSession(next);
           vscode.postMessage({ type: 'resize', id, cols: next.term.cols, rows: next.term.rows });
           try { next.term.focus(); } catch (_) {}
         });
       }
+
+      let focusOnSessionCreated = false;
 
       function onSessionCreated(id, title) {
         const host = document.createElement('div');
@@ -1384,31 +1488,30 @@ ${FONT_OPTIONS.map((f) => {
         const f = new FitAddon.FitAddon();
         t.loadAddon(f);
         t.open(host);
-        // Suppress xterm.js's native paste handler. We handle Ctrl/Cmd+V ourselves
-        // in attachCustomKeyEventHandler so the clipboard text is sent to the PTY
-        // exactly once (respecting bracketed paste mode via t.paste()).
         const ta = host.querySelector('.xterm-helper-textarea');
         if (ta) {
-          ta.addEventListener('paste', (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-          }, true);
           ta.addEventListener('focus', () => {
             vscode.postMessage({ type: 'terminalFocusState', focused: true });
           });
           ta.addEventListener('blur', () => {
-            // Window-blur also fires this; ignore it so the stored state still
-            // reflects "terminal was focused" when the user alt-tabs away.
-            if (document.hasFocus()) {
-              vscode.postMessage({ type: 'terminalFocusState', focused: false });
-            }
+            // Always reported: the host compares it with the window-focus event
+            // to tell alt-tab (keep "was focused") from a click on another view.
+            vscode.postMessage({ type: 'terminalFocusState', focused: false });
           });
         }
 
         const tab = buildTabDom(id, title);
         tabsEl.appendChild(tab);
 
-        const sess = { id, term: t, fit: f, host, tab, dataDisp: null, exited: false };
+        const sess = {
+          id, term: t, fit: f, host, tab, dataDisp: null, exited: false,
+          defaultTitle: title, shownTitle: title, rawTitle: '', titleTimer: 0, titleDisp: null,
+        };
+        sess.titleDisp = t.onTitleChange((next) => {
+          sess.rawTitle = next;
+          clearTimeout(sess.titleTimer);
+          sess.titleTimer = setTimeout(() => applySessionTitle(sess), 300);
+        });
         sess.dataDisp = t.onData((data) => {
           if (sess.exited) return;
           vscode.postMessage({ type: 'input', id, data });
@@ -1416,12 +1519,18 @@ ${FONT_OPTIONS.map((f) => {
         sessions.set(id, sess);
         activateTab(id);
         // also fit + report dims (activateTab already does this on the rAF tick)
+        if (focusOnSessionCreated) {
+          focusOnSessionCreated = false;
+          requestAnimationFrame(() => { try { t.focus(); } catch (_) {} });
+        }
       }
 
       function onSessionClosed(id) {
         const sess = sessions.get(id);
         if (!sess) return;
         try { sess.dataDisp && sess.dataDisp.dispose(); } catch (_) {}
+        try { sess.titleDisp && sess.titleDisp.dispose(); } catch (_) {}
+        clearTimeout(sess.titleTimer);
         try { sess.term.dispose(); } catch (_) {}
         sess.host.remove();
         sess.tab.remove();
@@ -1633,9 +1742,20 @@ ${FONT_OPTIONS.map((f) => {
         } else if (msg.type === 'showFilePreview') {
           openFilePreview(msg.path);
         } else if (msg.type === 'focusTerminal') {
+          if (msg.onlyIfIdle) {
+            const active = document.activeElement;
+            const typing = active && active !== document.body
+              && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && !active.closest('.xterm');
+            const overlayOpen = ['diff-preview-overlay', 'file-preview-overlay', 'settings-overlay', 'introduce-overlay']
+              .some((id) => { const el = document.getElementById(id); return el && !el.hidden; });
+            if (typing || overlayOpen) return;
+          }
           const sess = sessions.get(activeId);
           if (sess) {
             requestAnimationFrame(() => { try { sess.term.focus(); } catch (_) {} });
+          } else {
+            // First session is still being spawned; focus it once it exists.
+            focusOnSessionCreated = true;
           }
         }
       });
@@ -1679,6 +1799,10 @@ ${FONT_OPTIONS.map((f) => {
         btnViewDiff.title = 'Preview all pending changes';
       }
 
+      document.addEventListener('ai-cli-preview-close-request', () => {
+        if (!filePreviewOverlay.hidden) closeFilePreview();
+      });
+
       function closeActivePreview() {
         if (!diffPreviewOverlay.hidden) closeDiffPreview();
         if (!filePreviewOverlay.hidden) closeFilePreview();
@@ -1691,12 +1815,9 @@ ${FONT_OPTIONS.map((f) => {
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && (!diffPreviewOverlay.hidden || !filePreviewOverlay.hidden)) closeActivePreview();
       });
-      // A VS Code webview does not receive a DOM click when the user clicks
-      // another view (Explorer/sidebar). Treat focus leaving the terminal as
-      // an outside click so the preview does not remain stuck open.
-      window.addEventListener('blur', () => {
-        if (!diffPreviewOverlay.hidden || !filePreviewOverlay.hidden) closeActivePreview();
-      });
+      // Focus leaving this webview (Explorer/Pending Files click) deliberately
+      // does not close a preview. The host replaces it when the click opens a
+      // file; closing on blur only exposed the terminal until that arrived.
       filePreviewOverlay.addEventListener('click', (event) => {
         if (event.target === filePreviewOverlay) closeFilePreview();
       });
