@@ -1,5 +1,6 @@
 import * as os from 'os';
 import * as vscode from 'vscode';
+import { getFreshEnv } from './freshEnv';
 
 type IPtyModule = typeof import('node-pty');
 type IPty = ReturnType<IPtyModule['spawn']>;
@@ -45,7 +46,7 @@ export class PtySession {
         cols: Math.max(1, cols),
         rows: Math.max(1, rows),
         cwd: cwd || os.homedir(),
-        env: { ...process.env } as Record<string, string>,
+        env: getFreshEnv(),
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
