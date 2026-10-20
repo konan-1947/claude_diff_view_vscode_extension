@@ -39,6 +39,10 @@ export class WorkspaceWatcher {
   /** Directory-create events waiting for one settled subtree reconciliation. */
   private readonly pendingDirectoryScans = new Map<string, NodeJS.Timeout>();
   private static readonly DIRECTORY_SETTLE_MS = 300;
+  /** Path vừa bị xoá, gom lại để 1 lần `rm -rf` chỉ dọn 1 lần (xem handleExternalDelete). */
+  private readonly pendingDeletes = new Set<string>();
+  private deleteSettleTimer: NodeJS.Timeout | undefined;
+  private static readonly DELETE_SETTLE_MS = 300;
   /** Debounce window is 500ms — keep entries an order of magnitude longer for safety, then drop. */
   private static readonly LAST_PROCESSED_TTL_MS = 60_000;
   /** VS Code save guard window is 2s — same safety multiplier. */
@@ -230,7 +234,10 @@ export class WorkspaceWatcher {
     fileWatcher.onDidCreate((uri) => {
       void this.handleExternalCreate(uri);
     });
-    
+    fileWatcher.onDidDelete((uri) => {
+      this.handleExternalDelete(uri);
+    });
+
     this.disposables.push(fileWatcher);
 
     for (const folder of folders) {
@@ -313,6 +320,49 @@ export class WorkspaceWatcher {
       void this.scanCreatedDirectory(uri);
     }, WorkspaceWatcher.DIRECTORY_SETTLE_MS);
     this.pendingDirectoryScans.set(absPath, timer);
+  }
+
+  /**
+   * File hoặc thư mục bị xoá: bỏ track hoàn toàn (baseline, file đang hold, diff
+   * pending và tab của nó). Chờ DELETE_SETTLE_MS rồi kiểm tra lại — nhiều tool ghi
+   * kiểu unlink rồi tạo lại; nếu bỏ track ngay, lần ghi đó bị coi là file mới và
+   * Revert all sẽ xoá mất file.
+   */
+  private handleExternalDelete(uri: vscode.Uri): void {
+    this.pendingDeletes.add(this.normalizePath(uri.fsPath));
+    if (this.deleteSettleTimer) { return; }
+    this.deleteSettleTimer = setTimeout(() => {
+      this.deleteSettleTimer = undefined;
+      void this.flushDeletes();
+    }, WorkspaceWatcher.DELETE_SETTLE_MS);
+  }
+
+  private async flushDeletes(): Promise<void> {
+    // Parents first, so a folder that is really gone covers everything below it.
+    const candidates = Array.from(this.pendingDeletes).sort((a, b) => a.length - b.length);
+    this.pendingDeletes.clear();
+    const gone: string[] = [];
+    for (const p of candidates) {
+      if (gone.some((root) => this.isSameOrDescendant(p, root))) { continue; }
+      try {
+        await vscode.workspace.fs.stat(vscode.Uri.file(p));
+      } catch {
+        gone.push(p);
+      }
+    }
+    if (gone.length === 0) { return; }
+
+    const isGone = (p: string): boolean => gone.some((root) => this.isSameOrDescendant(p, root));
+    for (const p of this.heldWrites.keys()) {
+      if (isGone(p)) { this.heldWrites.delete(p); }
+    }
+    for (const p of this.queuedExternalWrites.keys()) {
+      if (isGone(p)) { this.queuedExternalWrites.delete(p); }
+    }
+    for (const p of gone) {
+      this.snapshots.deleteUnder(p);
+    }
+    await this.diffManager.forgetDeleted(gone);
   }
 
   private isSameOrDescendant(candidatePath: string, parentPath: string): boolean {
@@ -570,6 +620,11 @@ export class WorkspaceWatcher {
       clearTimeout(timer);
     }
     this.pendingDirectoryScans.clear();
+    if (this.deleteSettleTimer) {
+      clearTimeout(this.deleteSettleTimer);
+      this.deleteSettleTimer = undefined;
+    }
+    this.pendingDeletes.clear();
     if (this.holdResolveTimer) {
       clearTimeout(this.holdResolveTimer);
       this.holdResolveTimer = undefined;

@@ -53,6 +53,19 @@ export class BaselineStore {
     return this.sizeSkipped.delete(key);
   }
 
+  /** Quên baseline của file này, hoặc mọi file nằm dưới nếu đây là thư mục vừa bị xoá. */
+  deleteUnder(filePath: string): void {
+    const key = this.normalizePath(filePath);
+    const prefix = key.endsWith(path.sep) ? key : key + path.sep;
+    const matches = (p: string): boolean => p === key || p.startsWith(prefix);
+    for (const p of this.snapshots.keys()) {
+      if (matches(p)) { this.snapshots.delete(p); }
+    }
+    for (const p of this.sizeSkipped) {
+      if (matches(p)) { this.sizeSkipped.delete(p); }
+    }
+  }
+
   /** Xoá toàn bộ baseline trong RAM. Dùng khi branch switch để rebuild lại từ disk. */
   clear(): void {
     this.snapshots.clear();

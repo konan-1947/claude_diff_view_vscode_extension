@@ -215,11 +215,15 @@ export class DiffManager {
    * không tạo tab thứ hai cùng file.
    */
   private async closeTextTabsFor(absPath: string): Promise<void> {
+    await this.closeTextTabsForAll(new Set([absPath]));
+  }
+
+  private async closeTextTabsForAll(absPaths: ReadonlySet<string>): Promise<void> {
     const targets: vscode.Tab[] = [];
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
         if (!(tab.input instanceof vscode.TabInputText)) { continue; }
-        if (normalizePath(tab.input.uri.fsPath) === absPath) {
+        if (absPaths.has(normalizePath(tab.input.uri.fsPath))) {
           // Preserve unsaved user edits. Closing a dirty text tab here would
           // trigger VS Code's save/discard dialog while an external change is
           // being routed to the custom diff editor.
@@ -297,6 +301,38 @@ export class DiffManager {
       await this.openDiff(nextTarget);
     }
     this._onDidChangeDiffs.fire();
+  }
+
+  /**
+   * File (hoặc thư mục) đã bị xoá khỏi đĩa: bỏ track mọi file pending nằm ở đó,
+   * kể cả file có từ trước — đóng tab diff + tab text, không mở lại gì.
+   * Bỏ qua file vẫn còn trên đĩa (unlink rồi ghi lại) và file có edit chưa lưu.
+   */
+  async forgetDeleted(paths: string[]): Promise<number> {
+    const roots = paths.map(normalizePath);
+    const isUnder = (key: string): boolean => roots.some((root) =>
+      key === root || key.startsWith(root.endsWith(path.sep) ? root : root + path.sep));
+    const dirty = new Set(vscode.workspace.textDocuments
+      .filter((doc) => doc.isDirty)
+      .map((doc) => normalizePath(doc.uri.fsPath)));
+
+    const forgotten = new Set<string>();
+    for (const key of this.snapshots.keys()) {
+      if (!isUnder(key) || dirty.has(key) || fs.existsSync(key)) { continue; }
+      forgotten.add(key);
+    }
+    if (forgotten.size === 0) { return 0; }
+
+    for (const key of forgotten) {
+      this.deleteSnapshot(key);
+      this.closePanel(key);
+      this.lastCursors.delete(key);
+      this.displayPaths.delete(key);
+    }
+    this.saveNow();
+    await this.closeTextTabsForAll(forgotten);
+    this._onDidChangeDiffs.fire();
+    return forgotten.size;
   }
 
   async acceptAllPending(): Promise<number> {
