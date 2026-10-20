@@ -15,10 +15,12 @@ import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
 import { BaselineScanner } from './baselineScanner';
 import { BaselineStore } from './baselineStore';
-import { isTextFile } from './fileTypeRules';
+import { isTextFile, looksBinary } from './fileTypeRules';
 import { isExcludedPathSegment } from './pathExclusions';
 import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
+import { AutoOpenQueue } from './autoOpenQueue';
+import { notify } from '../util/notify';
 
 interface ExternalWriteOptions {
   burstHoldOverride?: boolean;
@@ -37,6 +39,10 @@ export class WorkspaceWatcher {
   /** Directory-create events waiting for one settled subtree reconciliation. */
   private readonly pendingDirectoryScans = new Map<string, NodeJS.Timeout>();
   private static readonly DIRECTORY_SETTLE_MS = 300;
+  /** Path vừa bị xoá, gom lại để 1 lần `rm -rf` chỉ dọn 1 lần (xem handleExternalDelete). */
+  private readonly pendingDeletes = new Set<string>();
+  private deleteSettleTimer: NodeJS.Timeout | undefined;
+  private static readonly DELETE_SETTLE_MS = 300;
   /** Debounce window is 500ms — keep entries an order of magnitude longer for safety, then drop. */
   private static readonly LAST_PROCESSED_TTL_MS = 60_000;
   /** VS Code save guard window is 2s — same safety multiplier. */
@@ -53,6 +59,8 @@ export class WorkspaceWatcher {
   private readonly queuedExternalWrites = new Map<string, { burstHold: boolean; readDelayMs: number }>();
   /** Thời gian giữ file vượt ngưỡng burst chờ xác nhận git trước khi mở diff bình thường. */
   private holdMs = 2000;
+  private maxAutoOpenDiffs = 50;
+  private readonly autoOpen: AutoOpenQueue;
   /** File vượt ngưỡng burst, đang chờ xác nhận git (xem resolveOrHold/scheduleHoldResolve). */
   private readonly heldWrites = new Map<string, { originalContent: string; newContent: string; fileExistedBefore: boolean }>();
   private holdResolveTimer: NodeJS.Timeout | undefined;
@@ -67,6 +75,19 @@ export class WorkspaceWatcher {
   ) {
     this.snapshots = new BaselineStore();
     this.baselineScanner = new BaselineScanner(this.snapshots);
+    this.autoOpen = new AutoOpenQueue({
+      openDiff: (p, preserveFocus) => this.diffManager.openDiff(p, preserveFocus ? { preserveFocus: true } : undefined),
+      isPending: (p) => this.diffManager.hasPendingDiff(p),
+      pendingIndex: (p) => this.diffManager.getPendingIndex(p),
+      openDiffCount: () => this.diffManager.getOpenPanelCount(),
+      shouldAutoOpen: () => this.shouldAutoOpenDiff(),
+      maxOpen: () => this.maxAutoOpenDiffs,
+      notifyCapped: (skipped, max) => this.showCappedNotice(skipped, max),
+    });
+  }
+
+  private showCappedNotice(skipped: number, max: number): void {
+    notify(`${skipped} changed file(s) were not opened: ${max} diff tabs are already open. Review them in Pending Files.`);
   }
 
   start(): void {
@@ -77,7 +98,8 @@ export class WorkspaceWatcher {
       if (e.affectsConfiguration('ai-cli-diff-view.burstDetectionEnabled') ||
           e.affectsConfiguration('ai-cli-diff-view.burstDetectionWindowMs') ||
           e.affectsConfiguration('ai-cli-diff-view.burstDetectionThreshold') ||
-          e.affectsConfiguration('ai-cli-diff-view.burstDetectionHoldMs')) {
+          e.affectsConfiguration('ai-cli-diff-view.burstDetectionHoldMs') ||
+          e.affectsConfiguration('ai-cli-diff-view.maxAutoOpenDiffs')) {
         this.applyBurstConfig();
       }
     });
@@ -89,6 +111,8 @@ export class WorkspaceWatcher {
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
     const holdMs = config.get<number>('burstDetectionHoldMs', 2000);
     this.holdMs = Number.isFinite(holdMs) ? Math.min(10000, Math.max(500, holdMs)) : 2000;
+    const maxAutoOpen = config.get<number>('maxAutoOpenDiffs', 50);
+    this.maxAutoOpenDiffs = Number.isFinite(maxAutoOpen) ? Math.min(1000, Math.max(0, Math.floor(maxAutoOpen))) : 50;
   }
 
   private loadBurstMeterConfig(): BurstMeterConfig {
@@ -210,7 +234,10 @@ export class WorkspaceWatcher {
     fileWatcher.onDidCreate((uri) => {
       void this.handleExternalCreate(uri);
     });
-    
+    fileWatcher.onDidDelete((uri) => {
+      this.handleExternalDelete(uri);
+    });
+
     this.disposables.push(fileWatcher);
 
     for (const folder of folders) {
@@ -295,6 +322,49 @@ export class WorkspaceWatcher {
     this.pendingDirectoryScans.set(absPath, timer);
   }
 
+  /**
+   * File hoặc thư mục bị xoá: bỏ track hoàn toàn (baseline, file đang hold, diff
+   * pending và tab của nó). Chờ DELETE_SETTLE_MS rồi kiểm tra lại — nhiều tool ghi
+   * kiểu unlink rồi tạo lại; nếu bỏ track ngay, lần ghi đó bị coi là file mới và
+   * Revert all sẽ xoá mất file.
+   */
+  private handleExternalDelete(uri: vscode.Uri): void {
+    this.pendingDeletes.add(this.normalizePath(uri.fsPath));
+    if (this.deleteSettleTimer) { return; }
+    this.deleteSettleTimer = setTimeout(() => {
+      this.deleteSettleTimer = undefined;
+      void this.flushDeletes();
+    }, WorkspaceWatcher.DELETE_SETTLE_MS);
+  }
+
+  private async flushDeletes(): Promise<void> {
+    // Parents first, so a folder that is really gone covers everything below it.
+    const candidates = Array.from(this.pendingDeletes).sort((a, b) => a.length - b.length);
+    this.pendingDeletes.clear();
+    const gone: string[] = [];
+    for (const p of candidates) {
+      if (gone.some((root) => this.isSameOrDescendant(p, root))) { continue; }
+      try {
+        await vscode.workspace.fs.stat(vscode.Uri.file(p));
+      } catch {
+        gone.push(p);
+      }
+    }
+    if (gone.length === 0) { return; }
+
+    const isGone = (p: string): boolean => gone.some((root) => this.isSameOrDescendant(p, root));
+    for (const p of this.heldWrites.keys()) {
+      if (isGone(p)) { this.heldWrites.delete(p); }
+    }
+    for (const p of this.queuedExternalWrites.keys()) {
+      if (isGone(p)) { this.queuedExternalWrites.delete(p); }
+    }
+    for (const p of gone) {
+      this.snapshots.deleteUnder(p);
+    }
+    await this.diffManager.forgetDeleted(gone);
+  }
+
   private isSameOrDescendant(candidatePath: string, parentPath: string): boolean {
     const relative = path.relative(parentPath, candidatePath);
     return relative === '' ||
@@ -320,7 +390,7 @@ export class WorkspaceWatcher {
         }
         if ((type & vscode.FileType.Directory) !== 0) {
           pending.push(childUri);
-        } else if ((type & vscode.FileType.File) !== 0 && isTextFile(name)) {
+        } else if ((type & vscode.FileType.File) !== 0 && isTextFile(childUri.fsPath)) {
           // The directory already had a settle delay, so do not add the normal
           // 200ms file-write delay again. Existing file debounce handles overlap
           // with a child onDidCreate event that VS Code did deliver.
@@ -362,7 +432,7 @@ export class WorkspaceWatcher {
     this.lastProcessed.set(absPath, now);
     this.pruneStaleMapEntries();
 
-    if (!isTextFile(path.basename(absPath))) { return; }
+    if (!isTextFile(absPath)) { return; }
     if (!this.isInWorkspace(absPath)) { return; }
 
     if (this.baselineScansInProgress > 0) {
@@ -405,6 +475,8 @@ export class WorkspaceWatcher {
       }
 
       const newContentRaw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+      // Mẫu includedPaths rộng (vd: `templates/`) có thể khớp cả file nhị phân.
+      if (looksBinary(newContentRaw)) { return; }
 
       // File vượt giới hạn số dòng -> coi như không tồn tại với extension:
       // không giữ baseline, không mở diff. Xoá cả baseline cũ phòng khi file
@@ -473,9 +545,8 @@ export class WorkspaceWatcher {
     if (!this.shouldAutoOpenDiff()) {
       return;
     }
-    this.diffManager.openDiff(filePath, fromBurstDump ? { preserveFocus: true } : undefined).catch((err: unknown) => {
-      console.error('[ai-cli-diff-view] workspaceWatcher openDiff failed:', err);
-    });
+    // Capped and opened in small batches, see AutoOpenQueue (issue #37, HOT-1).
+    this.autoOpen.enqueue(filePath, fromBurstDump);
   }
 
   /**
@@ -551,11 +622,17 @@ export class WorkspaceWatcher {
       clearTimeout(timer);
     }
     this.pendingDirectoryScans.clear();
+    if (this.deleteSettleTimer) {
+      clearTimeout(this.deleteSettleTimer);
+      this.deleteSettleTimer = undefined;
+    }
+    this.pendingDeletes.clear();
     if (this.holdResolveTimer) {
       clearTimeout(this.holdResolveTimer);
       this.holdResolveTimer = undefined;
     }
     this.heldWrites.clear();
     this.queuedExternalWrites.clear();
+    this.autoOpen.dispose();
   }
 }

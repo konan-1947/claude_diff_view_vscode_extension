@@ -30,16 +30,20 @@ export interface SoundNotificationSettings {
 /** Giới hạn kích thước file được theo dõi. Xem `src/watcher/fileSizeLimit.ts`. */
 export interface FileLimitSettings {
   maxFileLines: number;
+  /** Most diff tabs opened automatically; 0 = no limit. See `src/watcher/autoOpenQueue.ts`. */
+  maxAutoOpenDiffs: number;
 }
 
 /** User-configured path exclusions. See `src/watcher/pathExclusions.ts`. */
 export interface ExclusionSettings {
   excludedPaths: string[];
+  respectGitignore: boolean;
 }
 
 export interface TerminalSettingsPayload
   extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings, FileLimitSettings, ExclusionSettings {
-  supportedFileExtensions: string[];
+  /** `.gitignore`-style patterns of extra files to track. See `src/watcher/fileTypeRules.ts`. */
+  includedPaths: string[];
 }
 
 export const DEFAULT_BURST_DETECTION_SETTINGS: BurstDetectionSettings = {
@@ -55,19 +59,23 @@ export const DEFAULT_SOUND_NOTIFICATION_SETTINGS: SoundNotificationSettings = {
 
 export const DEFAULT_FILE_LIMIT_SETTINGS: FileLimitSettings = {
   maxFileLines: 5000,
+  maxAutoOpenDiffs: 50,
 };
 
 export const DEFAULT_EXCLUSION_SETTINGS: ExclusionSettings = {
   excludedPaths: [],
+  respectGitignore: true,
 };
 
 /** 0 = tắt giới hạn. Trần trên chỉ để chặn nhập nhầm, không phải khuyến nghị. */
 export const MAX_FILE_LINES_CEILING = 200000;
+export const MAX_AUTO_OPEN_DIFFS_CEILING = 1000;
 
 export type IncomingMessage =
   | { type: 'ready' }
   | { type: 'toggleAgentMode' }
-  | { type: 'showPendingFiles' }
+  | { type: 'pendingOverlay'; open: boolean }
+  | { type: 'openPendingFile'; path: string }
   | { type: 'createSession'; cols: number; rows: number }
   | { type: 'closeSession'; id: string }
   | { type: 'input'; id: string; data: string }
@@ -77,7 +85,6 @@ export type IncomingMessage =
   | { type: 'updateSettings'; settings: TerminalSettingsPayload }
   | { type: 'installFont'; primary: string }
   | { type: 'reloadWindow' }
-  | { type: 'openFile'; path: string }
   | { type: 'requestDiffPreview' }
   | { type: 'closeDiffPreview' }
   | { type: 'previewActiveFile'; path?: string }
@@ -96,7 +103,20 @@ export type IncomingMessage =
   | { type: 'introduceSeen' }
   | { type: 'terminalFocusState'; focused: boolean }
   | { type: 'sessionTitle'; title: string }
+  | { type: 'activeSession'; id: string }
   | { type: 'viewTooNarrow' };
+
+/** One running session, as sent to a newly attached webview so it can redraw the tab. */
+export interface SessionSnapshot {
+  id: string;
+  title: string;
+  rawTitle: string;
+  serialized: string;
+  cols: number;
+  rows: number;
+  exited: boolean;
+  exitCode: number;
+}
 
 export const DEFAULT_SETTINGS: TerminalSettings = {
   fontFamily: 'Consolas, "Courier New", monospace',

@@ -308,3 +308,57 @@ body {
 .monaco-editor .sticky-widget {
   background-color: var(--vscode-editorStickyScroll-background, var(--vscode-editor-background)) !important;
 }
+
+/* Loading skeleton until the first 'set' message. Rows share Monaco's line height. */
+#skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+  opacity: 0;
+  /* Only appear when loading takes a while, so fast tabs don't flash. */
+  animation: sk-appear 120ms ease-out 150ms forwards;
+}
+.sk-row {
+  display: flex;
+  align-items: center;
+  height: var(--sk-line-height);
+}
+.sk-num,
+.sk-code {
+  height: 45%;
+  border-radius: 3px;
+  background: var(--vscode-editorLineNumber-foreground, rgba(128, 128, 128, 0.6));
+  opacity: 0.18;
+}
+.sk-num {
+  flex: 0 0 auto;
+  width: 1.4em;
+  margin: 0 2.2em 0 1.2em;
+}
+.sk-code { flex: 0 1 auto; }
+.sk-rows {
+  /* Shimmer: a soft highlight sweeping across all bars. */
+  -webkit-mask-image: linear-gradient(100deg, #000 35%, rgba(0, 0, 0, 0.4) 50%, #000 65%);
+  mask-image: linear-gradient(100deg, #000 35%, rgba(0, 0, 0, 0.4) 50%, #000 65%);
+  -webkit-mask-size: 300% 100%;
+  mask-size: 300% 100%;
+  animation: sk-shimmer 1.4s linear infinite;
+}
+.sk-error {
+  position: absolute;
+  top: 40%;
+  width: 100%;
+  text-align: center;
+  color: var(--vscode-errorForeground);
+}
+#skeleton.failed .sk-rows { display: none; }
+@keyframes sk-appear { to { opacity: 1; } }
+@keyframes sk-shimmer {
+  from { -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+  to { -webkit-mask-position: 0 0; mask-position: 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sk-rows { animation: none; }
+}

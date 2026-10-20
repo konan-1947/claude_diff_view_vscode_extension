@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
-  "version": "4.1.2",
+  "version": "5.0.2-preview",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
@@ -35,7 +35,15 @@
             "customOnly"
           ],
           "default": "defaultAndCustom",
-          "description": "Controls whether AI CLI Diff View uses its built-in text file rules together with custom settings, or only the custom settings."
+          "description": "Controls whether AI CLI Diff View uses its built-in text file rules together with ai-cli-diff-view.includedPaths, or only includedPaths."
+        },
+        "ai-cli-diff-view.includedPaths": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Extra files to track for AI edits — a baseline is kept and edits open a diff — on top of the built-in list (`.ts`, `.py`, `.md`, `Dockerfile`, …). Uses `.gitignore` syntax, one pattern per entry, matched relative to each workspace folder's root:\n\n- `*.prisma` — every `.prisma` file, at any depth\n- `Jenkinsfile` — every file named exactly `Jenkinsfile`\n- `config.*.local` — `config.dev.local`, `config.prod.local` (`*` = any characters, `?` = exactly one)\n- `templates/**/*.tpl` — `.tpl` files only inside `templates`\n- `/scripts/*` — files directly in `scripts` at the repo root\n- `!*.lock` — stop tracking `.lock` files, even though they are on the built-in list\n\n`.prisma` on its own only matches a file named exactly `.prisma` — use `*.prisma`. `excludedPaths` and `.gitignore` always win, and binary files are skipped even if a pattern matches them."
         },
         "ai-cli-diff-view.supportedFileExtensions": {
           "type": "array",
@@ -43,7 +51,8 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional file extensions that AI CLI Diff View should treat as text files. Entries may be written with or without a leading dot."
+          "description": "Additional file extensions that AI CLI Diff View should treat as text files. Entries may be written with or without a leading dot.",
+          "deprecationMessage": "Deprecated: use ai-cli-diff-view.includedPaths (.gitignore syntax) instead. Still read for now."
         },
         "ai-cli-diff-view.supportedFilenames": {
           "type": "array",
@@ -51,7 +60,8 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional exact filenames that AI CLI Diff View should treat as text files."
+          "description": "Additional exact filenames that AI CLI Diff View should treat as text files.",
+          "deprecationMessage": "Deprecated: use ai-cli-diff-view.includedPaths (.gitignore syntax) instead. Still read for now."
         },
         "ai-cli-diff-view.supportedFilenamePatterns": {
           "type": "array",
@@ -59,7 +69,8 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional filename glob patterns that AI CLI Diff View should treat as text files. Patterns match only the basename and support * and ? wildcards."
+          "description": "Additional filename glob patterns that AI CLI Diff View should treat as text files. Patterns match only the basename and support * and ? wildcards.",
+          "deprecationMessage": "Deprecated: use ai-cli-diff-view.includedPaths (.gitignore syntax) instead. Still read for now."
         },
         "ai-cli-diff-view.maxFileLines": {
           "type": "number",
@@ -74,6 +85,18 @@
             "type": "string"
           },
           "markdownDescription": "Paths that are never tracked — no baseline, no diff. Uses `.gitignore` syntax, one pattern per entry, matched relative to each workspace folder's root (never against folders outside the repo):\n\n- `generated` — any file or folder named `generated`, at any depth\n- `/generated` — only `generated` at the repo root\n- `generated/` — only folders named `generated`\n- `*.log`, `src/gen/**` — `*` stays within one folder, `**` spans folders\n- `!keep.log` — re-include something an earlier entry excluded\n\nAdds to the built-in list (`node_modules`, `.git`, `build`, `dist`, `out`, …), which cannot be re-included. Diffs already open for a newly excluded file stay until you resolve them."
+        },
+        "ai-cli-diff-view.respectGitignore": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Never track files ignored by git — no baseline, no diff. Uses the `.gitignore` files of the repo that contains each file (every folder level, nested repos included) plus `.git/info/exclude`, so build output, generated files and unpacked packages an agent writes in bulk don't open diff tabs.\n\nTurn it off to review AI edits to ignored files such as `.env.local`. The global `core.excludesFile` is not read. Diffs already open for a newly ignored file stay until you resolve them."
+        },
+        "ai-cli-diff-view.maxAutoOpenDiffs": {
+          "type": "number",
+          "default": 50,
+          "minimum": 0,
+          "maximum": 1000,
+          "markdownDescription": "Advanced: most diff tabs opened automatically for AI edits. Once this many diff tabs are open, further changed files only appear in Pending Files (open them from there or with Alt+H / Alt+L) and a notification says how many were left out. Files are picked in Pending Files order. `0` turns the limit off."
         },
         "ai-cli-diff-view.baselineScanConcurrency": {
           "type": "number",
@@ -142,13 +165,13 @@
           "id": "ai-cli-diff-view.terminal",
           "name": "AI CLI",
           "type": "webview",
-          "when": "ai-cli-diff-view.terminalVisible && !ai-cli-diff-view.terminalFilesPage"
+          "when": "ai-cli-diff-view.terminalVisible"
         },
         {
           "id": "ai-cli-diff-view.agentChanges",
           "name": "PENDING FILES",
           "type": "webview",
-          "when": "ai-cli-diff-view.agentModeActive || ai-cli-diff-view.terminalVisible && ai-cli-diff-view.terminalFilesPage"
+          "when": "ai-cli-diff-view.agentModeActive"
         }
       ],
       "explorer": [
@@ -194,11 +217,6 @@
         "title": "AI CLI Diff: Open Pending File"
       },
       {
-        "command": "ai-cli-diff-view.showTerminal",
-        "title": "Back to Terminal",
-        "icon": "$(terminal)"
-      },
-      {
         "command": "ai-cli-diff-view.nextFile",
         "title": "AI CLI Diff: Next Edited File"
       },
@@ -233,16 +251,7 @@
         "key": "alt+l",
         "when": "ai-cli-diff-view.hasPendingDiff"
       }
-    ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "ai-cli-diff-view.showTerminal",
-          "when": "view == ai-cli-diff-view.agentChanges && ai-cli-diff-view.terminalFilesPage",
-          "group": "navigation"
-        }
-      ]
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -260,6 +269,8 @@
   "dependencies": {
     "@vscode/codicons": "^0.0.45",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
     "diff": "^9.0.0",
     "dompurify": "^3.4.17",

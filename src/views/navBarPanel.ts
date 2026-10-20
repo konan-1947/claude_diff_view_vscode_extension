@@ -15,11 +15,14 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private navInfo?: NavInfo;
   private activeFilePath?: string;
+  /** Last HTML given to the view: reassigning webview.html reloads the whole page. */
+  private renderedHtml?: string;
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
+    this.renderedHtml = undefined;
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [this.extensionUri],
@@ -44,7 +47,10 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
 
   private render(): void {
     if (!this.view) { return; }
-    this.view.webview.html = this.buildHtml();
+    const html = this.buildHtml();
+    if (html === this.renderedHtml) { return; }
+    this.renderedHtml = html;
+    this.view.webview.html = html;
   }
 
   private buildHtml(): string {

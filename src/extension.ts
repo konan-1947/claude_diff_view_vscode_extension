@@ -3,16 +3,18 @@ import { DiffManager } from './diff/diffManager';
 import { DiffEditorProvider, DIFF_EDITOR_VIEW_TYPE } from './diff/diffWebviewPanel';
 import { IAiRunner } from './runner/aiRunner';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
-import { refreshTextFileRules } from './watcher/fileTypeRules';
+import { migrateLegacyTextFileSettings, refreshTextFileRules } from './watcher/fileTypeRules';
 import { refreshFileSizeLimit } from './watcher/fileSizeLimit';
-import { refreshPathExclusions } from './watcher/pathExclusions';
+import { clearGitignoreCache, isExcludedPathSegment, refreshPathExclusions } from './watcher/pathExclusions';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
 import { AgentChangesPanel } from './views/agentChangesPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
+import { TerminalSessionStore } from './terminal/terminalSessions';
 import { forgetOpenedBeside, hasOpenedBeside, isOpenedBeside, onDidChangeOpenedBeside } from './preview/openBeside';
+import { coalesce } from './util/coalesce';
 
 const LOG_PREFIX = '[ai-cli-diff-view]';
 const AGENT_MODE_TABS_STATE_KEY = 'ai-cli-diff-view.agentMode.editorTabsState';
@@ -57,6 +59,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 async function activateExtension(context: vscode.ExtensionContext): Promise<void> {
   debugLog(`activate:start mode=${context.extensionMode} workspace=${vscode.workspace.workspaceFile?.fsPath ?? 'none'}`);
 
+  // Before the first read, so the rules and the Included files table see the result.
+  await migrateLegacyTextFileSettings();
   refreshTextFileRules();
   refreshFileSizeLimit();
   refreshPathExclusions();
@@ -67,6 +71,8 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   const workspaceWatcher  = new WorkspaceWatcher(diffManager, () => !agentModeActive);
   const gitBranchWatcher  = new GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
   const navigationManager = new NavigationManager(diffManager);
+  // Write out a burst save still waiting in DiffManager when the window closes or reloads.
+  context.subscriptions.push({ dispose: () => diffManager.flushPendingSave() });
   debugLog('activate:core services constructed');
 
   const diffEditorProvider = new DiffEditorProvider(context.extensionUri, diffManager);
@@ -166,15 +172,20 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('ai-cli-diff-view.supportedFileDetectionMode') ||
+          e.affectsConfiguration('ai-cli-diff-view.includedPaths') ||
           e.affectsConfiguration('ai-cli-diff-view.supportedFileExtensions') ||
           e.affectsConfiguration('ai-cli-diff-view.supportedFilenames') ||
           e.affectsConfiguration('ai-cli-diff-view.supportedFilenamePatterns')) {
         refreshTextFileRules();
+        // A newly included file has no baseline yet: its next write would look
+        // brand new and Revert all would delete it (same as excludedPaths below).
+        workspaceWatcher.rebuildBaselineAfterRuleChange();
       }
       if (e.affectsConfiguration('ai-cli-diff-view.maxFileLines')) {
         refreshFileSizeLimit();
       }
-      if (e.affectsConfiguration('ai-cli-diff-view.excludedPaths')) {
+      if (e.affectsConfiguration('ai-cli-diff-view.excludedPaths') ||
+          e.affectsConfiguration('ai-cli-diff-view.respectGitignore')) {
         refreshPathExclusions();
         // Files that were excluded during the initial scan have no baseline, so
         // dropping an exclusion would make them look brand new — and Revert all
@@ -184,18 +195,40 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     })
   );
 
-  const terminalPanel = new TerminalPanelProvider(context, diffManager);
+  // A .gitignore edited while running changes what is tracked: re-read the rules
+  // and give newly un-ignored files a baseline (same reason as excludedPaths above).
+  // Ones inside built-in excluded folders (node_modules during npm install) are skipped.
+  const gitignoreChangedSoon = coalesce(() => {
+    clearGitignoreCache();
+    workspaceWatcher.rebuildBaselineAfterRuleChange();
+  });
+  const gitignoreWatcher = vscode.workspace.createFileSystemWatcher('**/.gitignore');
+  const onGitignoreChange = (uri: vscode.Uri): void => {
+    if (!isExcludedPathSegment(uri.fsPath)) { gitignoreChangedSoon.schedule(); }
+  };
+  context.subscriptions.push(
+    gitignoreWatcher,
+    gitignoreWatcher.onDidCreate(onGitignoreChange),
+    gitignoreWatcher.onDidChange(onGitignoreChange),
+    gitignoreWatcher.onDidDelete(onGitignoreChange),
+    { dispose: () => gitignoreChangedSoon.dispose() },
+  );
+
+  // Shells outlive the webviews showing them: the side bar view is disposed when
+  // hidden by its `when` clause, and Agent mode swaps in a panel of its own.
+  const terminalSessions = new TerminalSessionStore();
+  const terminalPanel = new TerminalPanelProvider(context, diffManager, terminalSessions);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       TerminalPanelProvider.viewType,
       terminalPanel,
       { webviewOptions: { retainContextWhenHidden: true } }
     ),
-    { dispose: () => terminalPanel.dispose() }
+    { dispose: () => terminalPanel.dispose() },
+    terminalSessions
   );
   debugLog('activate:terminal webview provider registered');
   void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', true);
-  void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', false);
   void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.agentModeActive', false);
 
   const captureEditorTabsState = (): {
@@ -262,7 +295,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       return;
     }
 
-    const terminal = new TerminalPanelProvider(context, diffManager);
+    const terminal = new TerminalPanelProvider(context, diffManager, terminalSessions);
     const panel = terminal.openWebviewPanel();
     agentModeTerminal = terminal;
     agentModePanel = panel;
@@ -309,10 +342,8 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     }
     try {
       agentModeActive = true;
-      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', false);
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.agentModeActive', true);
       agentChangesPanel.setAgentMode(true);
-      terminalPanel.resetSessions();
       await hideEditorTabs();
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', false);
       openAgentTerminal();
@@ -348,8 +379,6 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       // terminal/webview operation must never leave editor tabs hidden.
       await restoreEditorTabs();
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalVisible', true);
-      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', false);
-      terminalPanel.startFresh();
       terminalPanel.setAgentMode(false);
       terminalPanel.focusTerminal();
       debugLog('agent-mode:disabled');
@@ -386,7 +415,6 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   registerAllCommands({
     diffManager,
-    panel: terminalPanel,
     context,
     getRunner: () => activeRunner,
     setRunner: (r) => { activeRunner = r; },
@@ -399,15 +427,6 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   context.subscriptions.push(
     vscode.commands.registerCommand('ai-cli-diff-view.nextFile', () => navigationManager.nextFile()),
     vscode.commands.registerCommand('ai-cli-diff-view.prevFile', () => navigationManager.prevFile()),
-    vscode.commands.registerCommand('ai-cli-diff-view.showPendingFiles', async () => {
-      agentChangesPanel.setCodeModeFilesVisible(true);
-      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', true);
-    }),
-    vscode.commands.registerCommand('ai-cli-diff-view.showTerminal', async () => {
-      await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.terminalFilesPage', false);
-      agentChangesPanel.setCodeModeFilesVisible(false);
-      terminalPanel.focusTerminal();
-    }),
     vscode.commands.registerCommand('ai-cli-diff-view.focusAgentTerminal', () => {
       if (!agentModeActive || !agentModeTerminal) {
         return;
@@ -454,13 +473,13 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.hasPendingDiff', true);
   }
 
+  // Both events come in bursts (an agent writing many files opens many tabs):
+  // update the nav bar once per burst instead of once per event.
+  const navBarSoon = coalesce(updateNavBarState);
   context.subscriptions.push(
-    diffManager.onDidChangeDiffs(() => {
-      updateNavBarState();
-    })
-  );
-  context.subscriptions.push(
-    vscode.window.tabGroups.onDidChangeTabs(() => updateNavBarState())
+    { dispose: () => navBarSoon.dispose() },
+    diffManager.onDidChangeDiffs(() => navBarSoon.schedule()),
+    vscode.window.tabGroups.onDidChangeTabs(() => navBarSoon.schedule())
   );
 
   // Agent mode hides the tab bar, so a file opened beside has no close button of its own.

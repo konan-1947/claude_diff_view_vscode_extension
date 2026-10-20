@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
-import { PENDING_FILES_CSS } from './pendingFilesPage';
+import { PENDING_TREE_CSS } from '../views/pendingTree';
 import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 
 interface FontOption {
@@ -33,14 +33,13 @@ export interface IntroSlide {
 export interface BuildTerminalHtmlArgs {
   webview: vscode.Webview;
   extensionUri: vscode.Uri;
-  filesInnerHtml: string;
 }
 
 /** Icon "i" cho nút mở mô tả cạnh tiêu đề setting — cùng hình với nút Introduce. */
 const INFO_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
 
 export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
-  const { webview, extensionUri, filesInnerHtml } = args;
+  const { webview, extensionUri } = args;
 
   const xtermBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'xterm'));
   const xtermJs = `${xtermBase}/xterm.js`;
@@ -108,7 +107,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     font-size: 11px;
     user-select: none;
   }
-  /* Only the terminal page follows the terminal colours; the files page keeps the sidebar look. */
+  /* The header follows the terminal colours. */
   body.page-terminal #header {
     border-bottom-color: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
     background: var(--chrome-bg, var(--vscode-sideBar-background));
@@ -184,17 +183,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   body.page-terminal #header .header-separator { background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.45))); }
   .header-btn:active { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.28)); }
 
-  /* Page switching */
-  body.page-files #term-wrap { display: none; }
-  body.page-files #tab-strip { display: none; }
-  body.page-terminal #files-wrap { display: none; }
-  body.page-files #btn-settings { display: none; }
-  body.page-terminal .title-files { display: none; }
-  body.page-files .title-terminal { display: none; }
-  body.page-terminal .toggle-to-files { display: inline-flex; }
-  body.page-terminal .toggle-to-terminal { display: none; }
-  body.page-files .toggle-to-files { display: none; }
-  body.page-files .toggle-to-terminal { display: inline-flex; }
 
 
   /* Tab strip */
@@ -306,11 +294,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .term-pane.active { display: block; }
   .xterm { padding: 4px 0 0 6px; height: 100%; }
 
-  #files-wrap {
-    position: absolute;
-    inset: 0;
-  }
-  ${PENDING_FILES_CSS}
 
   #err {
     position: absolute;
@@ -338,6 +321,38 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     z-index: 10;
   }
   #settings-overlay[hidden] { display: none; }
+  /* Pending Files is drawn over the terminal; the terminal keeps running underneath. */
+  #pending-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    background: var(--vscode-sideBar-background, #1e1e1e);
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+  }
+  #pending-overlay[hidden] { display: none; }
+  .pending-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px 6px 10px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+  }
+  .pending-head h2 {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.85;
+  }
+  #pending-tree { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; padding-bottom: 5px; }
+  #pending-tree * { box-sizing: border-box; }
+  ${PENDING_TREE_CSS}
   .settings-head {
     display: flex;
     align-items: center;
@@ -951,7 +966,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   <div id="header">
     <span id="header-title">
       <span class="title-terminal">Terminal</span>
-      <span class="title-files">Pending Files</span>
     </span>
     <div id="header-actions">
       <button id="btn-view-diff" class="view-diff-btn" type="button" title="Preview all pending changes" aria-label="Preview all pending changes" hidden>View diff</button>
@@ -960,10 +974,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
           <path d="M3 6h18"/>
           <path d="M3 12h18"/>
           <path d="M3 18h12"/>
-        </svg>
-        <svg class="toggle-to-terminal" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="4 8 8 12 4 16"/>
-          <line x1="12" y1="18" x2="20" y2="18"/>
         </svg>
       </button>
       <button id="btn-introduce" class="header-btn" title="Introduce" aria-label="Introduce">
@@ -988,6 +998,18 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     <button id="tab-add" class="tab-add" type="button" title="New terminal" aria-label="New terminal">+</button>
   </div>
   <div id="content">
+    <div id="pending-overlay" hidden>
+      <div class="pending-head">
+        <h2>Pending files</h2>
+        <button id="btn-pending-back" class="header-btn" type="button" title="Back to terminal" aria-label="Back to terminal">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div id="pending-tree" class="pending-tree"></div>
+    </div>
     <div id="term-wrap">
       <div id="err"></div>
       <div id="term-host"></div>
@@ -1073,28 +1095,40 @@ ${FONT_OPTIONS.map((f) => {
         <div class="setting-help">Plays a sound when Claude finishes a turn or needs input (Windows only). Writes to <code>~/.claude/settings.json</code>.</div>
         <div class="field file-ext-field">
           <div class="label-row">
-            <label>Custom file extensions</label>
+            <label>Included files</label>
             <button class="info-btn" type="button" data-info="info-file-ext" aria-expanded="false"
-              title="About custom file extensions" aria-label="About custom file extensions">${INFO_ICON_SVG}</button>
+              title="About included files" aria-label="About included files">${INFO_ICON_SVG}</button>
           </div>
           <div id="info-file-ext" class="setting-info" hidden>
-            Files with these extensions are treated as text and tracked for AI edits, on top of
-            the built-in list (<code>.ts</code>, <code>.py</code>, <code>.md</code>, …). Add one
-            when edits to a file type you use never open a diff. Applies to every repo you open.
+            Extra files to track for AI edits — a baseline is kept and edits open a diff — on top
+            of the built-in list (<code>.ts</code>, <code>.py</code>, <code>.md</code>,
+            <code>Dockerfile</code>, …). Add one when edits to a file you care about never open a
+            diff. Uses <code>.gitignore</code> syntax, the reverse of Excluded paths below, matched
+            relative to each workspace folder's root. Applies to every repo you open.
             <table class="info-examples">
-              <tr><th>Type</th><th>Tracks</th></tr>
-              <tr><td><code>.prisma</code></td><td><code>schema.prisma</code>, <code>db/user.prisma</code></td></tr>
-              <tr><td><code>tf</code></td><td>same as <code>.tf</code> — the leading dot is optional</td></tr>
-              <tr><td><code>.tf, .hcl</code></td><td>adds both at once</td></tr>
+              <tr><th>Pattern</th><th>Tracks</th></tr>
+              <tr><td><code>*.prisma</code></td><td>every <code>.prisma</code> file, at any depth</td></tr>
+              <tr><td><code>Jenkinsfile</code></td><td>every file named exactly <code>Jenkinsfile</code> — no extension needed</td></tr>
+              <tr><td><code>config.*.local</code></td><td><code>config.dev.local</code>, <code>config.prod.local</code>; <code>*</code> = any characters, <code>?</code> = exactly one</td></tr>
+              <tr><td><code>templates/**/*.tpl</code></td><td><code>.tpl</code> files only inside <code>templates</code>; <code>*</code> stays within one folder, <code>**</code> spans folders</td></tr>
+              <tr><td><code>/scripts/*</code></td><td>files directly in <code>scripts</code> at the repo root — <code>src/scripts</code> is not affected</td></tr>
+              <tr><td><code>!*.lock</code></td><td>stop tracking <code>.lock</code> files, even though they are on the built-in list</td></tr>
             </table>
+            Watch out: <code>.prisma</code> on its own only matches a file named exactly
+            <code>.prisma</code>. To track all Prisma files, use <code>*.prisma</code>.
+            <br><br>
+            Excluded paths and <code>.gitignore</code> always win: a file that is both included and
+            excluded is not tracked. Binary files (images, <code>.dll</code>, …) are skipped even if
+            a pattern matches them.
+            <br><br>
             Type in the last row and press Enter; separate several with commas. Double-click a
             row to edit it, select it and press Delete to remove it.
           </div>
           <div class="file-ext-controls">
             <div class="file-ext-list">
-              <table class="file-ext-table" aria-label="Custom file extensions">
+              <table class="file-ext-table" aria-label="Included files">
                 <thead>
-                  <tr><th>Extension</th></tr>
+                  <tr><th>Pattern</th></tr>
                 </thead>
                 <tbody id="file-ext-body"></tbody>
               </table>
@@ -1106,6 +1140,11 @@ ${FONT_OPTIONS.map((f) => {
             </div>
           </div>
         </div>
+        <div class="field">
+          <label for="f-respect-gitignore">Respect .gitignore</label>
+          <input id="f-respect-gitignore" type="checkbox">
+        </div>
+        <div class="setting-help">Files ignored by the repo's <code>.gitignore</code> (any folder level, nested repos included) or <code>.git/info/exclude</code> are never tracked — no diff. Turn off to review AI edits to ignored files such as <code>.env.local</code>.</div>
         <div class="field file-ext-field">
           <div class="label-row">
             <label>Excluded paths</label>
@@ -1176,6 +1215,16 @@ ${FONT_OPTIONS.map((f) => {
         </div>
 
         <div class="field">
+          <label for="f-max-auto-open">Max auto-opened diffs</label>
+          <input id="f-max-auto-open" type="number" min="0" max="1000" step="10">
+        </div>
+        <div class="setting-help">
+          Once this many diff tabs are open, further files the AI changes only appear in Pending
+          Files — open them from there or with Alt+H / Alt+L. A notification says how many were
+          left out. <strong>0 turns the limit off.</strong>
+        </div>
+
+        <div class="field">
           <label for="f-max-file-lines">Max file lines</label>
           <input id="f-max-file-lines" type="number" min="0" max="200000" step="500">
         </div>
@@ -1200,7 +1249,6 @@ ${FONT_OPTIONS.map((f) => {
         </div>
       </div>
     </div>
-    <div id="files-wrap">${filesInnerHtml}</div>
     <div id="diff-preview-overlay" hidden>
       <div class="diff-preview-head">
         <div class="diff-preview-title">
@@ -1482,6 +1530,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         next.host.classList.add('active');
         next.tab.classList.add('active');
         activeId = id;
+        vscode.postMessage({ type: 'activeSession', id });
         // scroll the tab into view
         try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
         reportPanelTitle();
@@ -1494,7 +1543,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       let focusOnSessionCreated = false;
 
-      function onSessionCreated(id, title) {
+      function onSessionCreated(id, title, restoring) {
         const host = document.createElement('div');
         host.className = 'term-pane';
         host.dataset.id = id;
@@ -1540,6 +1589,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           vscode.postMessage({ type: 'input', id, data });
         });
         sessions.set(id, sess);
+        // A restored tab is activated by onRestoreSessions after its screen is replayed.
+        if (restoring) return;
         activateTab(id);
         // also fit + report dims (activateTab already does this on the rAF tick)
         if (focusOnSessionCreated) {
@@ -1593,12 +1644,49 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return target !== baseline;
       }
 
+      // Sessions outlive this webview. The extension replies to 'ready' with
+      // restoreSessions (shells already running) or sessionCreated (first start).
       requestAnimationFrame(() => {
         vscode.postMessage({ type: 'ready' });
         vscode.postMessage({ type: 'getSettings' });
-        // Bootstrap the first session. Extension will reply with sessionCreated.
-        vscode.postMessage({ type: 'createSession', cols: 80, rows: 24 });
       });
+
+      function markExited(s, id, code) {
+        s.exited = true;
+        s.term.writeln('\\r\\n\\x1b[2m[shell exited: ' + code + '] press any key to restart\\x1b[0m');
+        const once = s.term.onData(() => {
+          once.dispose();
+          s.exited = false;
+          try { s.term.reset(); } catch (_) {}
+          vscode.postMessage({ type: 'restart', id });
+        });
+      }
+
+      function onRestoreSessions(list, restoreActiveId) {
+        const written = [];
+        for (const snap of list) {
+          if (sessions.has(snap.id)) continue;
+          onSessionCreated(snap.id, snap.title, true);
+          const s = sessions.get(snap.id);
+          // Replay at the size it was serialized at; activateTab fits and reflows
+          // only once the replay is parsed, otherwise lines wrap at the wrong width.
+          try { s.term.resize(snap.cols, snap.rows); } catch (_) {}
+          written.push(new Promise((resolve) => s.term.write(snap.serialized, resolve)).then(() => {
+            if (snap.exited) markExited(s, snap.id, snap.exitCode);
+          }));
+          if (snap.rawTitle) {
+            s.rawTitle = snap.rawTitle;
+            applySessionTitle(s);
+          }
+        }
+        Promise.all(written).then(() => {
+          const ids = Array.from(sessions.keys());
+          const target = restoreActiveId && sessions.has(restoreActiveId) ? restoreActiveId : ids[ids.length - 1];
+          // activateTab focuses the terminal itself.
+          focusOnSessionCreated = false;
+          if (target) activateTab(target);
+        });
+      }
 
       const ro = new ResizeObserver(() => {
         const sess = sessions.get(activeId);
@@ -1705,6 +1793,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         if (!msg) return;
         if (msg.type === 'sessionCreated') {
           onSessionCreated(msg.id, msg.title);
+        } else if (msg.type === 'pendingFiles') {
+          onPendingFiles(msg.html || '');
+        } else if (msg.type === 'restoreSessions') {
+          onRestoreSessions(msg.sessions || [], msg.activeId);
         } else if (msg.type === 'sessionClosed') {
           onSessionClosed(msg.id);
         } else if (msg.type === 'data') {
@@ -1712,16 +1804,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           if (s) s.term.write(msg.data);
         } else if (msg.type === 'exit') {
           const s = sessions.get(msg.id);
-          if (s) {
-            s.exited = true;
-            s.term.writeln('\\r\\n\\x1b[2m[shell exited: ' + msg.code + '] press any key to restart\\x1b[0m');
-            const once = s.term.onData(() => {
-              once.dispose();
-              s.exited = false;
-              try { s.term.reset(); } catch (_) {}
-              vscode.postMessage({ type: 'restart', id: msg.id });
-            });
-          }
+          if (s) markExited(s, msg.id, msg.code);
         } else if (msg.type === 'error') {
           showError('PTY error: ' + msg.message);
         } else if (msg.type === 'settings') {
@@ -1742,20 +1825,12 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           btnInstallFont.disabled = false;
           btnInstallFont.textContent = 'Retry install';
           setInstallStatus(msg.error || 'Install failed', 'err');
-        } else if (msg.type === 'filesUpdate') {
-          const wrap = document.getElementById('files-wrap');
-          if (wrap) {
-            wrap.innerHTML = msg.html;
-            bindFilesPage();
-          }
         } else if (msg.type === 'showIntroduce') {
           openIntro();
         } else if (msg.type === 'agentModeState') {
           setAgentModeState(msg.active);
         } else if (msg.type === 'toggleDiffPreview') {
           btnViewDiff.click();
-        } else if (msg.type === 'togglePage') {
-          btnTogglePage.click();
         } else if (msg.type === 'openIntroduce') {
           openIntro();
         } else if (msg.type === 'openSettings') {
@@ -1852,40 +1927,48 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         }
       });
 
+      // ---- Pending Files overlay ----
+      // Shown over the terminal instead of switching views: hiding the terminal
+      // view would dispose this webview and drop its xterm tabs.
       const btnTogglePage = document.getElementById('btn-toggle-page');
-      btnTogglePage.addEventListener('click', () => {
-        const isTerminal = document.body.classList.contains('page-terminal');
-        if (isTerminal) {
-          vscode.postMessage({ type: 'showPendingFiles' });
-          return;
-        }
-        document.body.classList.toggle('page-terminal', !isTerminal);
-        document.body.classList.toggle('page-files', isTerminal);
-        if (!isTerminal) {
-          // Switched back to terminal — refit active session since size may have changed.
-          requestAnimationFrame(() => {
-            const sess = sessions.get(activeId);
-            if (sess) {
-              safeFitSession(sess);
-              vscode.postMessage({ type: 'resize', id: activeId, cols: sess.term.cols, rows: sess.term.rows });
-            }
-          });
-        }
-      });
-
-      // ---- Files page bindings (rebound after every filesUpdate) ----
-      function bindFilesPage() {
-        const tree = document.getElementById('file-tree');
-        if (tree) {
-          tree.querySelectorAll('.tree-row-file').forEach((btn) => {
-            btn.addEventListener('click', () => {
-              const p = btn.getAttribute('data-path');
-              if (p) vscode.postMessage({ type: 'openFile', path: p });
-            });
-          });
+      const pendingOverlay = document.getElementById('pending-overlay');
+      const pendingTree = document.getElementById('pending-tree');
+      function setPendingOverlay(open) {
+        if (pendingOverlay.hidden === !open) return;
+        pendingOverlay.hidden = !open;
+        vscode.postMessage({ type: 'pendingOverlay', open });
+        if (!open) {
+          const sess = sessions.get(activeId);
+          if (sess) requestAnimationFrame(() => { try { sess.term.focus(); } catch (_) {} });
         }
       }
-      bindFilesPage();
+      btnTogglePage.addEventListener('click', () => setPendingOverlay(pendingOverlay.hidden));
+      document.getElementById('btn-pending-back').addEventListener('click', () => setPendingOverlay(false));
+      pendingOverlay.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') setPendingOverlay(false);
+      });
+      pendingTree.addEventListener('click', (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        const toggle = target.closest('[data-folder-toggle]');
+        if (toggle) {
+          toggle.parentElement.classList.toggle('collapsed');
+          return;
+        }
+        const file = target.closest('[data-path]');
+        if (file) vscode.postMessage({ type: 'openPendingFile', path: file.dataset.path });
+      });
+      function onPendingFiles(html) {
+        // Keep folders the user collapsed collapsed across refreshes.
+        const collapsed = new Set(Array.from(pendingTree.querySelectorAll('.folder-block.collapsed > .folder'))
+          .map((el) => el.textContent));
+        const scrollTop = pendingTree.scrollTop;
+        pendingTree.innerHTML = html;
+        pendingTree.querySelectorAll('.folder-block > .folder').forEach((el) => {
+          if (collapsed.has(el.textContent)) el.parentElement.classList.add('collapsed');
+        });
+        pendingTree.scrollTop = scrollTop;
+      }
 
       // ---- Settings overlay ----
       const overlay = document.getElementById('settings-overlay');
@@ -1905,29 +1988,17 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const fCursorStyle = document.getElementById('f-cursor-style');
       const fCursorBlink = document.getElementById('f-cursor-blink');
       const fSoundNotifications = document.getElementById('f-sound-notifications');
+      const fRespectGitignore = document.getElementById('f-respect-gitignore');
       const fBurstEnabled = document.getElementById('f-burst-enabled');
       const fBurstWindow = document.getElementById('f-burst-window');
       const fBurstThreshold = document.getElementById('f-burst-threshold');
       const fBurstHold = document.getElementById('f-burst-hold');
       const fMaxFileLines = document.getElementById('f-max-file-lines');
+      const fMaxAutoOpen = document.getElementById('f-max-auto-open');
       const customRows = document.querySelectorAll('.custom-only');
 
-      function parseFileExtensions(value) {
-        const seen = new Set();
-        const result = [];
-        String(value || '').split(/[,\\n]/).forEach((part) => {
-          const trimmed = part.trim().toLowerCase();
-          if (!trimmed) return;
-          const ext = trimmed.startsWith('.') ? trimmed : '.' + trimmed;
-          if (seen.has(ext)) return;
-          seen.add(ext);
-          result.push(ext);
-        });
-        return result;
-      }
-
-      // Pattern .gitignore: giữ nguyên hoa/thường, không tự thêm dấu chấm.
-      function parseExcludedPaths(value) {
+      // Pattern .gitignore (Included files + Excluded paths): giữ nguyên hoa/thường, không tự thêm dấu chấm.
+      function parsePatterns(value) {
         const seen = new Set();
         const result = [];
         String(value || '').split(/[,\\n]/).forEach((part) => {
@@ -1939,7 +2010,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return result;
       }
 
-      // Bảng New/Edit/Delete dùng chung cho Custom file extensions và Excluded paths.
+      // Bảng New/Edit/Delete dùng chung cho Included files và Excluded paths.
       // Nhập trực tiếp trong bảng: dòng cuối luôn là ô thêm mới (Enter để thêm,
       // nhiều mục cách nhau bằng dấu phẩy); double-click / Edit sửa ngay tại dòng.
       function createListEditor(body, btnNew, btnEdit, btnDelete, parse, placeholder) {
@@ -2096,21 +2167,21 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       }
 
       const listEditors = {
-        fileExtensions: createListEditor(
+        includedPaths: createListEditor(
           document.getElementById('file-ext-body'),
           document.getElementById('btn-ext-new'),
           document.getElementById('btn-ext-edit'),
           document.getElementById('btn-ext-delete'),
-          parseFileExtensions,
-          'Type an extension, e.g. .prisma, and press Enter'
+          parsePatterns,
+          'e.g. *.prisma, Jenkinsfile or templates/**/*.tpl — press Enter'
         ),
         excludedPaths: createListEditor(
           document.getElementById('excluded-path-body'),
           document.getElementById('btn-excl-new'),
           document.getElementById('btn-excl-edit'),
           document.getElementById('btn-excl-delete'),
-          parseExcludedPaths,
-          '*.html'
+          parsePatterns,
+          'e.g. *.log, generated/ or /docs — press Enter'
         ),
       };
 
@@ -2148,13 +2219,15 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fCursorStyle.value = s.cursorStyle;
         fCursorBlink.checked = s.cursorBlink;
         fSoundNotifications.checked = s.soundNotificationsEnabled;
-        listEditors.fileExtensions.set(s.supportedFileExtensions);
+        listEditors.includedPaths.set(s.includedPaths);
         listEditors.excludedPaths.set(s.excludedPaths);
+        fRespectGitignore.checked = s.respectGitignore;
         fBurstEnabled.checked = s.burstDetectionEnabled;
         fBurstWindow.value = String(s.burstDetectionWindowMs);
         fBurstThreshold.value = String(s.burstDetectionThreshold);
         fBurstHold.value = String(s.burstDetectionHoldMs);
         fMaxFileLines.value = String(s.maxFileLines);
+        fMaxAutoOpen.value = String(s.maxAutoOpenDiffs);
         toggleCustomRows();
       }
 
@@ -2169,6 +2242,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const burstThreshold = parseInt(fBurstThreshold.value, 10);
         const burstHold = parseInt(fBurstHold.value, 10);
         const maxFileLines = parseInt(fMaxFileLines.value, 10);
+        const maxAutoOpen = parseInt(fMaxAutoOpen.value, 10);
         return {
           fontFamily: fFontFamily.value.trim() || DEFAULTS.fontFamily,
           fontSize: isFinite(size) ? Math.min(32, Math.max(6, size)) : DEFAULTS.fontSize,
@@ -2181,14 +2255,16 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           cursorStyle: fCursorStyle.value,
           cursorBlink: !!fCursorBlink.checked,
           soundNotificationsEnabled: !!fSoundNotifications.checked,
-          supportedFileExtensions: listEditors.fileExtensions.get(),
+          includedPaths: listEditors.includedPaths.get(),
           burstDetectionEnabled: !!fBurstEnabled.checked,
           burstDetectionWindowMs: isFinite(burstWindow) ? Math.min(5000, Math.max(50, burstWindow)) : DEFAULTS.burstDetectionWindowMs,
           burstDetectionThreshold: isFinite(burstThreshold) ? Math.min(500, Math.max(2, burstThreshold)) : DEFAULTS.burstDetectionThreshold,
           burstDetectionHoldMs: isFinite(burstHold) ? Math.min(10000, Math.max(500, burstHold)) : DEFAULTS.burstDetectionHoldMs,
           // 0 = tắt giới hạn, nên chặn dưới là 0 chứ không phải một mức tối thiểu.
           maxFileLines: isFinite(maxFileLines) ? Math.min(200000, Math.max(0, maxFileLines)) : DEFAULTS.maxFileLines,
+          maxAutoOpenDiffs: isFinite(maxAutoOpen) ? Math.min(1000, Math.max(0, maxAutoOpen)) : DEFAULTS.maxAutoOpenDiffs,
           excludedPaths: listEditors.excludedPaths.get(),
+          respectGitignore: !!fRespectGitignore.checked,
         };
       }
 

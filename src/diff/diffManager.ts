@@ -13,8 +13,11 @@ import { calculateHunks, Hunk } from './hunkCalculator';
 import { detectEol, fromLf, toLf } from './eol';
 import { detectLanguageId } from './language';
 import { exceedsLineLimit } from '../watcher/fileSizeLimit';
+import { looksBinary } from '../watcher/fileTypeRules';
 import { DIFF_EDITOR_VIEW_TYPE } from './diffWebviewPanel';
 import { SnapshotStore, SnapshotState } from './snapshotStore';
+import { sortLikePendingTree } from './treeOrder';
+import { coalesce } from '../util/coalesce';
 
 function normalizePath(filePath: string): string {
   const fsPath = vscode.Uri.file(path.resolve(filePath)).fsPath;
@@ -54,14 +57,52 @@ export interface DiffPreviewMetadata {
   hunks: number;
 }
 
+/** What the right-hand side of a diff was read from, cheap to compare. */
+type ContentStamp =
+  | { document: vscode.TextDocument; version: number }
+  | { mtime: number; size: number }
+  | { missing: true };
+
+function sameStamp(a: ContentStamp, b: ContentStamp): boolean {
+  if ('document' in a) { return 'document' in b && a.document === b.document && a.version === b.version; }
+  if ('mtime' in a) { return 'mtime' in b && a.mtime === b.mtime && a.size === b.size; }
+  return 'missing' in b;
+}
+
 export class DiffManager {
   private _onDidChangeDiffs = new vscode.EventEmitter<void>();
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
 
   private snapshots: Map<string, SnapshotState> = new Map();
+  /**
+   * Pending files in Pending Files tree order + key -> position. Every tab diff asks
+   * for its "n / N" on each onDidChangeDiffs, so this is rebuilt lazily once per
+   * add/remove instead of scanning all pending files per tab (issue #37, HOT-3b).
+   */
+  private pendingOrder: { display: string[]; index: Map<string, number> } | undefined;
+  /**
+   * Diff stats per pending file for the PENDING FILES view, reused while neither
+   * the snapshot nor the current content changed, so a refresh no longer reads
+   * and diffs every pending file (issue #37, HOT-3e). Holds no file contents of
+   * its own: `snapshot` is the same string the snapshot map already keeps.
+   */
+  private metadataCache = new Map<string, {
+    snapshot: string;
+    stamp: ContentStamp;
+    metadata: DiffPreviewMetadata | undefined;
+  }>();
   /** normalized key -> path with the real on-disk case, for display only. */
   private displayPaths: Map<string, string> = new Map();
   private readonly store: SnapshotStore;
+  /**
+   * Every save rewrites the whole snapshot map into workspaceState, so saving once
+   * per file of an agent burst costs O(N²·S) (issue #37, HOT-2). Burst paths go
+   * through scheduleSave(): the first save after a quiet spell still runs at once,
+   * later ones in the same burst are merged. User actions keep saveNow().
+   */
+  private readonly saveSoon = coalesce(() => this.saveNow());
+  private savePending = false;
+  private lastSaveAt = 0;
   /** filePath (normalized) -> active webview panel. */
   private panels: Map<string, vscode.WebviewPanel> = new Map();
   /** filePath (normalized) -> last cursor + top visible line seen in Monaco modified editor. */
@@ -100,9 +141,9 @@ export class DiffManager {
       await vscode.workspace.fs.stat(uri);
     } catch (err) {
       if (isFileNotFound(err)) {
-        this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
+        this.setSnapshot(absPath,{ content: '', fileExistedBefore: false });
         this.rememberDisplayPath(filePath);
-        void this.store.save(this.snapshots);
+        this.scheduleSave();
       }
       return;
     }
@@ -112,14 +153,14 @@ export class DiffManager {
       // Đường built-in runner cũng phải tôn trọng maxFileLines, nếu không setting
       // chỉ đúng với đường workspace watcher. Không snapshot -> openDiff() thoát
       // sớm vì không có snapshot -> file lớn không mở diff, đúng như mong đợi.
-      if (exceedsLineLimit(content)) { return; }
-      this.snapshots.set(absPath, { content, fileExistedBefore: true });
+      if (looksBinary(content) || exceedsLineLimit(content)) { return; }
+      this.setSnapshot(absPath,{ content, fileExistedBefore: true });
       this.rememberDisplayPath(filePath);
     } catch {
       // File có thể bị xóa hoặc không đọc được sau khi stat — không tạo snapshot rỗng.
       return;
     }
-    void this.store.save(this.snapshots);
+    this.scheduleSave();
   }
 
   async openDiff(filePath: string, options?: { preserveFocus?: boolean }): Promise<void> {
@@ -144,8 +185,8 @@ export class DiffManager {
       // A newly-created empty file is still pending: Revert must delete it and
       // Accept must keep it. There is simply no text hunk to render.
       if (!snapshot.fileExistedBefore) { return; }
-      this.snapshots.delete(absPath);
-      void this.store.save(this.snapshots);
+      this.deleteSnapshot(absPath);
+      this.scheduleSave();
       this._onDidChangeDiffs.fire();
       return;
     }
@@ -175,11 +216,15 @@ export class DiffManager {
    * không tạo tab thứ hai cùng file.
    */
   private async closeTextTabsFor(absPath: string): Promise<void> {
+    await this.closeTextTabsForAll(new Set([absPath]));
+  }
+
+  private async closeTextTabsForAll(absPaths: ReadonlySet<string>): Promise<void> {
     const targets: vscode.Tab[] = [];
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
         if (!(tab.input instanceof vscode.TabInputText)) { continue; }
-        if (normalizePath(tab.input.uri.fsPath) === absPath) {
+        if (absPaths.has(normalizePath(tab.input.uri.fsPath))) {
           // Preserve unsaved user edits. Closing a dirty text tab here would
           // trigger VS Code's save/discard dialog while an external change is
           // being routed to the custom diff editor.
@@ -199,9 +244,9 @@ export class DiffManager {
   loadSnapshot(filePath: string, content: string, fileExistedBefore = true): void {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) {
-      this.snapshots.set(absPath, { content, fileExistedBefore });
+      this.setSnapshot(absPath,{ content, fileExistedBefore });
       this.rememberDisplayPath(filePath);
-      void this.store.save(this.snapshots);
+      this.scheduleSave();
       this._onDidChangeDiffs.fire();
     }
   }
@@ -214,15 +259,10 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) { return; }
 
-    const pendingBefore = this.getPendingFiles();
-    const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
-    const nextTarget =
-      pendingBefore.length > 1 && currentIdx !== -1
-        ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
-        : undefined;
+    const nextTarget = this.nextPendingAfter(absPath);
 
-    this.snapshots.delete(absPath);
-    void this.store.save(this.snapshots);
+    this.deleteSnapshot(absPath);
+    this.saveNow();
     this.closePanel(absPath);
     await this.reopenAsTextEditor(absPath);
 
@@ -241,12 +281,7 @@ export class DiffManager {
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return; }
 
-    const pendingBefore = this.getPendingFiles();
-    const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
-    const nextTarget =
-      pendingBefore.length > 1 && currentIdx !== -1
-        ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
-        : undefined;
+    const nextTarget = this.nextPendingAfter(absPath);
 
     if (snapshot.fileExistedBefore) {
       await this.writeFile(absPath, snapshot.content);
@@ -254,8 +289,8 @@ export class DiffManager {
       await this.deleteFile(absPath);
     }
 
-    this.snapshots.delete(absPath);
-    void this.store.save(this.snapshots);
+    this.deleteSnapshot(absPath);
+    this.saveNow();
     this.closePanel(absPath);
     if (snapshot.fileExistedBefore) {
       await this.reopenAsTextEditor(absPath);
@@ -269,12 +304,44 @@ export class DiffManager {
     this._onDidChangeDiffs.fire();
   }
 
+  /**
+   * File (hoặc thư mục) đã bị xoá khỏi đĩa: bỏ track mọi file pending nằm ở đó,
+   * kể cả file có từ trước — đóng tab diff + tab text, không mở lại gì.
+   * Bỏ qua file vẫn còn trên đĩa (unlink rồi ghi lại) và file có edit chưa lưu.
+   */
+  async forgetDeleted(paths: string[]): Promise<number> {
+    const roots = paths.map(normalizePath);
+    const isUnder = (key: string): boolean => roots.some((root) =>
+      key === root || key.startsWith(root.endsWith(path.sep) ? root : root + path.sep));
+    const dirty = new Set(vscode.workspace.textDocuments
+      .filter((doc) => doc.isDirty)
+      .map((doc) => normalizePath(doc.uri.fsPath)));
+
+    const forgotten = new Set<string>();
+    for (const key of this.snapshots.keys()) {
+      if (!isUnder(key) || dirty.has(key) || fs.existsSync(key)) { continue; }
+      forgotten.add(key);
+    }
+    if (forgotten.size === 0) { return 0; }
+
+    for (const key of forgotten) {
+      this.deleteSnapshot(key);
+      this.closePanel(key);
+      this.lastCursors.delete(key);
+      this.displayPaths.delete(key);
+    }
+    this.saveNow();
+    await this.closeTextTabsForAll(forgotten);
+    this._onDidChangeDiffs.fire();
+    return forgotten.size;
+  }
+
   async acceptAllPending(): Promise<number> {
     const pendingFiles = this.getPendingFiles();
     const count = pendingFiles.length;
-    this.snapshots.clear();
+    this.clearSnapshots();
     this.displayPaths.clear();
-    void this.store.save(this.snapshots);
+    this.saveNow();
     for (const p of pendingFiles) {
       this.closePanel(normalizePath(p));
     }
@@ -286,9 +353,92 @@ export class DiffManager {
     return this.snapshots.has(normalizePath(filePath));
   }
 
-  /** Pending files with their real on-disk case; compare with normalizePath, never with ===. */
+  /**
+   * Pending files with their real on-disk case, in Pending Files tree order;
+   * compare with normalizePath, never with ===.
+   */
   getPendingFiles(): string[] {
-    return Array.from(this.snapshots.keys(), (key) => this.getDisplayPath(key));
+    return this.getPendingOrder().display.slice();
+  }
+
+  /** Position of a file in getPendingFiles(), or -1 if it is not pending. */
+  getPendingIndex(filePath: string): number {
+    return this.getPendingOrder().index.get(normalizePath(filePath)) ?? -1;
+  }
+
+  /** Diff tabs currently open, for the auto-open cap (AutoOpenQueue). */
+  getOpenPanelCount(): number {
+    return this.panels.size;
+  }
+
+  getPendingCount(): number {
+    return this.snapshots.size;
+  }
+
+  getPendingFileAt(index: number): string | undefined {
+    return this.getPendingOrder().display[index];
+  }
+
+  /** The pending file after this one (wrapping), used to move on after accept/revert. */
+  private nextPendingAfter(absPath: string): string | undefined {
+    const count = this.getPendingCount();
+    const idx = this.getPendingIndex(absPath);
+    if (count <= 1 || idx === -1) { return undefined; }
+    return this.getPendingFileAt((idx + 1) % count);
+  }
+
+  private getPendingOrder(): { display: string[]; index: Map<string, number> } {
+    if (!this.pendingOrder) {
+      const keyByDisplay = new Map<string, string>();
+      for (const key of this.snapshots.keys()) {
+        keyByDisplay.set(this.getDisplayPath(key), key);
+      }
+      const display = sortLikePendingTree(Array.from(keyByDisplay.keys()));
+      const index = new Map(display.map((p, i): [string, number] => [keyByDisplay.get(p)!, i]));
+      this.pendingOrder = { display, index };
+    }
+    return this.pendingOrder;
+  }
+
+  // ---- Snapshot mutations: always go through these so pendingOrder stays valid ----
+
+  /** Save now if a burst save is still waiting, e.g. on deactivate. */
+  flushPendingSave(): void {
+    if (this.savePending) { this.saveNow(); }
+  }
+
+  private scheduleSave(): void {
+    if (!this.savePending && Date.now() - this.lastSaveAt >= 500) {
+      this.saveNow();
+      return;
+    }
+    this.savePending = true;
+    this.saveSoon.schedule();
+  }
+
+  private saveNow(): void {
+    this.saveSoon.dispose();
+    this.savePending = false;
+    this.lastSaveAt = Date.now();
+    void this.store.save(this.snapshots);
+  }
+
+  private setSnapshot(absPath: string, snapshot: SnapshotState): void {
+    // Overwriting an existing key keeps its position, so the order only changes on add.
+    if (!this.snapshots.has(absPath)) { this.pendingOrder = undefined; }
+    this.snapshots.set(absPath, snapshot);
+  }
+
+  private deleteSnapshot(absPath: string): void {
+    this.snapshots.delete(absPath);
+    this.metadataCache.delete(absPath);
+    this.pendingOrder = undefined;
+  }
+
+  private clearSnapshots(): void {
+    this.snapshots.clear();
+    this.metadataCache.clear();
+    this.pendingOrder = undefined;
   }
 
   /**
@@ -331,13 +481,19 @@ export class DiffManager {
    */
   async getDiffPreviewFile(filePath: string): Promise<DiffPreviewFile | undefined> {
     const absPath = normalizePath(filePath);
+    return this.buildDiffPreviewFile(absPath, vscode.workspace.textDocuments.find(
+      (document) => normalizePath(document.uri.fsPath) === absPath
+    ));
+  }
+
+  private async buildDiffPreviewFile(
+    absPath: string,
+    openDocument: vscode.TextDocument | undefined
+  ): Promise<DiffPreviewFile | undefined> {
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return undefined; }
 
     let currentContent = '';
-    const openDocument = vscode.workspace.textDocuments.find(
-      (document) => normalizePath(document.uri.fsPath) === absPath
-    );
     if (openDocument) {
       currentContent = openDocument.getText();
     } else {
@@ -374,17 +530,49 @@ export class DiffManager {
    * Agent secondary bar remains a navigator, not a second diff renderer.
    */
   async getDiffPreviewMetadata(): Promise<DiffPreviewMetadata[]> {
+    const openDocuments = new Map<string, vscode.TextDocument>();
+    for (const document of vscode.workspace.textDocuments) {
+      openDocuments.set(normalizePath(document.uri.fsPath), document);
+    }
     const files = await Promise.all(this.getPendingFiles().map(async (filePath) => {
-      const preview = await this.getDiffPreviewFile(filePath);
-      if (!preview) { return undefined; }
-      return {
+      const absPath = normalizePath(filePath);
+      const snapshot = this.snapshots.get(absPath)?.content;
+      if (snapshot === undefined) { return undefined; }
+      // Stamps are taken before reading: a change racing with the read only
+      // makes the next refresh recompute, never keeps stale numbers.
+      const openDocument = openDocuments.get(absPath);
+      const stamp = await this.currentContentStamp(absPath, openDocument);
+      const cached = this.metadataCache.get(absPath);
+      if (cached && cached.snapshot === snapshot && sameStamp(cached.stamp, stamp)) {
+        return cached.metadata;
+      }
+      const preview = await this.buildDiffPreviewFile(absPath, openDocument);
+      const metadata = preview && {
         filePath: preview.filePath,
         additions: preview.hunks.reduce((total, hunk) => total + hunk.addedLines.length, 0),
         deletions: preview.hunks.reduce((total, hunk) => total + hunk.removedLines.length, 0),
         hunks: preview.hunks.length,
       };
+      if (this.snapshots.has(absPath)) {
+        this.metadataCache.set(absPath, { snapshot, stamp, metadata });
+      }
+      return metadata;
     }));
     return files.filter((file): file is DiffPreviewMetadata => file !== undefined);
+  }
+
+  /** Identifies the right-hand content without reading it: the open document, else the file on disk. */
+  private async currentContentStamp(
+    absPath: string,
+    document: vscode.TextDocument | undefined
+  ): Promise<ContentStamp> {
+    if (document) { return { document, version: document.version }; }
+    try {
+      const stat = await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
+      return { mtime: stat.mtime, size: stat.size };
+    } catch {
+      return { missing: true };
+    }
   }
 
   /** Apply a manual edit made in the aggregate preview to the workspace document. */
@@ -414,8 +602,8 @@ export class DiffManager {
   async acceptFromPreview(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) { return; }
-    this.snapshots.delete(absPath);
-    void this.store.save(this.snapshots);
+    this.deleteSnapshot(absPath);
+    this.saveNow();
     this.closePanel(absPath);
     this._onDidChangeDiffs.fire();
   }
@@ -434,8 +622,8 @@ export class DiffManager {
     } else {
       await this.writeFile(absPath, snapshot.content);
     }
-    this.snapshots.delete(absPath);
-    void this.store.save(this.snapshots);
+    this.deleteSnapshot(absPath);
+    this.saveNow();
     this.closePanel(absPath);
     this._onDidChangeDiffs.fire();
   }
@@ -448,15 +636,15 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return; }
-    this.snapshots.set(absPath, {
+    this.setSnapshot(absPath,{
       ...snapshot,
       content: fromLf(newOriginal, detectEol(snapshot.content)),
     });
     if (newOriginal === newCurrent) {
-      this.snapshots.delete(absPath);
+      this.deleteSnapshot(absPath);
       this.closePanel(absPath);
     }
-    void this.store.save(this.snapshots);
+    this.saveNow();
     this._onDidChangeDiffs.fire();
   }
 
@@ -477,10 +665,10 @@ export class DiffManager {
           if (!isFileNotFound(err)) { throw err; }
         }
       }
-      this.snapshots.delete(absPath);
+      this.deleteSnapshot(absPath);
       this.closePanel(absPath);
     }
-    void this.store.save(this.snapshots);
+    this.saveNow();
     this._onDidChangeDiffs.fire();
   }
 
@@ -501,7 +689,7 @@ export class DiffManager {
   }
 
   disposeAll(): void {
-    this.snapshots.clear();
+    this.clearSnapshots();
     this.displayPaths.clear();
     for (const panel of this.panels.values()) {
       panel.dispose();
@@ -525,6 +713,8 @@ export class DiffManager {
       : this.getLiveActiveDiffPath();
 
     this.disposeAll();
+    this.saveSoon.dispose();
+    this.savePending = false;
     await this.store.clear();
 
     if (activeDiffPath) {
@@ -673,11 +863,11 @@ export class DiffManager {
 
     // newOriginal từ webview ở LF -> trả về đúng EOL của snapshot cũ, để snapshot
     // luôn giữ nguyên dạng byte gốc của file và revert() khôi phục chuẩn xác.
-    this.snapshots.set(absPath, {
+    this.setSnapshot(absPath,{
       ...snapshot,
       content: fromLf(newOriginal, detectEol(snapshot.content)),
     });
-    void this.store.save(this.snapshots);
+    this.saveNow();
 
     if (newOriginal === newCurrent) {
       await this.accept(absPath);
@@ -706,15 +896,10 @@ export class DiffManager {
       if (!snapshot.fileExistedBefore && newCurrent.length === 0) {
         await this.deleteFile(absPath);
       }
-      const pendingBefore = this.getPendingFiles();
-      const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
-      const nextTarget =
-        pendingBefore.length > 1 && currentIdx !== -1
-          ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
-          : undefined;
+      const nextTarget = this.nextPendingAfter(absPath);
 
-      this.snapshots.delete(absPath);
-      void this.store.save(this.snapshots);
+      this.deleteSnapshot(absPath);
+      this.saveNow();
       this.closePanel(absPath);
 
       if (nextTarget) {
