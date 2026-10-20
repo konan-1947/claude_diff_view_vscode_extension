@@ -30,6 +30,8 @@ export interface SoundNotificationSettings {
 /** Giới hạn kích thước file được theo dõi. Xem `src/watcher/fileSizeLimit.ts`. */
 export interface FileLimitSettings {
   maxFileLines: number;
+  /** Most diff tabs opened automatically; 0 = no limit. See `src/watcher/autoOpenQueue.ts`. */
+  maxAutoOpenDiffs: number;
 }
 
 /** User-configured path exclusions. See `src/watcher/pathExclusions.ts`. */
@@ -56,6 +58,7 @@ export const DEFAULT_SOUND_NOTIFICATION_SETTINGS: SoundNotificationSettings = {
 
 export const DEFAULT_FILE_LIMIT_SETTINGS: FileLimitSettings = {
   maxFileLines: 5000,
+  maxAutoOpenDiffs: 50,
 };
 
 export const DEFAULT_EXCLUSION_SETTINGS: ExclusionSettings = {
@@ -65,6 +68,7 @@ export const DEFAULT_EXCLUSION_SETTINGS: ExclusionSettings = {
 
 /** 0 = tắt giới hạn. Trần trên chỉ để chặn nhập nhầm, không phải khuyến nghị. */
 export const MAX_FILE_LINES_CEILING = 200000;
+export const MAX_AUTO_OPEN_DIFFS_CEILING = 1000;
 
 export type IncomingMessage =
   | { type: 'ready' }

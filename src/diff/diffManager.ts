@@ -329,6 +329,11 @@ export class DiffManager {
     return this.getPendingOrder().index.get(normalizePath(filePath)) ?? -1;
   }
 
+  /** Diff tabs currently open, for the auto-open cap (AutoOpenQueue). */
+  getOpenPanelCount(): number {
+    return this.panels.size;
+  }
+
   getPendingCount(): number {
     return this.snapshots.size;
   }

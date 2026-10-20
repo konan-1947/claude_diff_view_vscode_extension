@@ -19,6 +19,8 @@ import { isTextFile } from './fileTypeRules';
 import { isExcludedPathSegment } from './pathExclusions';
 import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
+import { AutoOpenQueue } from './autoOpenQueue';
+import { notify } from '../util/notify';
 
 interface ExternalWriteOptions {
   burstHoldOverride?: boolean;
@@ -53,6 +55,8 @@ export class WorkspaceWatcher {
   private readonly queuedExternalWrites = new Map<string, { burstHold: boolean; readDelayMs: number }>();
   /** Thời gian giữ file vượt ngưỡng burst chờ xác nhận git trước khi mở diff bình thường. */
   private holdMs = 2000;
+  private maxAutoOpenDiffs = 50;
+  private readonly autoOpen: AutoOpenQueue;
   /** File vượt ngưỡng burst, đang chờ xác nhận git (xem resolveOrHold/scheduleHoldResolve). */
   private readonly heldWrites = new Map<string, { originalContent: string; newContent: string; fileExistedBefore: boolean }>();
   private holdResolveTimer: NodeJS.Timeout | undefined;
@@ -67,6 +71,19 @@ export class WorkspaceWatcher {
   ) {
     this.snapshots = new BaselineStore();
     this.baselineScanner = new BaselineScanner(this.snapshots);
+    this.autoOpen = new AutoOpenQueue({
+      openDiff: (p, preserveFocus) => this.diffManager.openDiff(p, preserveFocus ? { preserveFocus: true } : undefined),
+      isPending: (p) => this.diffManager.hasPendingDiff(p),
+      pendingIndex: (p) => this.diffManager.getPendingIndex(p),
+      openDiffCount: () => this.diffManager.getOpenPanelCount(),
+      shouldAutoOpen: () => this.shouldAutoOpenDiff(),
+      maxOpen: () => this.maxAutoOpenDiffs,
+      notifyCapped: (skipped, max) => this.showCappedNotice(skipped, max),
+    });
+  }
+
+  private showCappedNotice(skipped: number, max: number): void {
+    notify(`${skipped} changed file(s) were not opened: ${max} diff tabs are already open. Review them in Pending Files.`);
   }
 
   start(): void {
@@ -77,7 +94,8 @@ export class WorkspaceWatcher {
       if (e.affectsConfiguration('ai-cli-diff-view.burstDetectionEnabled') ||
           e.affectsConfiguration('ai-cli-diff-view.burstDetectionWindowMs') ||
           e.affectsConfiguration('ai-cli-diff-view.burstDetectionThreshold') ||
-          e.affectsConfiguration('ai-cli-diff-view.burstDetectionHoldMs')) {
+          e.affectsConfiguration('ai-cli-diff-view.burstDetectionHoldMs') ||
+          e.affectsConfiguration('ai-cli-diff-view.maxAutoOpenDiffs')) {
         this.applyBurstConfig();
       }
     });
@@ -89,6 +107,8 @@ export class WorkspaceWatcher {
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
     const holdMs = config.get<number>('burstDetectionHoldMs', 2000);
     this.holdMs = Number.isFinite(holdMs) ? Math.min(10000, Math.max(500, holdMs)) : 2000;
+    const maxAutoOpen = config.get<number>('maxAutoOpenDiffs', 50);
+    this.maxAutoOpenDiffs = Number.isFinite(maxAutoOpen) ? Math.min(1000, Math.max(0, Math.floor(maxAutoOpen))) : 50;
   }
 
   private loadBurstMeterConfig(): BurstMeterConfig {
@@ -473,9 +493,8 @@ export class WorkspaceWatcher {
     if (!this.shouldAutoOpenDiff()) {
       return;
     }
-    this.diffManager.openDiff(filePath, fromBurstDump ? { preserveFocus: true } : undefined).catch((err: unknown) => {
-      console.error('[ai-cli-diff-view] workspaceWatcher openDiff failed:', err);
-    });
+    // Capped and opened in small batches, see AutoOpenQueue (issue #37, HOT-1).
+    this.autoOpen.enqueue(filePath, fromBurstDump);
   }
 
   /**
@@ -557,5 +576,6 @@ export class WorkspaceWatcher {
     }
     this.heldWrites.clear();
     this.queuedExternalWrites.clear();
+    this.autoOpen.dispose();
   }
 }

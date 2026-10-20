@@ -80,6 +80,13 @@
           "default": true,
           "markdownDescription": "Never track files ignored by git — no baseline, no diff. Uses the `.gitignore` files of the repo that contains each file (every folder level, nested repos included) plus `.git/info/exclude`, so build output, generated files and unpacked packages an agent writes in bulk don't open diff tabs.\n\nTurn it off to review AI edits to ignored files such as `.env.local`. The global `core.excludesFile` is not read. Diffs already open for a newly ignored file stay until you resolve them."
         },
+        "ai-cli-diff-view.maxAutoOpenDiffs": {
+          "type": "number",
+          "default": 50,
+          "minimum": 0,
+          "maximum": 1000,
+          "markdownDescription": "Advanced: most diff tabs opened automatically for AI edits. Once this many diff tabs are open, further changed files only appear in Pending Files (open them from there or with Alt+H / Alt+L) and a notification says how many were left out. Files are picked in Pending Files order. `0` turns the limit off."
+        },
         "ai-cli-diff-view.baselineScanConcurrency": {
           "type": "number",
           "default": 4,

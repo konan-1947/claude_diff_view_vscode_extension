@@ -1158,6 +1158,16 @@ ${FONT_OPTIONS.map((f) => {
         </div>
 
         <div class="field">
+          <label for="f-max-auto-open">Max auto-opened diffs</label>
+          <input id="f-max-auto-open" type="number" min="0" max="1000" step="10">
+        </div>
+        <div class="setting-help">
+          Once this many diff tabs are open, further files the AI changes only appear in Pending
+          Files — open them from there or with Alt+H / Alt+L. A notification says how many were
+          left out. <strong>0 turns the limit off.</strong>
+        </div>
+
+        <div class="field">
           <label for="f-max-file-lines">Max file lines</label>
           <input id="f-max-file-lines" type="number" min="0" max="200000" step="500">
         </div>
@@ -1855,6 +1865,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const fBurstThreshold = document.getElementById('f-burst-threshold');
       const fBurstHold = document.getElementById('f-burst-hold');
       const fMaxFileLines = document.getElementById('f-max-file-lines');
+      const fMaxAutoOpen = document.getElementById('f-max-auto-open');
       const customRows = document.querySelectorAll('.custom-only');
 
       function parseFileExtensions(value) {
@@ -2101,6 +2112,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fBurstThreshold.value = String(s.burstDetectionThreshold);
         fBurstHold.value = String(s.burstDetectionHoldMs);
         fMaxFileLines.value = String(s.maxFileLines);
+        fMaxAutoOpen.value = String(s.maxAutoOpenDiffs);
         toggleCustomRows();
       }
 
@@ -2115,6 +2127,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const burstThreshold = parseInt(fBurstThreshold.value, 10);
         const burstHold = parseInt(fBurstHold.value, 10);
         const maxFileLines = parseInt(fMaxFileLines.value, 10);
+        const maxAutoOpen = parseInt(fMaxAutoOpen.value, 10);
         return {
           fontFamily: fFontFamily.value.trim() || DEFAULTS.fontFamily,
           fontSize: isFinite(size) ? Math.min(32, Math.max(6, size)) : DEFAULTS.fontSize,
@@ -2134,6 +2147,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           burstDetectionHoldMs: isFinite(burstHold) ? Math.min(10000, Math.max(500, burstHold)) : DEFAULTS.burstDetectionHoldMs,
           // 0 = tắt giới hạn, nên chặn dưới là 0 chứ không phải một mức tối thiểu.
           maxFileLines: isFinite(maxFileLines) ? Math.min(200000, Math.max(0, maxFileLines)) : DEFAULTS.maxFileLines,
+          maxAutoOpenDiffs: isFinite(maxAutoOpen) ? Math.min(1000, Math.max(0, maxAutoOpen)) : DEFAULTS.maxAutoOpenDiffs,
           excludedPaths: listEditors.excludedPaths.get(),
           respectGitignore: !!fRespectGitignore.checked,
         };

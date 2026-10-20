@@ -21,6 +21,7 @@ import {
   ExclusionSettings,
   FileLimitSettings,
   MAX_FILE_LINES_CEILING,
+  MAX_AUTO_OPEN_DIFFS_CEILING,
   IncomingMessage,
   SoundNotificationSettings,
   TerminalSettings,
@@ -344,10 +345,14 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private loadFileLimitSettings(): FileLimitSettings {
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
     const value = config.get<number>('maxFileLines', DEFAULT_FILE_LIMIT_SETTINGS.maxFileLines);
+    const maxAutoOpen = config.get<number>('maxAutoOpenDiffs', DEFAULT_FILE_LIMIT_SETTINGS.maxAutoOpenDiffs);
     return {
       maxFileLines: Number.isFinite(value)
         ? Math.min(MAX_FILE_LINES_CEILING, Math.max(0, Math.floor(value)))
         : DEFAULT_FILE_LIMIT_SETTINGS.maxFileLines,
+      maxAutoOpenDiffs: Number.isFinite(maxAutoOpen)
+        ? Math.min(MAX_AUTO_OPEN_DIFFS_CEILING, Math.max(0, Math.floor(maxAutoOpen)))
+        : DEFAULT_FILE_LIMIT_SETTINGS.maxAutoOpenDiffs,
     };
   }
 
@@ -360,6 +365,14 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       typeof value === 'number' && Number.isFinite(value)
         ? Math.min(MAX_FILE_LINES_CEILING, Math.max(0, Math.floor(value)))
         : next.maxFileLines,
+      vscode.ConfigurationTarget.Global
+    );
+    const maxAutoOpen = incoming.maxAutoOpenDiffs;
+    await config.update(
+      'maxAutoOpenDiffs',
+      typeof maxAutoOpen === 'number' && Number.isFinite(maxAutoOpen)
+        ? Math.min(MAX_AUTO_OPEN_DIFFS_CEILING, Math.max(0, Math.floor(maxAutoOpen)))
+        : next.maxAutoOpenDiffs,
       vscode.ConfigurationTarget.Global
     );
   }
