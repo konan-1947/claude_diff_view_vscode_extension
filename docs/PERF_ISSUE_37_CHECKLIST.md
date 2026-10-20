@@ -40,3 +40,42 @@
   - Cần: hàng đợi ghi duy nhất (append song song có thể xen dòng), bỏ qua dòng cuối ghi dở khi crash, fallback `workspaceState` khi không có `storageUri` (cửa sổ không có folder), migrate một lần từ key `ai-cli-diff.snapshots`.
   - Ưu điểm so với "mỗi snapshot 1 file": thứ tự ghi tự đúng, khởi động vẫn đồng bộ (đọc 1 file).
   - Đo (1k file đổi): 1.000 append ~0,2 s, log 3,8 MB, đọc lại khi khởi động ~22 ms.
+
+## Bộ test hiệu năng
+
+> Mỗi case có ngưỡng **Đạt khi** cụ thể. Cột **Trước** lấy từ log issue #37 (bản 3.7.0); cột **KQ** để điền khi test.
+
+### Môi trường
+
+- Workspace giống issue: ~11.900 file (~5.700 file text), root **không** phải repo, bên trong 7 repo con; mỗi repo có `build/` (bị `.gitignore`), `node_modules/`, file nhị phân. Thêm ~20 file > 5.000 dòng.
+- Mở bằng cửa sổ VS Code riêng, mọi setting mặc định (`maxAutoOpenDiffs` 50, burst 8 file / 300 ms, hold 2 s).
+- Đợi baseline scan xong rồi mới bắt đầu. Giữa các case: Accept All / Revert All cho sạch pending, đưa file về nội dung gốc.
+- Cách đo:
+  - **Đứng extension host**: tìm `UNRESPONSIVE extension host` + `ai-cli-diff-view` trong Output → *Window* / file log trong `%APPDATA%\Code\logs\<phiên>\`.
+  - **Độ trễ**: bấm giờ, hoặc `Developer: Toggle Developer Tools` → Performance.
+  - **RAM**: `Developer: Open Process Explorer` (cộng extension host + các webview).
+  - **Giật khi gõ**: gõ liên tục trong terminal panel AI CLI suốt case; mất ký tự / khựng > ~0,5 s là trượt.
+
+### Các case
+
+| ID | Kịch bản | Cách làm | Đạt khi | Trước | KQ |
+|---|---|---|---|---|---|
+| P1 | Mở workspace lớn | Mở cửa sổ, chờ baseline scan | Scan xong ≤ 30 s; 0 lần UNRESPONSIVE; gõ trong editor không khựng lúc scan | — | |
+| P2 | Agent sửa **1.000 file rải rác** trong ~3 phút (phần lớn 1 file/lần, thỉnh thoảng cụm 10–30 file) | Cho agent chạy, vừa gõ vào terminal | 0 lần UNRESPONSIVE; diff của file lẻ hiện ≤ **1 s** sau khi ghi, file trong cụm burst ≤ **5 s**; số tab diff tự mở ≤ 50; gõ không mất ký tự | 31 lần UNRESPONSIVE / phiên; ~1.340 tab | ✅ Đạt (20/10): 1.000 lần ghi trong 180 s, 0 UNRESPONSIVE, gõ không khựng, không mất focus, diff hiện nhanh, tab tự mở < 50 |
+| P3 | Ghi dồn **1.000 file trong < 1 s** (giải nén / codegen) | Ghi hàng loạt 1 lần | Pending Files đủ 1.000 file ≤ **5 s**; mở đúng 50 tab, xong ≤ **5 s** sau khi hết hold 2 s; 1 thông báo chạm trần; 0 lần UNRESPONSIVE | Mở N tab chồng nhau, đứng | ✅ Đạt (20/10): 1.000 file ghi trong 0,4 s; Pending Files đủ 1.000 ≤ 5 s; mở 50 tab, xong ≤ 5 s; 1 thông báo chạm trần; 0 UNRESPONSIVE; không khựng |
+| P4 | Bấm file trong Pending Files khi có 1.000 file pending | Bấm 5 file bất kỳ, kể cả lúc P2 đang chạy | Diff mở ≤ **1 s** mỗi lần | Có lúc > 10 s không phản hồi |  ✅ Đạt (20/10): 1.000 file pending, diff mở nhanh |
+| P5 | Alt+L / Alt+H qua file pending | Bấm liên tục 20 lần | Mỗi lần chuyển ≤ **0,5 s**; ô `n / N` đúng thứ tự cây Pending Files | — |  ✅ Đạt (20/10) |
+| P6 | Accept / Revert **1 hunk** khi có 1.000 file pending, 50 tab mở | Accept 5 hunk ở các tab khác nhau | Mỗi thao tác ≤ **0,3 s**; các tab khác không nháy / tải lại | Mỗi event ~1,2 s × số tab |  ✅ Đạt (20/10) |
+| P7 | **Accept All** với 1.000 file pending | Bấm Accept All | Xong ≤ **5 s**; cửa sổ không đứng > **1 s** liền; mọi tab diff đóng, Pending Files trống | Đứng ~61 s |  ✅ Đạt (20/10): Accept All 1.000 file không đứng |
+| P8 | **Revert All** với 1.000 file pending | Bấm Revert All | Như P7; file trên đĩa về đúng nội dung gốc, file mới bị xoá | — | |
+| P9 | Agent ghi 1.000 file vào `build/`, `node_modules/`, `dist/` | Ghi hàng loạt | **0** file vào Pending Files, 0 tab mở | Lọt vào diff | |
+| P10 | Sửa file > 5.000 dòng | Sửa 5 file lớn | Không vào Pending Files, không đứng | — | |
+| P11 | `git checkout` nhánh khác làm đổi ~1.000 file | Checkout trong 1 repo con | **0** tab diff mở; pending cũ bị xoá; 0 lần UNRESPONSIVE | — | |
+| P12 | Reload Window khi có 1.000 file pending | `Developer: Reload Window` | Pending Files khôi phục đủ 1.000 file ≤ **5 s**; diff vẫn đúng | Mỗi lần lưu serialize cả map (~3,4 GB JSON / 1k file) | |
+| P13 | RAM sau P2 / P3 | Process Explorer | Tổng extension host + webview ≤ **2 GB** | 5–7 GB | |
+| P14 | Không cướp focus | Gõ trong terminal / editor trong lúc P2 | Con trỏ không bị kéo sang tab diff, không mất ký tự | Bị cướp focus | |
+
+### Dự kiến trước khi test
+
+- Chưa làm nên **dự kiến trượt**: P7, P8 (HOT-6), P14 (thiếu `preserveFocus`). — Thực tế P7 và P14 (quan sát trong P2) đều đạt.
+- P13 phụ thuộc HOT-5: tab người dùng tự mở thêm vẫn mỗi tab 1 Monaco.
