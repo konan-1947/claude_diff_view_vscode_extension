@@ -7,7 +7,6 @@
  * (left side), TextDocument cung cấp modified content (right side).
  */
 
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from './diffManager';
 import { calculateHunks } from './hunkCalculator';
@@ -269,6 +268,7 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
     );
     const cspSource = webview.cspSource;
     const nonce = makeNonce();
+    const editorConfig = readEditorConfig();
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -312,6 +312,7 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
     <span id="toolbar-file"></span>
   </div>
   <div id="container"></div>
+  ${buildSkeleton(editorConfig)}
 
   <script nonce="${nonce}">
     window.__MONACO_BASE__ = "${monacoBase}";
@@ -358,9 +359,39 @@ function readEditorConfig(): EditorConfigPayload {
   };
 }
 
-function normalizePath(filePath: string): string {
-  const fsPath = vscode.Uri.file(path.resolve(filePath)).fsPath;
-  return process.platform === 'win32' ? fsPath.toLowerCase() : fsPath;
+/** Same formula as Monaco's BareFontInfo, so skeleton rows line up with the real lines. */
+function monacoLineHeight(fontSize: number, lineHeight: number): number {
+  const golden = process.platform === 'darwin' ? 1.5 : 1.35;
+  let h = lineHeight === 0 ? golden * fontSize : lineHeight < 8 ? lineHeight * fontSize : lineHeight;
+  h = Math.round(h);
+  return Math.max(8, h);
+}
+
+// Fake code shape: [indent level, bar width %]; repeats down the viewport.
+const SKELETON_SHAPE: Array<[number, number]> = [
+  [0, 38], [0, 52], [1, 44], [1, 61], [2, 35], [2, 48], [1, 22], [0, 8], [0, 0],
+  [0, 46], [1, 57], [1, 33], [2, 64], [2, 41], [1, 12], [0, 8], [0, 0], [0, 29],
+];
+
+/**
+ * Placeholder shown until the first `set` arrives (Monaco loading + content),
+ * removed in `diff.monaco.js`. Rows use the editor's real line height so
+ * nothing jumps when the code appears.
+ */
+function buildSkeleton(cfg: EditorConfigPayload): string {
+  const fontSize = cfg.fontSize > 0 ? cfg.fontSize : 14;
+  const lineHeight = monacoLineHeight(fontSize, cfg.lineHeight);
+  const rows: string[] = [];
+  for (let i = 0; i < 80; i++) {
+    const [indent, width] = SKELETON_SHAPE[i % SKELETON_SHAPE.length];
+    const bar = width > 0
+      ? `<span class="sk-code" style="margin-left:${indent * 2}em;width:${width}%"></span>`
+      : '';
+    rows.push(`<div class="sk-row"><span class="sk-num"></span>${bar}</div>`);
+  }
+  return `<div id="skeleton" aria-busy="true" aria-label="Loading diff" style="--sk-line-height:${lineHeight}px;font-size:${fontSize}px">`
+    + `<div class="sk-rows">${rows.join('')}</div>`
+    + '<div class="sk-error" hidden>Failed to load the diff editor.</div></div>';
 }
 
 function makeNonce(): string {

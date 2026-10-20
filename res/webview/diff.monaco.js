@@ -25,6 +25,7 @@
   };
 
   tlog('require(editor.main) called');
+  const skeleton = document.getElementById('skeleton');
   require(['vs/editor/editor.main'], function () {
     tlog('editor.main loaded');
 
@@ -252,6 +253,7 @@
 
       document.getElementById('toolbar-file').textContent = msg.filePath;
       applyNav(msg.nav);
+      if (skeleton && skeleton.isConnected) { skeleton.remove(); }
 
       if (msg.theme && msg.theme !== state.currentTheme) {
         applyTheme(msg.theme);
@@ -735,6 +737,12 @@
         .concat(group.removedTexts, modLines.slice(group.modifiedStart + group.addedCount))
         .join('\n');
       return { newOriginal: state.originalContent, newCurrent };
+    }
+  }, function (err) {
+    console.error('[ai-cli-diff] failed to load Monaco:', err);
+    if (skeleton) {
+      skeleton.classList.add('failed');
+      skeleton.querySelector('.sk-error').hidden = false;
     }
   });
 })();
