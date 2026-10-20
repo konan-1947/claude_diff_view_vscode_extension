@@ -386,7 +386,6 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   registerAllCommands({
     diffManager,
-    panel: terminalPanel,
     context,
     getRunner: () => activeRunner,
     setRunner: (r) => { activeRunner = r; },

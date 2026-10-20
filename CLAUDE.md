@@ -74,7 +74,7 @@ There used to be a third, hook-based pipeline (`PreToolUse`/`PostToolUse` hooks 
 
 ### Integrated terminal
 
-`src/terminal/` is an embedded PTY terminal (xterm.js webview + `node-pty`), shown by default in the Secondary Side Bar (extension.ts moves it there once via a one-time globalState flag). `src/terminal/terminalPanel.ts` (`TerminalPanelProvider`, view id `ai-cli-diff-view.terminal`) manages PTY sessions and also serves the pending-files / session-status page (`pendingFilesPage.ts`) — it plays the role the old session panel did. `ptySession.ts` wraps node-pty, and on Windows each spawned shell gets its environment rebuilt from the registry by `freshEnv.ts` (since `process.env` is a startup snapshot); `fontInstaller.ts` handles terminal fonts; `terminalHtml.ts` / `terminalTypes.ts` hold the webview shell and settings types.
+`src/terminal/` is an embedded PTY terminal (xterm.js webview + `node-pty`), shown by default in the Secondary Side Bar (extension.ts moves it there once via a one-time globalState flag). `src/terminal/terminalPanel.ts` (`TerminalPanelProvider`, view id `ai-cli-diff-view.terminal`) manages PTY sessions; its ☰ header button switches to the separate PENDING FILES view (`agentChangesPanel`) rather than rendering a file list of its own. `ptySession.ts` wraps node-pty, and on Windows each spawned shell gets its environment rebuilt from the registry by `freshEnv.ts` (since `process.env` is a startup snapshot); `fontInstaller.ts` handles terminal fonts; `terminalHtml.ts` / `terminalTypes.ts` hold the webview shell and settings types.
 
 ### UI composition
 

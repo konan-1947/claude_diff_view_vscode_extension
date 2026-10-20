@@ -1,13 +1,11 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
-import { TerminalPanelProvider } from '../terminal/terminalPanel';
 import { IAiRunner } from '../runner/aiRunner';
 import { createRunner } from '../runner/runnerFactory';
 
 export interface CommandDeps {
   diffManager: DiffManager;
-  panel: TerminalPanelProvider;
   context: vscode.ExtensionContext;
   getRunner(): IAiRunner | undefined;
   setRunner(runner: IAiRunner): void;
@@ -15,7 +13,7 @@ export interface CommandDeps {
 }
 
 export function registerAllCommands(deps: CommandDeps): void {
-  const { diffManager, panel, context } = deps;
+  const { diffManager, context } = deps;
 
   function getActiveDiffFilePath(): string | undefined {
     return diffManager.getActiveFilePath() ?? diffManager.getPendingFiles()[0];
@@ -55,7 +53,6 @@ export function registerAllCommands(deps: CommandDeps): void {
         return;
       }
 
-      panel.setRunning(prompt);
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `AI CLI Diff (${toolLabel})`, cancellable: false },
         async (progress) => {
@@ -66,11 +63,9 @@ export function registerAllCommands(deps: CommandDeps): void {
 
           try {
             await runner.run(prompt, workingDir, () => {}, onProgress);
-            panel.setIdle();
             vscode.window.showInformationMessage(`${toolLabel} session complete.`);
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            panel.setError(message);
             vscode.window.showErrorMessage(`${toolLabel} session failed: ${message}`);
           }
         }

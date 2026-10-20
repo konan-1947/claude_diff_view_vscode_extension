@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
-import { PENDING_FILES_CSS } from './pendingFilesPage';
 import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 
 interface FontOption {
@@ -33,14 +32,13 @@ export interface IntroSlide {
 export interface BuildTerminalHtmlArgs {
   webview: vscode.Webview;
   extensionUri: vscode.Uri;
-  filesInnerHtml: string;
 }
 
 /** Icon "i" cho nút mở mô tả cạnh tiêu đề setting — cùng hình với nút Introduce. */
 const INFO_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
 
 export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
-  const { webview, extensionUri, filesInnerHtml } = args;
+  const { webview, extensionUri } = args;
 
   const xtermBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'xterm'));
   const xtermJs = `${xtermBase}/xterm.js`;
@@ -108,7 +106,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     font-size: 11px;
     user-select: none;
   }
-  /* Only the terminal page follows the terminal colours; the files page keeps the sidebar look. */
+  /* The header follows the terminal colours. */
   body.page-terminal #header {
     border-bottom-color: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
     background: var(--chrome-bg, var(--vscode-sideBar-background));
@@ -184,17 +182,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   body.page-terminal #header .header-separator { background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.45))); }
   .header-btn:active { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.28)); }
 
-  /* Page switching */
-  body.page-files #term-wrap { display: none; }
-  body.page-files #tab-strip { display: none; }
-  body.page-terminal #files-wrap { display: none; }
-  body.page-files #btn-settings { display: none; }
-  body.page-terminal .title-files { display: none; }
-  body.page-files .title-terminal { display: none; }
-  body.page-terminal .toggle-to-files { display: inline-flex; }
-  body.page-terminal .toggle-to-terminal { display: none; }
-  body.page-files .toggle-to-files { display: none; }
-  body.page-files .toggle-to-terminal { display: inline-flex; }
 
 
   /* Tab strip */
@@ -306,11 +293,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .term-pane.active { display: block; }
   .xterm { padding: 4px 0 0 6px; height: 100%; }
 
-  #files-wrap {
-    position: absolute;
-    inset: 0;
-  }
-  ${PENDING_FILES_CSS}
 
   #err {
     position: absolute;
@@ -951,7 +933,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   <div id="header">
     <span id="header-title">
       <span class="title-terminal">Terminal</span>
-      <span class="title-files">Pending Files</span>
     </span>
     <div id="header-actions">
       <button id="btn-view-diff" class="view-diff-btn" type="button" title="Preview all pending changes" aria-label="Preview all pending changes" hidden>View diff</button>
@@ -960,10 +941,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
           <path d="M3 6h18"/>
           <path d="M3 12h18"/>
           <path d="M3 18h12"/>
-        </svg>
-        <svg class="toggle-to-terminal" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="4 8 8 12 4 16"/>
-          <line x1="12" y1="18" x2="20" y2="18"/>
         </svg>
       </button>
       <button id="btn-introduce" class="header-btn" title="Introduce" aria-label="Introduce">
@@ -1200,7 +1177,6 @@ ${FONT_OPTIONS.map((f) => {
         </div>
       </div>
     </div>
-    <div id="files-wrap">${filesInnerHtml}</div>
     <div id="diff-preview-overlay" hidden>
       <div class="diff-preview-head">
         <div class="diff-preview-title">
@@ -1742,20 +1718,12 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           btnInstallFont.disabled = false;
           btnInstallFont.textContent = 'Retry install';
           setInstallStatus(msg.error || 'Install failed', 'err');
-        } else if (msg.type === 'filesUpdate') {
-          const wrap = document.getElementById('files-wrap');
-          if (wrap) {
-            wrap.innerHTML = msg.html;
-            bindFilesPage();
-          }
         } else if (msg.type === 'showIntroduce') {
           openIntro();
         } else if (msg.type === 'agentModeState') {
           setAgentModeState(msg.active);
         } else if (msg.type === 'toggleDiffPreview') {
           btnViewDiff.click();
-        } else if (msg.type === 'togglePage') {
-          btnTogglePage.click();
         } else if (msg.type === 'openIntroduce') {
           openIntro();
         } else if (msg.type === 'openSettings') {
@@ -1853,39 +1821,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       });
 
       const btnTogglePage = document.getElementById('btn-toggle-page');
+      // Pending files live in their own view (PENDING FILES); this only switches to it.
       btnTogglePage.addEventListener('click', () => {
-        const isTerminal = document.body.classList.contains('page-terminal');
-        if (isTerminal) {
-          vscode.postMessage({ type: 'showPendingFiles' });
-          return;
-        }
-        document.body.classList.toggle('page-terminal', !isTerminal);
-        document.body.classList.toggle('page-files', isTerminal);
-        if (!isTerminal) {
-          // Switched back to terminal — refit active session since size may have changed.
-          requestAnimationFrame(() => {
-            const sess = sessions.get(activeId);
-            if (sess) {
-              safeFitSession(sess);
-              vscode.postMessage({ type: 'resize', id: activeId, cols: sess.term.cols, rows: sess.term.rows });
-            }
-          });
-        }
+        vscode.postMessage({ type: 'showPendingFiles' });
       });
-
-      // ---- Files page bindings (rebound after every filesUpdate) ----
-      function bindFilesPage() {
-        const tree = document.getElementById('file-tree');
-        if (tree) {
-          tree.querySelectorAll('.tree-row-file').forEach((btn) => {
-            btn.addEventListener('click', () => {
-              const p = btn.getAttribute('data-path');
-              if (p) vscode.postMessage({ type: 'openFile', path: p });
-            });
-          });
-        }
-      }
-      bindFilesPage();
 
       // ---- Settings overlay ----
       const overlay = document.getElementById('settings-overlay');

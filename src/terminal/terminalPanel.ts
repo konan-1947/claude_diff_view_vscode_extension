@@ -5,10 +5,6 @@ import { PtySession } from './ptySession';
 import { findInstallableForPrimary, installFont } from './fontInstaller';
 import { DiffManager } from '../diff/diffManager';
 import { sortLikePendingTree } from '../diff/treeOrder';
-import {
-  buildPendingFilesInnerHtml,
-  SessionState,
-} from './pendingFilesPage';
 import { buildTerminalHtml } from './terminalHtml';
 import { openBeside } from '../preview/openBeside';
 import { getPreviewKind, isBinaryImage } from '../preview/previewKind';
@@ -54,9 +50,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private sessions = new Map<string, SessionRecord>();
   private nextSessionNum = 0;
 
-  private sessionState: SessionState = 'idle';
-  private lastPrompt = '';
-  private errorMessage = '';
   private diffDisposable?: vscode.Disposable;
   private workspaceDiffDisposable?: vscode.Disposable;
   private themeDisposable?: vscode.Disposable;
@@ -80,7 +73,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     private readonly diffManager: DiffManager
   ) {
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
-      this.postFilesUpdate();
       if (this.diffPreviewOpen) {
         this.postDiffPreviewFiles();
       }
@@ -97,29 +89,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  // Public API used by commandsRegistry (mirrors the old SessionPanelProvider).
-  setRunning(prompt: string): void {
-    this.sessionState = 'running';
-    this.lastPrompt = prompt;
-    this.errorMessage = '';
-    this.postFilesUpdate();
-  }
-
-  setIdle(): void {
-    this.sessionState = 'idle';
-    this.postFilesUpdate();
-  }
-
-  setError(message: string): void {
-    this.sessionState = 'error';
-    this.errorMessage = message;
-    this.postFilesUpdate();
-  }
-
-  refresh(): void {
-    this.postFilesUpdate();
-  }
-
   setAgentMode(active: boolean): void {
     this.agentModeActive = active;
     void this.webview?.postMessage({ type: 'agentModeState', active });
@@ -127,10 +96,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
   toggleDiffPreview(): void {
     void this.webview?.postMessage({ type: 'toggleDiffPreview' });
-  }
-
-  togglePage(): void {
-    void this.webview?.postMessage({ type: 'togglePage' });
   }
 
   showIntroduce(): void {
@@ -240,29 +205,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       const windowLost = Math.abs(this.windowBlurredAt - blurredAt) < 300;
       this.lastTerminalFocused = windowLost;
     }, 300);
-  }
-
-  private postFilesUpdate(): void {
-    if (!this.webview) {
-      return;
-    }
-    const html = buildPendingFilesInnerHtml({
-      diffManager: this.diffManager,
-      iconBase: this.fileIconsBase(),
-      sessionState: this.sessionState,
-      lastPrompt: this.lastPrompt,
-      errorMessage: this.errorMessage,
-    });
-    void this.webview.postMessage({ type: 'filesUpdate', html });
-  }
-
-  private fileIconsBase(): string {
-    if (!this.webview) {
-      return '';
-    }
-    return this.webview
-      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons'))
-      .toString() + '/';
   }
 
   private spawnSession(cols: number, rows: number): { id: string; title: string } {
@@ -592,8 +534,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           void vscode.commands.executeCommand('ai-cli-diff-view.showPendingFiles');
           return;
         case 'ready':
-          // Push initial files page state once the webview is ready.
-          this.postFilesUpdate();
           this.setAgentMode(this.agentModeActive);
           if (this.focusWhenReady) {
             this.focusWhenReady = false;
@@ -733,13 +673,6 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           });
           return;
         }
-        case 'openFile':
-          if (msg.path && typeof msg.path === 'string') {
-            if (!this.openFileInAgent(msg.path)) {
-              void vscode.commands.executeCommand('ai-cli-diff-view.openPendingFile', msg.path);
-            }
-          }
-          return;
         case 'requestDiffPreview':
           this.diffPreviewOpen = true;
           this._onDidChangePreviewVisibility.fire(true);
@@ -840,18 +773,9 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     if (!this.webview) {
       return;
     }
-    const filesInner = buildPendingFilesInnerHtml({
-      diffManager: this.diffManager,
-      iconBase: this.fileIconsBase(),
-      sessionState: this.sessionState,
-      lastPrompt: this.lastPrompt,
-      errorMessage: this.errorMessage,
-    });
-
     this.webview.html = buildTerminalHtml({
       webview: this.webview,
       extensionUri: this.context.extensionUri,
-      filesInnerHtml: filesInner,
     });
   }
 

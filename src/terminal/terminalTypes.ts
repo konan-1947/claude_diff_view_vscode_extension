@@ -77,7 +77,6 @@ export type IncomingMessage =
   | { type: 'updateSettings'; settings: TerminalSettingsPayload }
   | { type: 'installFont'; primary: string }
   | { type: 'reloadWindow' }
-  | { type: 'openFile'; path: string }
   | { type: 'requestDiffPreview' }
   | { type: 'closeDiffPreview' }
   | { type: 'previewActiveFile'; path?: string }
