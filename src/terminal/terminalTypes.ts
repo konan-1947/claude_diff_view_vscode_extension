@@ -35,6 +35,7 @@ export interface FileLimitSettings {
 /** User-configured path exclusions. See `src/watcher/pathExclusions.ts`. */
 export interface ExclusionSettings {
   excludedPaths: string[];
+  respectGitignore: boolean;
 }
 
 export interface TerminalSettingsPayload
@@ -59,6 +60,7 @@ export const DEFAULT_FILE_LIMIT_SETTINGS: FileLimitSettings = {
 
 export const DEFAULT_EXCLUSION_SETTINGS: ExclusionSettings = {
   excludedPaths: [],
+  respectGitignore: true,
 };
 
 /** 0 = tắt giới hạn. Trần trên chỉ để chặn nhập nhầm, không phải khuyến nghị. */

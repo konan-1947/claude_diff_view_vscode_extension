@@ -9,6 +9,10 @@
  * On top of the built-in list below, users can add `.gitignore`-style patterns
  * through `ai-cli-diff-view.excludedPaths` (see `refreshPathExclusions()`).
  * They only ADD to the built-in list; they never replace it.
+ *
+ * With `ai-cli-diff-view.respectGitignore` (default on), files matched by the
+ * repo's own `.gitignore` files / `.git/info/exclude` are skipped too, so build
+ * output or unpacked packages an agent writes in bulk never open a diff (issue #37).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -78,6 +82,21 @@ function isNugetPackagesParent(parentDir: string): boolean {
 /** Compiled `excludedPaths`; undefined when the user configured none. */
 let userRules: ignore.Ignore | undefined;
 let userRulesLoaded = false;
+let respectGitignore = true;
+
+/** dir -> rules from its `.gitignore` (+ `.git/info/exclude` at a repo root); null = none. */
+const dirRulesCache = new Map<string, ignore.Ignore | null>();
+/** dir -> whether it holds a `.git` entry, i.e. is a repo root. */
+const repoRootCache = new Map<string, boolean>();
+/** workspace folder root -> repo root that contains it (or the folder itself when none). */
+const gitBaseCache = new Map<string, string>();
+
+/** Forget every cached `.gitignore`, e.g. after one was created, edited or deleted. */
+export function clearGitignoreCache(): void {
+  dirRulesCache.clear();
+  repoRootCache.clear();
+  gitBaseCache.clear();
+}
 
 /**
  * Re-reads `excludedPaths`.
@@ -89,6 +108,9 @@ export function refreshPathExclusions(): void {
   const patterns = Array.isArray(entries)
     ? entries.filter((e): e is string => typeof e === 'string' && e.trim() !== '').map(e => e.trim())
     : [];
+
+  respectGitignore = config.get<boolean>('respectGitignore', true) !== false;
+  clearGitignoreCache();
 
   userRules = undefined;
   userRulesLoaded = true;
@@ -151,5 +173,97 @@ export function isExcludedPathSegment(absPath: string): boolean {
   if (hasExcludedSegment(root, relParts)) { return true; }
 
   const userIgnore = rules();
-  return userIgnore !== undefined && userIgnore.ignores(relParts.join('/'));
+  if (userIgnore !== undefined && userIgnore.ignores(relParts.join('/'))) { return true; }
+
+  return respectGitignore && isGitIgnored(root, relParts);
+}
+
+function cacheKey(dir: string): string {
+  return process.platform === 'win32' ? dir.toLowerCase() : dir;
+}
+
+function isRepoRoot(dir: string): boolean {
+  const key = cacheKey(dir);
+  let result = repoRootCache.get(key);
+  if (result === undefined) {
+    result = fs.existsSync(path.join(dir, '.git'));
+    repoRootCache.set(key, result);
+  }
+  return result;
+}
+
+function readIfExists(file: string): string | undefined {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function dirRules(dir: string): ignore.Ignore | null {
+  const key = cacheKey(dir);
+  const cached = dirRulesCache.get(key);
+  if (cached !== undefined) { return cached; }
+  // info/exclude first so the directory's .gitignore wins, as in git.
+  const exclude = isRepoRoot(dir) ? readIfExists(path.join(dir, '.git', 'info', 'exclude')) : undefined;
+  const gitignore = readIfExists(path.join(dir, '.gitignore'));
+  let result: ignore.Ignore | null = null;
+  if (exclude !== undefined || gitignore !== undefined) {
+    try {
+      result = ignore({ ignorecase: process.platform !== 'linux' })
+        .add(exclude ?? '')
+        .add(gitignore ?? '');
+    } catch (err) {
+      console.warn(`[ai-cli-diff] unreadable ignore rules in ${dir}:`, err);
+    }
+  }
+  dirRulesCache.set(key, result);
+  return result;
+}
+
+/** Innermost repo root at or above `root`; `root` itself when it is in no repo. */
+function gitBase(root: string): string {
+  const key = cacheKey(root);
+  const cached = gitBaseCache.get(key);
+  if (cached !== undefined) { return cached; }
+  let base = root;
+  for (let dir = root; ; dir = path.dirname(dir)) {
+    if (isRepoRoot(dir)) { base = dir; break; }
+    if (path.dirname(dir) === dir) { break; }
+  }
+  gitBaseCache.set(key, base);
+  return base;
+}
+
+/**
+ * Walks from the repo root down to the file's folder, applying each folder's
+ * `.gitignore` to the path below it; a deeper match overrides a shallower one
+ * (`!keep.log` re-includes), and a nested repo starts over with its own rules.
+ *
+ * Known gaps versus git: the global `core.excludesFile` is not read, a file
+ * inside an ignored folder can still be re-included by a deeper `.gitignore`,
+ * and `info/exclude` is skipped when `.git` is a file (worktrees, submodules).
+ */
+function isGitIgnored(root: string, relParts: string[]): boolean {
+  const base = gitBase(root);
+  const parts = base === root
+    ? relParts
+    : [...path.relative(base, root).split(path.sep), ...relParts];
+  let ignored = false;
+  let dir = base;
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) {
+      dir = path.join(dir, parts[i - 1]);
+      if (isRepoRoot(dir)) { ignored = false; }
+    }
+    const rules = dirRules(dir);
+    if (!rules) { continue; }
+    const result = rules.test(parts.slice(i).join('/'));
+    if (result.ignored) {
+      ignored = true;
+    } else if (result.unignored) {
+      ignored = false;
+    }
+  }
+  return ignored;
 }

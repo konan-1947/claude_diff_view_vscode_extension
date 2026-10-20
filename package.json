@@ -75,6 +75,11 @@
           },
           "markdownDescription": "Paths that are never tracked — no baseline, no diff. Uses `.gitignore` syntax, one pattern per entry, matched relative to each workspace folder's root (never against folders outside the repo):\n\n- `generated` — any file or folder named `generated`, at any depth\n- `/generated` — only `generated` at the repo root\n- `generated/` — only folders named `generated`\n- `*.log`, `src/gen/**` — `*` stays within one folder, `**` spans folders\n- `!keep.log` — re-include something an earlier entry excluded\n\nAdds to the built-in list (`node_modules`, `.git`, `build`, `dist`, `out`, …), which cannot be re-included. Diffs already open for a newly excluded file stay until you resolve them."
         },
+        "ai-cli-diff-view.respectGitignore": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Never track files ignored by git — no baseline, no diff. Uses the `.gitignore` files of the repo that contains each file (every folder level, nested repos included) plus `.git/info/exclude`, so build output, generated files and unpacked packages an agent writes in bulk don't open diff tabs.\n\nTurn it off to review AI edits to ignored files such as `.env.local`. The global `core.excludesFile` is not read. Diffs already open for a newly ignored file stay until you resolve them."
+        },
         "ai-cli-diff-view.baselineScanConcurrency": {
           "type": "number",
           "default": 4,

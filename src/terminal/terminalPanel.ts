@@ -306,19 +306,22 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       excludedPaths: this.normalizeExclusionList(
         config.get<string[]>('excludedPaths', DEFAULT_EXCLUSION_SETTINGS.excludedPaths)
       ),
+      respectGitignore: config.get<boolean>('respectGitignore', DEFAULT_EXCLUSION_SETTINGS.respectGitignore),
     };
   }
 
   private async saveExclusionSettings(incoming: Partial<ExclusionSettings>): Promise<void> {
-    const next = this.normalizeExclusionList(incoming.excludedPaths);
-    const current = this.loadExclusionSettings().excludedPaths;
-    // Every write fires onDidChangeConfiguration → baseline rescan, so skip the
-    // update when Apply was pressed for some unrelated setting.
-    if (next.length === current.length && next.every((entry, i) => entry === current[i])) {
-      return;
-    }
+    const current = this.loadExclusionSettings();
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
-    await config.update('excludedPaths', next, vscode.ConfigurationTarget.Global);
+    // Every write fires onDidChangeConfiguration → baseline rescan, so skip each
+    // update when Apply was pressed for some unrelated setting.
+    const next = this.normalizeExclusionList(incoming.excludedPaths);
+    if (!(next.length === current.excludedPaths.length && next.every((entry, i) => entry === current.excludedPaths[i]))) {
+      await config.update('excludedPaths', next, vscode.ConfigurationTarget.Global);
+    }
+    if (typeof incoming.respectGitignore === 'boolean' && incoming.respectGitignore !== current.respectGitignore) {
+      await config.update('respectGitignore', incoming.respectGitignore, vscode.ConfigurationTarget.Global);
+    }
   }
 
   /** Trim, drop empty entries and duplicates. Pattern parsing is left to `pathExclusions.ts`. */

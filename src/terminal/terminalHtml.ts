@@ -1083,6 +1083,11 @@ ${FONT_OPTIONS.map((f) => {
             </div>
           </div>
         </div>
+        <div class="field">
+          <label for="f-respect-gitignore">Respect .gitignore</label>
+          <input id="f-respect-gitignore" type="checkbox">
+        </div>
+        <div class="setting-help">Files ignored by the repo's <code>.gitignore</code> (any folder level, nested repos included) or <code>.git/info/exclude</code> are never tracked — no diff. Turn off to review AI edits to ignored files such as <code>.env.local</code>.</div>
         <div class="field file-ext-field">
           <div class="label-row">
             <label>Excluded paths</label>
@@ -1844,6 +1849,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const fCursorStyle = document.getElementById('f-cursor-style');
       const fCursorBlink = document.getElementById('f-cursor-blink');
       const fSoundNotifications = document.getElementById('f-sound-notifications');
+      const fRespectGitignore = document.getElementById('f-respect-gitignore');
       const fBurstEnabled = document.getElementById('f-burst-enabled');
       const fBurstWindow = document.getElementById('f-burst-window');
       const fBurstThreshold = document.getElementById('f-burst-threshold');
@@ -2089,6 +2095,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fSoundNotifications.checked = s.soundNotificationsEnabled;
         listEditors.fileExtensions.set(s.supportedFileExtensions);
         listEditors.excludedPaths.set(s.excludedPaths);
+        fRespectGitignore.checked = s.respectGitignore;
         fBurstEnabled.checked = s.burstDetectionEnabled;
         fBurstWindow.value = String(s.burstDetectionWindowMs);
         fBurstThreshold.value = String(s.burstDetectionThreshold);
@@ -2128,6 +2135,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           // 0 = tắt giới hạn, nên chặn dưới là 0 chứ không phải một mức tối thiểu.
           maxFileLines: isFinite(maxFileLines) ? Math.min(200000, Math.max(0, maxFileLines)) : DEFAULTS.maxFileLines,
           excludedPaths: listEditors.excludedPaths.get(),
+          respectGitignore: !!fRespectGitignore.checked,
         };
       }
 

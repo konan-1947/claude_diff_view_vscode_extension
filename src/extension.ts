@@ -5,7 +5,7 @@ import { IAiRunner } from './runner/aiRunner';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { refreshTextFileRules } from './watcher/fileTypeRules';
 import { refreshFileSizeLimit } from './watcher/fileSizeLimit';
-import { refreshPathExclusions } from './watcher/pathExclusions';
+import { clearGitignoreCache, isExcludedPathSegment, refreshPathExclusions } from './watcher/pathExclusions';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { NavigationManager } from './diff/navigationManager';
@@ -177,7 +177,8 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       if (e.affectsConfiguration('ai-cli-diff-view.maxFileLines')) {
         refreshFileSizeLimit();
       }
-      if (e.affectsConfiguration('ai-cli-diff-view.excludedPaths')) {
+      if (e.affectsConfiguration('ai-cli-diff-view.excludedPaths') ||
+          e.affectsConfiguration('ai-cli-diff-view.respectGitignore')) {
         refreshPathExclusions();
         // Files that were excluded during the initial scan have no baseline, so
         // dropping an exclusion would make them look brand new — and Revert all
@@ -185,6 +186,25 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
         workspaceWatcher.rebuildBaselineAfterRuleChange();
       }
     })
+  );
+
+  // A .gitignore edited while running changes what is tracked: re-read the rules
+  // and give newly un-ignored files a baseline (same reason as excludedPaths above).
+  // Ones inside built-in excluded folders (node_modules during npm install) are skipped.
+  const gitignoreChangedSoon = coalesce(() => {
+    clearGitignoreCache();
+    workspaceWatcher.rebuildBaselineAfterRuleChange();
+  });
+  const gitignoreWatcher = vscode.workspace.createFileSystemWatcher('**/.gitignore');
+  const onGitignoreChange = (uri: vscode.Uri): void => {
+    if (!isExcludedPathSegment(uri.fsPath)) { gitignoreChangedSoon.schedule(); }
+  };
+  context.subscriptions.push(
+    gitignoreWatcher,
+    gitignoreWatcher.onDidCreate(onGitignoreChange),
+    gitignoreWatcher.onDidChange(onGitignoreChange),
+    gitignoreWatcher.onDidDelete(onGitignoreChange),
+    { dispose: () => gitignoreChangedSoon.dispose() },
   );
 
   const terminalPanel = new TerminalPanelProvider(context, diffManager);
