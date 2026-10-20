@@ -224,6 +224,7 @@
       if (!msg) { return; }
       switch (msg.type) {
         case 'set': applySet(msg); return;
+        case 'nav': applyNav(msg.nav); return;
         case 'theme-change': applyTheme(msg.theme); return;
         case 'config-change':
           applyConfig(msg.editorConfig);

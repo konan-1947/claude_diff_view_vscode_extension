@@ -61,6 +61,21 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
 
     const disposables: vscode.Disposable[] = [];
 
+    // What the webview last received, so onDidChangeDiffs can skip a full 'set'
+    // when only the "n / N" changed (issue #37, HOT-3a).
+    let sentSnapshot: string | undefined;
+    let sentNav: { currentIdx: number; total: number } | undefined;
+    // The webview disabled its buttons after acceptHunk/rejectHunk and re-enables
+    // them only on the next 'set', so that one must not be downgraded to 'nav'.
+    let awaitingSet = false;
+
+    const postNav = (): void => {
+      const nav = this.computeNav(filePath);
+      if (sentNav && sentNav.currentIdx === nav.currentIdx && sentNav.total === nav.total) { return; }
+      sentNav = nav;
+      void webviewPanel.webview.postMessage({ type: 'nav', nav });
+    };
+
     const postSet = (): void => {
       const snapshot = this.diffManager.getSnapshotContent(filePath);
       if (snapshot === undefined) {
@@ -75,6 +90,9 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
       const currentContent = toLf(document.getText());
       const hunks = calculateHunks(originalContent, currentContent);
       const nav = this.computeNav(filePath);
+      sentSnapshot = snapshot;
+      sentNav = nav;
+      awaitingSet = false;
       void webviewPanel.webview.postMessage({
         type: 'set',
         filePath,
@@ -102,9 +120,11 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
         }
         switch (msg.type) {
           case 'acceptHunk':
+            awaitingSet = true;
             await this.diffManager.applyHunkAcceptFromWebview(filePath, msg.newOriginal, msg.newCurrent);
             return;
           case 'rejectHunk':
+            awaitingSet = true;
             await this.diffManager.applyHunkRejectFromWebview(filePath, msg.newOriginal, msg.newCurrent);
             return;
           case 'editModified':
@@ -152,13 +172,18 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
       })
     );
 
-    // Snapshot đổi (accept hunk) hoặc pending list đổi -> refresh nav counter.
+    // Snapshot đổi (accept hunk) -> gửi lại toàn bộ; chỉ pending list đổi -> chỉ
+    // cập nhật ô đếm. Snapshot không đổi vẫn là cùng một string nên !== là O(1).
     disposables.push(
       this.diffManager.onDidChangeDiffs(() => {
-        if (webviewReady) {
+        if (!webviewReady) {
+          pendingSet = true;
+          return;
+        }
+        if (awaitingSet || this.diffManager.getSnapshotContent(filePath) !== sentSnapshot) {
           postSet();
         } else {
-          pendingSet = true;
+          postNav();
         }
       })
     );
@@ -215,24 +240,20 @@ export class DiffEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private async gotoSibling(currentPath: string, direction: 1 | -1): Promise<void> {
-    const pending = this.diffManager.getPendingFiles();
-    if (pending.length <= 1) { return; }
-    const normalized = normalizePath(currentPath);
-    const idx = pending.findIndex(p => normalizePath(p) === normalized);
+    const count = this.diffManager.getPendingCount();
+    if (count <= 1) { return; }
+    const idx = this.diffManager.getPendingIndex(currentPath);
     if (idx === -1) { return; }
-    const nextIdx = (idx + direction + pending.length) % pending.length;
-    const nextPath = pending[nextIdx];
+    const nextPath = this.diffManager.getPendingFileAt((idx + direction + count) % count);
     if (!nextPath) { return; }
     await this.diffManager.openDiff(nextPath);
   }
 
   private computeNav(filePath: string): { currentIdx: number; total: number } {
-    const pending = this.diffManager.getPendingFiles();
-    const normalized = normalizePath(filePath);
-    const idx = pending.findIndex(p => normalizePath(p) === normalized);
+    const idx = this.diffManager.getPendingIndex(filePath);
     return {
       currentIdx: idx === -1 ? 0 : idx + 1,
-      total: pending.length,
+      total: this.diffManager.getPendingCount(),
     };
   }
 

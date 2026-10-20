@@ -26,37 +26,38 @@ export class NavigationManager {
   }
 
   private async navigate(direction: number): Promise<void> {
-    const pendingFiles = this.diffManager.getPendingFiles();
-    if (pendingFiles.length === 0) {
+    const count = this.diffManager.getPendingCount();
+    if (count === 0) {
       vscode.window.showInformationMessage('No files with pending diffs.');
       return;
     }
 
     const currentEditor = vscode.window.activeTextEditor;
     const currentPath = currentEditor ? normalizePath(currentEditor.document.uri.fsPath) : '';
-    
+
     // Nếu chỉ còn 1 file pending: nếu user đang đứng ở file khác thì mở diff đó ngay.
-    if (pendingFiles.length === 1) {
-      if (normalizePath(pendingFiles[0]) !== currentPath) {
-        await this.diffManager.openDiff(pendingFiles[0]);
+    if (count === 1) {
+      const onlyFile = this.diffManager.getPendingFileAt(0)!;
+      if (normalizePath(onlyFile) !== currentPath) {
+        await this.diffManager.openDiff(onlyFile);
       }
       return;
     }
 
-    let currentIndex = pendingFiles.indexOf(currentPath);
+    let currentIndex = currentPath ? this.diffManager.getPendingIndex(currentPath) : -1;
     // Nếu không tìm thấy file hiện tại (đang ở file khác không có diff),
     // chọn biên phù hợp theo hướng để điều hướng không bị wrap.
     if (currentIndex === -1) {
-      currentIndex = direction > 0 ? 0 : pendingFiles.length - 1;
+      currentIndex = direction > 0 ? 0 : count - 1;
     } else {
       const targetIndex = currentIndex + direction;
-      if (targetIndex < 0 || targetIndex >= pendingFiles.length) {
+      if (targetIndex < 0 || targetIndex >= count) {
         return;
       }
       currentIndex = targetIndex;
     }
 
-    const targetPath = pendingFiles[currentIndex];
+    const targetPath = this.diffManager.getPendingFileAt(currentIndex)!;
     await this.diffManager.openDiff(targetPath);
   }
 
@@ -64,11 +65,11 @@ export class NavigationManager {
    * Lấy danh sách thông tin để hiển thị trên thanh điều hướng.
    */
   getNavigationInfo(currentFilePath: string) {
-    const pendingFiles = this.diffManager.getPendingFiles();
-    if (pendingFiles.length === 0) { return undefined; }
+    const count = this.diffManager.getPendingCount();
+    if (count === 0) { return undefined; }
 
-    if (pendingFiles.length === 1) {
-      const onlyFile = pendingFiles[0]!;
+    if (count === 1) {
+      const onlyFile = this.diffManager.getPendingFileAt(0)!;
       const onlyName = path.basename(onlyFile);
       return {
         currentIdx: 1,
@@ -80,18 +81,17 @@ export class NavigationManager {
       };
     }
 
-    const currentPath = normalizePath(currentFilePath);
-    const rawIndex = pendingFiles.indexOf(currentPath);
+    const rawIndex = this.diffManager.getPendingIndex(currentFilePath);
 
     // Nếu user đang đứng ở file không pending, nút Next/Prev sẽ "mở" một file biên:
     // - Next: mở pending đầu tiên
     // - Prev: mở pending cuối cùng
     if (rawIndex === -1) {
-      const first = pendingFiles[0]!;
-      const last = pendingFiles[pendingFiles.length - 1]!;
+      const first = this.diffManager.getPendingFileAt(0)!;
+      const last = this.diffManager.getPendingFileAt(count - 1)!;
       return {
         currentIdx: 1,
-        total: pendingFiles.length,
+        total: count,
         prevName: path.basename(last),
         nextName: path.basename(first),
         canPrev: true,
@@ -101,13 +101,13 @@ export class NavigationManager {
 
     const currentIndex = rawIndex;
     const canPrev = currentIndex > 0;
-    const canNext = currentIndex < pendingFiles.length - 1;
-    const prevName = canPrev ? path.basename(pendingFiles[currentIndex - 1]) : '';
-    const nextName = canNext ? path.basename(pendingFiles[currentIndex + 1]) : '';
+    const canNext = currentIndex < count - 1;
+    const prevName = canPrev ? path.basename(this.diffManager.getPendingFileAt(currentIndex - 1)!) : '';
+    const nextName = canNext ? path.basename(this.diffManager.getPendingFileAt(currentIndex + 1)!) : '';
 
     return {
       currentIdx: currentIndex + 1,
-      total: pendingFiles.length,
+      total: count,
       prevName,
       nextName,
       canPrev,

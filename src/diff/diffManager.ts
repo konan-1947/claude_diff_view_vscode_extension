@@ -15,6 +15,7 @@ import { detectLanguageId } from './language';
 import { exceedsLineLimit } from '../watcher/fileSizeLimit';
 import { DIFF_EDITOR_VIEW_TYPE } from './diffWebviewPanel';
 import { SnapshotStore, SnapshotState } from './snapshotStore';
+import { sortLikePendingTree } from './treeOrder';
 
 function normalizePath(filePath: string): string {
   const fsPath = vscode.Uri.file(path.resolve(filePath)).fsPath;
@@ -59,6 +60,12 @@ export class DiffManager {
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
 
   private snapshots: Map<string, SnapshotState> = new Map();
+  /**
+   * Pending files in Pending Files tree order + key -> position. Every tab diff asks
+   * for its "n / N" on each onDidChangeDiffs, so this is rebuilt lazily once per
+   * add/remove instead of scanning all pending files per tab (issue #37, HOT-3b).
+   */
+  private pendingOrder: { display: string[]; index: Map<string, number> } | undefined;
   /** normalized key -> path with the real on-disk case, for display only. */
   private displayPaths: Map<string, string> = new Map();
   private readonly store: SnapshotStore;
@@ -100,7 +107,7 @@ export class DiffManager {
       await vscode.workspace.fs.stat(uri);
     } catch (err) {
       if (isFileNotFound(err)) {
-        this.snapshots.set(absPath, { content: '', fileExistedBefore: false });
+        this.setSnapshot(absPath,{ content: '', fileExistedBefore: false });
         this.rememberDisplayPath(filePath);
         void this.store.save(this.snapshots);
       }
@@ -113,7 +120,7 @@ export class DiffManager {
       // chỉ đúng với đường workspace watcher. Không snapshot -> openDiff() thoát
       // sớm vì không có snapshot -> file lớn không mở diff, đúng như mong đợi.
       if (exceedsLineLimit(content)) { return; }
-      this.snapshots.set(absPath, { content, fileExistedBefore: true });
+      this.setSnapshot(absPath,{ content, fileExistedBefore: true });
       this.rememberDisplayPath(filePath);
     } catch {
       // File có thể bị xóa hoặc không đọc được sau khi stat — không tạo snapshot rỗng.
@@ -144,7 +151,7 @@ export class DiffManager {
       // A newly-created empty file is still pending: Revert must delete it and
       // Accept must keep it. There is simply no text hunk to render.
       if (!snapshot.fileExistedBefore) { return; }
-      this.snapshots.delete(absPath);
+      this.deleteSnapshot(absPath);
       void this.store.save(this.snapshots);
       this._onDidChangeDiffs.fire();
       return;
@@ -199,7 +206,7 @@ export class DiffManager {
   loadSnapshot(filePath: string, content: string, fileExistedBefore = true): void {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) {
-      this.snapshots.set(absPath, { content, fileExistedBefore });
+      this.setSnapshot(absPath,{ content, fileExistedBefore });
       this.rememberDisplayPath(filePath);
       void this.store.save(this.snapshots);
       this._onDidChangeDiffs.fire();
@@ -214,14 +221,9 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) { return; }
 
-    const pendingBefore = this.getPendingFiles();
-    const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
-    const nextTarget =
-      pendingBefore.length > 1 && currentIdx !== -1
-        ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
-        : undefined;
+    const nextTarget = this.nextPendingAfter(absPath);
 
-    this.snapshots.delete(absPath);
+    this.deleteSnapshot(absPath);
     void this.store.save(this.snapshots);
     this.closePanel(absPath);
     await this.reopenAsTextEditor(absPath);
@@ -241,12 +243,7 @@ export class DiffManager {
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return; }
 
-    const pendingBefore = this.getPendingFiles();
-    const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
-    const nextTarget =
-      pendingBefore.length > 1 && currentIdx !== -1
-        ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
-        : undefined;
+    const nextTarget = this.nextPendingAfter(absPath);
 
     if (snapshot.fileExistedBefore) {
       await this.writeFile(absPath, snapshot.content);
@@ -254,7 +251,7 @@ export class DiffManager {
       await this.deleteFile(absPath);
     }
 
-    this.snapshots.delete(absPath);
+    this.deleteSnapshot(absPath);
     void this.store.save(this.snapshots);
     this.closePanel(absPath);
     if (snapshot.fileExistedBefore) {
@@ -272,7 +269,7 @@ export class DiffManager {
   async acceptAllPending(): Promise<number> {
     const pendingFiles = this.getPendingFiles();
     const count = pendingFiles.length;
-    this.snapshots.clear();
+    this.clearSnapshots();
     this.displayPaths.clear();
     void this.store.save(this.snapshots);
     for (const p of pendingFiles) {
@@ -286,9 +283,64 @@ export class DiffManager {
     return this.snapshots.has(normalizePath(filePath));
   }
 
-  /** Pending files with their real on-disk case; compare with normalizePath, never with ===. */
+  /**
+   * Pending files with their real on-disk case, in Pending Files tree order;
+   * compare with normalizePath, never with ===.
+   */
   getPendingFiles(): string[] {
-    return Array.from(this.snapshots.keys(), (key) => this.getDisplayPath(key));
+    return this.getPendingOrder().display.slice();
+  }
+
+  /** Position of a file in getPendingFiles(), or -1 if it is not pending. */
+  getPendingIndex(filePath: string): number {
+    return this.getPendingOrder().index.get(normalizePath(filePath)) ?? -1;
+  }
+
+  getPendingCount(): number {
+    return this.snapshots.size;
+  }
+
+  getPendingFileAt(index: number): string | undefined {
+    return this.getPendingOrder().display[index];
+  }
+
+  /** The pending file after this one (wrapping), used to move on after accept/revert. */
+  private nextPendingAfter(absPath: string): string | undefined {
+    const count = this.getPendingCount();
+    const idx = this.getPendingIndex(absPath);
+    if (count <= 1 || idx === -1) { return undefined; }
+    return this.getPendingFileAt((idx + 1) % count);
+  }
+
+  private getPendingOrder(): { display: string[]; index: Map<string, number> } {
+    if (!this.pendingOrder) {
+      const keyByDisplay = new Map<string, string>();
+      for (const key of this.snapshots.keys()) {
+        keyByDisplay.set(this.getDisplayPath(key), key);
+      }
+      const display = sortLikePendingTree(Array.from(keyByDisplay.keys()));
+      const index = new Map(display.map((p, i): [string, number] => [keyByDisplay.get(p)!, i]));
+      this.pendingOrder = { display, index };
+    }
+    return this.pendingOrder;
+  }
+
+  // ---- Snapshot mutations: always go through these so pendingOrder stays valid ----
+
+  private setSnapshot(absPath: string, snapshot: SnapshotState): void {
+    // Overwriting an existing key keeps its position, so the order only changes on add.
+    if (!this.snapshots.has(absPath)) { this.pendingOrder = undefined; }
+    this.snapshots.set(absPath, snapshot);
+  }
+
+  private deleteSnapshot(absPath: string): void {
+    this.snapshots.delete(absPath);
+    this.pendingOrder = undefined;
+  }
+
+  private clearSnapshots(): void {
+    this.snapshots.clear();
+    this.pendingOrder = undefined;
   }
 
   /**
@@ -414,7 +466,7 @@ export class DiffManager {
   async acceptFromPreview(filePath: string): Promise<void> {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) { return; }
-    this.snapshots.delete(absPath);
+    this.deleteSnapshot(absPath);
     void this.store.save(this.snapshots);
     this.closePanel(absPath);
     this._onDidChangeDiffs.fire();
@@ -434,7 +486,7 @@ export class DiffManager {
     } else {
       await this.writeFile(absPath, snapshot.content);
     }
-    this.snapshots.delete(absPath);
+    this.deleteSnapshot(absPath);
     void this.store.save(this.snapshots);
     this.closePanel(absPath);
     this._onDidChangeDiffs.fire();
@@ -448,12 +500,12 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return; }
-    this.snapshots.set(absPath, {
+    this.setSnapshot(absPath,{
       ...snapshot,
       content: fromLf(newOriginal, detectEol(snapshot.content)),
     });
     if (newOriginal === newCurrent) {
-      this.snapshots.delete(absPath);
+      this.deleteSnapshot(absPath);
       this.closePanel(absPath);
     }
     void this.store.save(this.snapshots);
@@ -477,7 +529,7 @@ export class DiffManager {
           if (!isFileNotFound(err)) { throw err; }
         }
       }
-      this.snapshots.delete(absPath);
+      this.deleteSnapshot(absPath);
       this.closePanel(absPath);
     }
     void this.store.save(this.snapshots);
@@ -501,7 +553,7 @@ export class DiffManager {
   }
 
   disposeAll(): void {
-    this.snapshots.clear();
+    this.clearSnapshots();
     this.displayPaths.clear();
     for (const panel of this.panels.values()) {
       panel.dispose();
@@ -673,7 +725,7 @@ export class DiffManager {
 
     // newOriginal từ webview ở LF -> trả về đúng EOL của snapshot cũ, để snapshot
     // luôn giữ nguyên dạng byte gốc của file và revert() khôi phục chuẩn xác.
-    this.snapshots.set(absPath, {
+    this.setSnapshot(absPath,{
       ...snapshot,
       content: fromLf(newOriginal, detectEol(snapshot.content)),
     });
@@ -706,14 +758,9 @@ export class DiffManager {
       if (!snapshot.fileExistedBefore && newCurrent.length === 0) {
         await this.deleteFile(absPath);
       }
-      const pendingBefore = this.getPendingFiles();
-      const currentIdx = pendingBefore.findIndex(p => normalizePath(p) === absPath);
-      const nextTarget =
-        pendingBefore.length > 1 && currentIdx !== -1
-          ? pendingBefore[(currentIdx + 1) % pendingBefore.length]
-          : undefined;
+      const nextTarget = this.nextPendingAfter(absPath);
 
-      this.snapshots.delete(absPath);
+      this.deleteSnapshot(absPath);
       void this.store.save(this.snapshots);
       this.closePanel(absPath);
 
