@@ -6,6 +6,7 @@ import { findInstallableForPrimary, installFont } from './fontInstaller';
 import { DiffManager } from '../diff/diffManager';
 import { sortLikePendingTree } from '../diff/treeOrder';
 import { buildTerminalHtml } from './terminalHtml';
+import { coalesce } from '../util/coalesce';
 import { openBeside } from '../preview/openBeside';
 import { getPreviewKind, isBinaryImage } from '../preview/previewKind';
 import { applySoundNotifications } from '../commands/soundNotifications';
@@ -59,6 +60,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private agentModeActive = false;
   private focusWhenReady = false;
   private diffPreviewOpen = false;
+  /** Pending list changes come in bursts; resend the preview's file list once per burst. */
+  private readonly previewFilesSoon = coalesce(() => this.postDiffPreviewFiles());
   private filePreviewOpen = false;
   private filePreviewPath?: string;
   private pendingAgentFilePath?: string;
@@ -74,7 +77,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   ) {
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
       if (this.diffPreviewOpen) {
-        this.postDiffPreviewFiles();
+        this.previewFilesSoon.schedule();
       }
     });
     this.workspaceDiffDisposable = vscode.workspace.onDidChangeTextDocument((event) => {
@@ -901,6 +904,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.focusWhenReady = false;
     this.diffDisposable?.dispose();
     this.diffDisposable = undefined;
+    this.previewFilesSoon.dispose();
     this.workspaceDiffDisposable?.dispose();
     this.workspaceDiffDisposable = undefined;
     this.themeDisposable?.dispose();

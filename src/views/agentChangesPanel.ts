@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager, DiffPreviewMetadata } from '../diff/diffManager';
+import { coalesce } from '../util/coalesce';
 
 type AgentChangesElement = AgentFolder | AgentFile;
 
@@ -36,6 +37,9 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
   private activeFilePath?: string;
   private root: AgentFolder = { type: 'folder', id: 'root', label: '', children: [] };
   private generation = 0;
+  private readonly refreshSoon = coalesce(() => {
+    if (this.active) { void this.refresh(); }
+  });
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -43,8 +47,9 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     private readonly openPendingFile: (filePath: string) => boolean,
     private readonly actions: AgentChangesActions,
   ) {
+    // A burst of agent writes fires this once or twice per file; refresh once per burst instead.
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
-      if (this.active) { void this.refresh(); }
+      if (this.active) { this.refreshSoon.schedule(); }
     });
   }
 
@@ -301,6 +306,7 @@ ${rows || '<div class="empty">No pending changes</div>'}
 
   dispose(): void {
     this.generation += 1;
+    this.refreshSoon.dispose();
     this.diffDisposable.dispose();
     this.viewMessageDisposable?.dispose();
   }

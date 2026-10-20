@@ -13,6 +13,7 @@ import { NavBarPanel } from './views/navBarPanel';
 import { AgentChangesPanel } from './views/agentChangesPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
 import { forgetOpenedBeside, hasOpenedBeside, isOpenedBeside, onDidChangeOpenedBeside } from './preview/openBeside';
+import { coalesce } from './util/coalesce';
 
 const LOG_PREFIX = '[ai-cli-diff-view]';
 const AGENT_MODE_TABS_STATE_KEY = 'ai-cli-diff-view.agentMode.editorTabsState';
@@ -453,13 +454,13 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.hasPendingDiff', true);
   }
 
+  // Both events come in bursts (an agent writing many files opens many tabs):
+  // update the nav bar once per burst instead of once per event.
+  const navBarSoon = coalesce(updateNavBarState);
   context.subscriptions.push(
-    diffManager.onDidChangeDiffs(() => {
-      updateNavBarState();
-    })
-  );
-  context.subscriptions.push(
-    vscode.window.tabGroups.onDidChangeTabs(() => updateNavBarState())
+    { dispose: () => navBarSoon.dispose() },
+    diffManager.onDidChangeDiffs(() => navBarSoon.schedule()),
+    vscode.window.tabGroups.onDidChangeTabs(() => navBarSoon.schedule())
   );
 
   // Agent mode hides the tab bar, so a file opened beside has no close button of its own.
