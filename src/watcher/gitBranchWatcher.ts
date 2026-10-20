@@ -38,6 +38,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
 import { WorkspaceWatcher } from './workspaceWatcher';
+import { notify } from '../util/notify';
 
 const STORED_HEAD_KEY = 'ai-cli-diff.lastHeadByFolder';
 
@@ -238,9 +239,7 @@ export class GitBranchWatcher {
     if (count === 0) { return; }
 
     await this.diffManager.clearAll();
-    vscode.window.showInformationMessage(
-      `Git branch changed — cleared ${count} pending diff${count > 1 ? 's' : ''}.`,
-    );
+    notify(`Git branch changed — cleared ${count} pending diff${count > 1 ? 's' : ''}.`);
   }
 
   dispose(): void {

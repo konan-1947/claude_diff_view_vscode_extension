@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { DiffManager } from './diffManager';
+import { notify } from '../util/notify';
 
 /** Normalize path helper */
 function normalizePath(filePath: string): string {
@@ -28,7 +29,7 @@ export class NavigationManager {
   private async navigate(direction: number): Promise<void> {
     const count = this.diffManager.getPendingCount();
     if (count === 0) {
-      vscode.window.showInformationMessage('No files with pending diffs.');
+      notify('No files with pending diffs.');
       return;
     }
 

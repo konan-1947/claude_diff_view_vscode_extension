@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
 import { IAiRunner } from '../runner/aiRunner';
 import { createRunner } from '../runner/runnerFactory';
+import { notify } from '../util/notify';
 
 export interface CommandDeps {
   diffManager: DiffManager;
@@ -63,7 +64,7 @@ export function registerAllCommands(deps: CommandDeps): void {
 
           try {
             await runner.run(prompt, workingDir, () => {}, onProgress);
-            vscode.window.showInformationMessage(`${toolLabel} session complete.`);
+            notify(`${toolLabel} session complete.`);
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             vscode.window.showErrorMessage(`${toolLabel} session failed: ${message}`);
@@ -95,11 +96,11 @@ export function registerAllCommands(deps: CommandDeps): void {
     vscode.commands.registerCommand('ai-cli-diff-view.acceptAllHunks', async () => {
       const filePath = getActiveDiffFilePath();
       if (!filePath) {
-        vscode.window.showWarningMessage('No active inline diff.');
+        notify('No active inline diff.');
         return;
       }
       await diffManager.accept(filePath);
-      vscode.window.showInformationMessage(`Accepted all changes: ${path.basename(filePath)}`);
+      notify(`Accepted all changes: ${path.basename(filePath)}`);
     })
   );
 
@@ -107,10 +108,10 @@ export function registerAllCommands(deps: CommandDeps): void {
     vscode.commands.registerCommand('ai-cli-diff-view.acceptAllChanges', async () => {
       const total = await diffManager.acceptAllPending();
       if (total === 0) {
-        vscode.window.showWarningMessage('No pending changes to accept.');
+        notify('No pending changes to accept.');
         return;
       }
-      vscode.window.showInformationMessage(`Accepted all changes in ${total} file(s).`);
+      notify(`Accepted all changes in ${total} file(s).`);
     })
   );
 
@@ -118,11 +119,11 @@ export function registerAllCommands(deps: CommandDeps): void {
     vscode.commands.registerCommand('ai-cli-diff-view.revertAllHunks', async () => {
       const filePath = getActiveDiffFilePath();
       if (!filePath) {
-        vscode.window.showWarningMessage('No active inline diff.');
+        notify('No active inline diff.');
         return;
       }
       await diffManager.revert(filePath);
-      vscode.window.showInformationMessage(`Reverted all changes: ${path.basename(filePath)}`);
+      notify(`Reverted all changes: ${path.basename(filePath)}`);
     })
   );
 
