@@ -33,7 +33,7 @@ sequenceDiagram
         participant Tabs as tabGroups +<br/>commands.executeCommand
         participant WS as workspaceState
     end
-    box rgb(235,255,235) Extension (src)
+    box rgb(235,255,235) Extension - src
         participant WW as WorkspaceWatcher
         participant BS as BaselineStore<br/>(+ BaselineScanner)
         participant BM as WriteBurstMeter

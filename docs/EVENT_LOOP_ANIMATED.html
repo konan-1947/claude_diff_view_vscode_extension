@@ -1,0 +1,885 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event Loop &amp; AI CLI Diff View</title>
+<style>
+  :root {
+    --ink: #1e293b;
+    --muted: #64748b;
+    --paper: #ffffff;
+    --bg: #f8fafc;
+    --blue: #3b82f6;   --blue-bg: #dbeafe;
+    --green: #16a34a;  --green-bg: #dcfce7;
+    --yellow: #ca8a04; --yellow-bg: #fef9c3;
+    --pink: #db2777;   --pink-bg: #fce7f3;
+    --purple: #7c3aed; --purple-bg: #ede9fe;
+    --orange: #ea580c; --orange-bg: #ffedd5;
+    --red: #dc2626;    --red-bg: #fee2e2;
+    --shadow: 3px 3px 0 var(--ink);
+    --radius: 12px;
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; }
+
+  header h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.5px; }
+  header h1 .hl { background: var(--yellow-bg); padding: 0 6px; border-radius: 6px; }
+  header p { margin: 0; color: var(--muted); }
+
+  /* ---------- Scenario tabs ---------- */
+  .tabs { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 16px; }
+  .tab {
+    border: 2px solid var(--ink); background: var(--paper); color: var(--ink);
+    border-radius: 999px; padding: 8px 16px; font-weight: 700; font-size: 14px;
+    cursor: pointer; box-shadow: var(--shadow); transition: transform .1s;
+  }
+  .tab:hover { transform: translate(-1px, -1px); }
+  .tab.active { background: var(--ink); color: #fff; }
+  .tab .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; border: 1.5px solid currentColor; }
+
+  /* ---------- Layout ---------- */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+  @media (max-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  .layout > * { min-width: 0; }
+
+  .stage {
+    position: relative; background: var(--paper); border: 2px solid var(--ink);
+    border-radius: 16px; padding: 18px; box-shadow: 5px 5px 0 var(--ink);
+    display: grid; gap: 18px;
+  }
+  #wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; overflow: visible; }
+
+  .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 640px) { .row { grid-template-columns: minmax(0, 1fr); } .row > div:empty { display: none; } }
+
+  .node {
+    border: 2px solid var(--ink); border-radius: var(--radius); padding: 10px 12px;
+    box-shadow: var(--shadow); background: var(--paper); position: relative; min-height: 72px;
+    transition: transform .25s, box-shadow .25s;
+  }
+  .node.active { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--ink); }
+  .node h3 { margin: 0 0 4px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .node h3 .ico { font-size: 18px; }
+  .node .sub { font-size: 12px; color: var(--muted); }
+  .node .note { margin-top: 6px; font-size: 12px; font-weight: 600; min-height: 16px; }
+
+  .n-ai { background: var(--orange-bg); }
+  .n-vscode { background: var(--blue-bg); }
+  .n-webview { background: var(--pink-bg); }
+  .n-libuv { background: var(--green-bg); }
+
+  /* ---------- Extension host ---------- */
+  .host {
+    border: 2.5px dashed var(--ink); border-radius: 16px; padding: 30px 14px 14px; position: relative;
+    display: grid; grid-template-columns: minmax(0, 1.1fr) 150px minmax(0, 1.3fr); gap: 16px; align-items: stretch;
+    background: #fafaff; transition: background .3s, border-color .3s;
+  }
+  @media (max-width: 760px) { .host { grid-template-columns: minmax(0, 1fr); } }
+  .host > *, .row > * { min-width: 0; }
+  .host-label {
+    position: absolute; top: -14px; left: 16px; background: var(--purple); color: #fff;
+    border: 2px solid var(--ink); border-radius: 999px; padding: 3px 12px; font-size: 13px; font-weight: 700;
+  }
+  .host.hot { background: #fff1f1; border-color: var(--red); animation: hostPulse 1s ease-in-out infinite; }
+  @keyframes hostPulse { 50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, .18); } }
+  .unresp {
+    display: none; position: absolute; top: -14px; right: 16px; background: var(--red); color: #fff;
+    border: 2px solid var(--ink); border-radius: 999px; padding: 3px 12px; font-size: 12px; font-weight: 700;
+    animation: blink 0.9s steps(2, start) infinite;
+  }
+  .host.hot .unresp { display: block; }
+  @keyframes blink { to { visibility: hidden; } }
+
+  .stack { background: var(--yellow-bg); display: flex; flex-direction: column; min-height: 260px; }
+  .queues { display: grid; gap: 10px; }
+  .queue { min-height: 56px; }
+  .q-micro { background: var(--purple-bg); }
+  .q-timers { background: var(--orange-bg); }
+  .q-io { background: var(--green-bg); }
+  .q-ipc { background: var(--blue-bg); }
+
+  .chips { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .queue .chips { flex-direction: row; flex-wrap: wrap; }
+  .chip {
+    background: var(--paper); border: 1.5px solid var(--ink); border-radius: 8px; padding: 4px 8px;
+    font: 600 12px/1.3 ui-monospace, "Cascadia Code", Consolas, monospace; word-break: break-word;
+  }
+  .chip.enter { animation: enter .45s cubic-bezier(.2, .9, .3, 1.3); }
+  @keyframes enter { from { opacity: 0; transform: translateY(-8px) scale(.9); } }
+  .chip.hot { background: var(--red-bg); border-color: var(--red); color: #7f1d1d; }
+  .chip.user { background: #fff; border: 2px dashed var(--blue); color: #1e3a8a; animation: blink 1.1s steps(2, start) infinite; }
+  .chip.ok { background: var(--green-bg); border-color: var(--green); color: #14532d; }
+  .stack .chips { flex-direction: column; }
+  .chips .empty { font-size: 12px; color: var(--muted); font-style: italic; }
+
+  .counter {
+    display: none; margin-top: auto; align-self: flex-start; background: var(--ink); color: #fff;
+    border-radius: 8px; padding: 4px 10px; font: 700 13px ui-monospace, Consolas, monospace;
+  }
+  .counter.show { display: inline-block; }
+
+  /* ---------- Event loop wheel ---------- */
+  .loop { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; border: none; box-shadow: none; background: transparent; }
+  .loop.node.active { transform: none; box-shadow: none; }
+  .wheel { width: 128px; height: 128px; }
+  .wheel .spin { transform-origin: 64px 64px; animation: spin 2.4s linear infinite; }
+  .wheel.fast .spin { animation-duration: .9s; }
+  .wheel.stuck .spin { animation-play-state: paused; }
+  .wheel.stuck circle.track { stroke: var(--red); }
+  .wheel.stuck .lbl { fill: var(--red); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loop .state { font-size: 12px; font-weight: 700; margin-top: 4px; }
+
+  /* ---------- Wires ---------- */
+  .wire { fill: none; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 9 7; animation: flow .7s linear infinite, wireBlink 1.2s ease-in-out infinite; }
+  .wire.draw { animation: drawIn .5s ease-out forwards, flow .7s linear .5s infinite, wireBlink 1.2s ease-in-out .5s infinite; }
+  @keyframes flow { to { stroke-dashoffset: -16; } }
+  @keyframes wireBlink { 50% { opacity: .45; } }
+  @keyframes drawIn { from { opacity: 0; } }
+  .pulse { filter: drop-shadow(0 0 4px currentColor); }
+  .wlabel rect { stroke: var(--ink); stroke-width: 1.5; }
+  .wlabel text { font: 700 11px "Segoe UI", system-ui, sans-serif; fill: var(--ink); }
+  .wlabel .num { fill: #fff; font-size: 10px; }
+
+  /* ---------- Side panel ---------- */
+  .panel { background: var(--paper); border: 2px solid var(--ink); border-radius: 16px; padding: 16px; box-shadow: 5px 5px 0 var(--ink); position: sticky; top: 12px; }
+  .panel .badge { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; background: var(--ink); color: #fff; font-weight: 800; margin-right: 8px; }
+  .panel h2 { font-size: 18px; margin: 0; display: flex; align-items: center; }
+  .panel .desc { font-size: 14px; line-height: 1.55; margin: 12px 0; }
+  .panel .desc b { background: var(--yellow-bg); padding: 0 3px; border-radius: 4px; }
+  .panel .desc .warn { color: var(--red); font-weight: 700; }
+  .panel pre {
+    background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 10px 12px; margin: 0;
+    font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; overflow-x: auto; border: 2px solid var(--ink);
+  }
+  .panel .where { font-size: 12px; color: var(--muted); margin-top: 6px; font-family: ui-monospace, Consolas, monospace; }
+
+  .controls { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .btn {
+    border: 2px solid var(--ink); background: var(--paper); border-radius: 10px; padding: 7px 12px;
+    font-weight: 700; cursor: pointer; box-shadow: 2px 2px 0 var(--ink); font-size: 13px; color: var(--ink);
+  }
+  .btn:active { transform: translate(2px, 2px); box-shadow: none; }
+  .btn.primary { background: var(--yellow-bg); }
+  .dots { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+  .dots button { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--ink); background: #fff; padding: 0; cursor: pointer; }
+  .dots button.on { background: var(--ink); }
+  .progress { height: 4px; background: #e2e8f0; border-radius: 2px; margin-top: 10px; overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--ink); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 18px; font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { display: inline-block; width: 14px; height: 14px; border: 1.5px solid var(--ink); border-radius: 4px; }
+
+  .rules { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .rule { border: 2px solid var(--ink); border-radius: 12px; padding: 12px 14px; background: var(--paper); box-shadow: var(--shadow); font-size: 13px; line-height: 1.5; }
+  .rule h4 { margin: 0 0 6px; font-size: 14px; }
+  .rule code { background: #f1f5f9; padding: 0 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Event Loop trong <span class="hl">Extension Host</span></h1>
+    <p>Node.js chạy code JS của extension trên <b>một luồng</b>. Hoạt ảnh dưới đây đi qua đúng các hàm thật của AI CLI diff view — từ lúc AI ghi file tới lúc diff hiện lên, và vì sao 1.300 file làm VS Code đứng hình (issue #37).</p>
+  </header>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="layout">
+    <div class="stage" id="stage">
+      <svg id="wires" aria-hidden="true">
+        <defs id="defs"></defs>
+        <g id="wireLayer"></g>
+      </svg>
+
+      <div class="row">
+        <div class="node n-ai" id="n-ai">
+          <h3><span class="ico">🤖</span>AI CLI → Đĩa</h3>
+          <div class="sub">Claude / Codex / Qwen — process ngoài</div>
+          <div class="note" id="note-ai"></div>
+        </div>
+        <div class="node n-vscode" id="n-vscode">
+          <h3><span class="ico">🖥️</span>VS Code Main / UI</h3>
+          <div class="sub">FileSystemWatcher, tab, click của user</div>
+          <div class="note" id="note-vscode"></div>
+        </div>
+        <div class="node n-webview" id="n-webview">
+          <h3><span class="ico">🧩</span>Webview</h3>
+          <div class="sub">Monaco diff, pending list, nav bar</div>
+          <div class="note" id="note-webview"></div>
+        </div>
+      </div>
+
+      <div class="host" id="host">
+        <div class="host-label">Extension Host — Node.js · 1 luồng JS</div>
+        <div class="unresp">⚠ Extension host is unresponsive</div>
+
+        <div class="node stack" id="n-stack">
+          <h3><span class="ico">📚</span>Call Stack</h3>
+          <div class="sub">đỉnh stack ở trên cùng</div>
+          <ul class="chips" id="l-stack"></ul>
+          <span class="counter" id="counter"></span>
+        </div>
+
+        <div class="node loop" id="n-loop">
+          <svg class="wheel" id="wheel" viewBox="0 0 128 128">
+            <circle class="track" cx="64" cy="64" r="50" fill="#fff" stroke="#1e293b" stroke-width="3"/>
+            <g class="spin">
+              <path d="M64 14 A50 50 0 0 1 114 64" fill="none" stroke="#7c3aed" stroke-width="7" stroke-linecap="round"/>
+              <polygon points="114,76 106,60 122,60" fill="#7c3aed"/>
+              <path d="M64 114 A50 50 0 0 1 14 64" fill="none" stroke="#7c3aed" stroke-width="7" stroke-linecap="round"/>
+              <polygon points="14,52 6,68 22,68" fill="#7c3aed"/>
+            </g>
+            <text class="lbl" x="64" y="60" text-anchor="middle" font-weight="800" font-size="14" fill="#1e293b">Event</text>
+            <text class="lbl" x="64" y="77" text-anchor="middle" font-weight="800" font-size="14" fill="#1e293b">Loop</text>
+          </svg>
+          <div class="state" id="loopState">đang chờ việc</div>
+        </div>
+
+        <div class="queues">
+          <div class="node queue q-micro" id="n-micro">
+            <h3><span class="ico">⚡</span>Microtask queue</h3>
+            <div class="sub">phần sau <code>await</code>, <code>.then()</code> — ưu tiên cao nhất</div>
+            <ul class="chips" id="l-micro"></ul>
+          </div>
+          <div class="node queue q-timers" id="n-timers">
+            <h3><span class="ico">⏱️</span>Timers</h3>
+            <ul class="chips" id="l-timers"></ul>
+          </div>
+          <div class="node queue q-io" id="n-io">
+            <h3><span class="ico">💾</span>I/O callbacks</h3>
+            <ul class="chips" id="l-io"></ul>
+          </div>
+          <div class="node queue q-ipc" id="n-ipc">
+            <h3><span class="ico">📨</span>IPC messages</h3>
+            <div class="sub">event VS Code, click, postMessage từ webview</div>
+            <ul class="chips" id="l-ipc"></ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div></div>
+        <div class="node n-libuv" id="n-libuv">
+          <h3><span class="ico">⚙️</span>libuv (C++)</h3>
+          <div class="sub">thread pool đọc file + đồng hồ hẹn giờ — chạy song song, ngoài luồng JS</div>
+          <ul class="chips" id="l-libuv"></ul>
+        </div>
+        <div></div>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <h2><span class="badge" id="stepNum">1</span><span id="stepTitle"></span></h2>
+      <div class="desc" id="stepDesc"></div>
+      <pre id="stepCode"></pre>
+      <div class="where" id="stepWhere"></div>
+      <div class="progress"><i id="bar"></i></div>
+      <div class="controls">
+        <button class="btn" id="prev">◀ Trước</button>
+        <button class="btn primary" id="play">⏸ Dừng</button>
+        <button class="btn" id="next">Sau ▶</button>
+        <button class="btn" id="restart">↺</button>
+      </div>
+      <div class="dots" id="dots"></div>
+    </aside>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:var(--yellow-bg)"></i>đang chạy trên stack</span>
+    <span><i style="background:var(--red-bg);border-color:var(--red)"></i>điểm nghẽn (HOT)</span>
+    <span><i style="background:#fff;border:2px dashed var(--blue)"></i>việc của user đang phải chờ</span>
+    <span><i style="background:var(--green-bg);border-color:var(--green)"></i>đã sửa / bình thường</span>
+    <span>Phím ← → để chuyển bước, Space để dừng</span>
+  </div>
+
+  <div class="rules">
+    <div class="rule"><h4>① Stack trống mới lấy việc mới</h4>Event loop chỉ bốc việc từ hàng đợi khi call stack <b>rỗng</b>. Một hàm đồng bộ chạy 10 giây = 10 giây không ai được phục vụ.</div>
+    <div class="rule"><h4>② Microtask luôn chen trước</h4>Hết stack, Node xả <b>toàn bộ</b> microtask (phần sau <code>await</code>) rồi mới tới timers / I/O / IPC. Microtask đẻ microtask → IPC tiếp tục chờ.</div>
+    <div class="rule"><h4>③ <code>fire()</code> là đồng bộ</h4><code>vscode.EventEmitter.fire()</code> gọi từng listener <b>ngay tại chỗ</b>. Mọi tab diff nghe <code>onDidChangeDiffs</code> → mọi tab chạy <code>postSet()</code> trong cùng một mạch.</div>
+    <div class="rule"><h4>④ Nhường lượt thật sự</h4><code>await</code> một thứ đã xong chỉ nhường cho microtask. Muốn click của user chen vào được phải <code>await new Promise(r =&gt; setTimeout(r, 0))</code>.</div>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+ * Dữ liệu kịch bản. Mỗi bước mô tả TOÀN BỘ trạng thái (để lùi/tiến tự do).
+ * Chip: tiền tố "!" = HOT (đỏ), "@" = việc của user đang chờ, "+" = ok (xanh).
+ * ===================================================================== */
+const SCENARIOS = [
+  {
+    id: 'normal', name: 'Một file — luồng chuẩn', color: 'var(--green)',
+    steps: [
+      {
+        title: 'AI CLI ghi file xuống đĩa',
+        desc: 'Process AI ghi <b>src/app.ts</b>. Hệ điều hành báo cho <b>VS Code Main</b> — một process khác, extension chưa biết gì.',
+        code: '// AI CLI (process ngoài)\nfs.writeFileSync("src/app.ts", newCode)',
+        where: 'ngoài VS Code',
+        notes: { ai: '✍️ ghi src/app.ts', vscode: '👀 FileSystemWatcher thấy đổi' },
+        wires: [['n-ai', 'n-vscode', 'fs event', 'orange']],
+      },
+      {
+        title: 'VS Code gửi event qua IPC',
+        desc: 'VS Code đóng gói sự kiện thành tin nhắn IPC gửi sang Extension Host. Tin nhắn vào hàng <b>IPC messages</b> (macrotask) và chờ tới lượt.',
+        code: "fileWatcher.onDidChange(uri => this.handleExternalWrite(uri))",
+        where: 'src/watcher/workspaceWatcher.ts — watchWorkspaceFolders()',
+        ipc: ['onDidChange(app.ts)'],
+        wires: [['n-vscode', 'n-ipc', 'IPC', 'blue']],
+      },
+      {
+        title: 'Stack trống → event loop bốc việc',
+        desc: 'Call stack đang rỗng, microtask cũng rỗng ⇒ event loop lấy tin nhắn IPC đầu hàng và gọi callback. <b>handleExternalWrite</b> lên stack.',
+        code: "handleExternalWrite(uri) {\n  const burstHold = this.burstMeter.record(absPath);\n  if (isExcludedPathSegment(absPath)) return;\n  if (now - lastVsCodeSave < 2000) return;\n  // debounce 500ms, isTextFile, isInWorkspace ...\n}",
+        where: 'workspaceWatcher.ts — handleExternalWrite()',
+        stack: ['handleExternalWrite(app.ts)'],
+        loop: 'fast',
+        wires: [['n-ipc', 'n-loop', 'lấy task', 'purple'], ['n-loop', 'n-stack', 'gọi callback', 'purple']],
+      },
+      {
+        title: 'Hẹn giờ 200 ms rồi trả stack',
+        desc: 'Không đọc file ngay (AI có thể chưa ghi xong). Hàm đặt <b>setTimeout(200)</b> — đồng hồ nằm ở libuv — rồi <b>return</b>. Stack trống trở lại, UI rảnh tay.',
+        code: "const timer = setTimeout(() => {\n  void this.processExternalWrite(uri, absPath, burstHold);\n}, 200);",
+        where: 'workspaceWatcher.ts — handleExternalWrite()',
+        libuv: ['⏱ 200ms → processExternalWrite'],
+        wires: [['n-stack', 'n-libuv', 'setTimeout(200)', 'orange']],
+      },
+      {
+        title: 'Hết 200 ms → hàng Timers',
+        desc: 'libuv báo hết giờ, callback được xếp vào hàng <b>Timers</b>.',
+        code: '// libuv: timer expired → push callback',
+        where: 'Node runtime',
+        timers: ['processExternalWrite()'],
+        wires: [['n-libuv', 'n-timers', 'hết giờ', 'orange']],
+      },
+      {
+        title: 'Chạy tới await đầu tiên',
+        desc: 'Event loop đưa callback lên stack. Gặp <b>await workspace.fs.readFile()</b>: yêu cầu đọc file gửi xuống libuv, hàm <b>tạm treo</b> và nhả stack. Luồng JS lại rảnh.',
+        code: "const stat = await vscode.workspace.fs.stat(uri);\nconst raw = await vscode.workspace.fs.readFile(uri); // ⏸ treo ở đây",
+        where: 'workspaceWatcher.ts — processExternalWrite()',
+        stack: ['processExternalWrite() ⏸ await'],
+        libuv: ['📖 readFile(app.ts)'],
+        loop: 'fast',
+        wires: [['n-timers', 'n-loop', 'lấy task', 'purple'], ['n-loop', 'n-stack', '', 'purple'], ['n-stack', 'n-libuv', 'readFile', 'green']],
+      },
+      {
+        title: 'Đọc xong → Promise resolve → microtask',
+        desc: 'Thread pool đọc xong file. Callback I/O resolve Promise ⇒ phần code <b>sau await</b> được xếp vào <b>Microtask queue</b>.',
+        code: '// I/O callback → resolve(promise)\n// → enqueue "phần còn lại của processExternalWrite"',
+        where: 'Node runtime',
+        micro: ['processExternalWrite (sau await)'],
+        wires: [['n-libuv', 'n-io', 'xong', 'green'], ['n-io', 'n-micro', 'resolve', 'purple']],
+      },
+      {
+        title: 'So baseline → triggerDiff',
+        desc: 'Microtask chạy ngay. So nội dung mới với baseline, thấy khác ⇒ <b>resolveOrHold → triggerDiff → loadSnapshot</b>. Tất cả chồng lên nhau trên stack, chạy <b>đồng bộ</b>.',
+        code: "if (oldContent !== newContent) {\n  this.snapshots.set(absPath, newContentRaw);\n  this.resolveOrHold(absPath, old, new, true, burstHold);\n}\n// → triggerDiff() → diffManager.loadSnapshot()",
+        where: 'workspaceWatcher.ts → diffManager.ts:199',
+        stack: ['processExternalWrite()', 'resolveOrHold()', 'triggerDiff()', 'loadSnapshot()', 'store.save(snapshots)'],
+        loop: 'fast',
+        wires: [['n-micro', 'n-stack', 'chạy microtask', 'purple']],
+      },
+      {
+        title: 'fire() gọi MỌI listener — đồng bộ',
+        desc: '<b>_onDidChangeDiffs.fire()</b> không phải async: nó gọi lần lượt từng listener ngay trên stack. Mỗi tab diff đang mở chạy <b>postSet()</b> (diff lại cả file), pending list dựng lại HTML, nav bar gán lại html. <span class="warn">Với 1 file thì rẻ. Với T tab thì nhân T lần — gốc của HOT-3.</span>',
+        code: "this._onDidChangeDiffs.fire();\n// ↳ diffWebviewPanel: postSet() × T tab\n// ↳ terminalPanel.postFilesUpdate()\n// ↳ extension.ts updateNavBarState()",
+        where: 'diffManager.ts:205 → diffWebviewPanel.ts:157, terminalPanel.ts:82, extension.ts:458',
+        stack: ['triggerDiff()', 'loadSnapshot()', 'fire(onDidChangeDiffs)', '!postSet() × T tab', 'postFilesUpdate()', 'updateNavBarState()'],
+        loop: 'fast',
+        notes: { webview: '🔄 pending list + nav bar render lại' },
+        wires: [['n-stack', 'n-webview', 'postMessage / html', 'pink']],
+      },
+      {
+        title: 'openDiff → nhờ VS Code mở tab',
+        desc: 'Extension không tự vẽ tab được. Nó gửi lệnh <b>vscode.openWith</b> qua IPC sang VS Code Main rồi <b>await</b> — stack lại trống trong lúc VS Code làm việc.',
+        code: "await vscode.commands.executeCommand(\n  'vscode.openWith', uri,\n  'ai-cli-diff-view.diffEditor',\n  { preview: false, preserveFocus });",
+        where: 'diffManager.ts:164 — openDiff()',
+        stack: ['openDiff() ⏸ await openWith'],
+        notes: { vscode: '🗂️ tạo tab custom editor' },
+        wires: [['n-stack', 'n-vscode', 'IPC openWith', 'blue']],
+      },
+      {
+        title: 'VS Code gọi lại resolveCustomTextEditor',
+        desc: 'VS Code tạo webview rồi gửi IPC ngược lại: "hãy điền nội dung cho tab này". Callback lên stack, gán <b>webview.html</b> (tải Monaco).',
+        code: "resolveCustomTextEditor(document, webviewPanel) {\n  webviewPanel.webview.html = this.buildHtml(...);\n  this.diffManager.registerPanel(filePath, webviewPanel);\n}",
+        where: 'src/diff/diffWebviewPanel.ts:39',
+        stack: ['resolveCustomTextEditor()', 'registerPanel()'],
+        loop: 'fast',
+        notes: { webview: '⏳ đang tải Monaco…' },
+        wires: [['n-vscode', 'n-ipc', 'IPC', 'blue'], ['n-ipc', 'n-stack', 'lấy task', 'purple'], ['n-stack', 'n-webview', 'webview.html', 'pink']],
+      },
+      {
+        title: "Webview 'ready' → postSet → hiện diff",
+        desc: "Monaco tải xong gửi <b>'ready'</b> (IPC). Extension tính hunks và gửi <b>'set'</b> với nội dung hai vế. Diff hiện lên — xong một vòng.",
+        code: "if (msg.type === 'ready') {\n  postSet(); // calculateHunks + postMessage({ type: 'set', ... })\n}",
+        where: 'diffWebviewPanel.ts:95',
+        stack: ['onDidReceiveMessage(ready)', 'postSet()', 'calculateHunks()'],
+        loop: 'fast',
+        notes: { webview: '+ ✅ diff hiển thị' },
+        wires: [['n-webview', 'n-ipc', "'ready'", 'pink'], ['n-ipc', 'n-stack', '', 'purple'], ['n-stack', 'n-webview', "'set'", 'pink']],
+      },
+    ],
+  },
+
+  {
+    id: 'hot', name: 'HOT-1: dump 1.300 file', color: 'var(--red)',
+    steps: [
+      {
+        title: '1.300 file đang bị giữ, hết holdMs',
+        desc: 'AI ghi quá nhiều file trong 300 ms ⇒ burst detection giữ cả <b>1.300 file</b> trong <code>heldWrites</code> chờ xem có phải git checkout. Hết 2 s, callback hẹn giờ vào hàng Timers.',
+        code: "this.holdResolveTimer = setTimeout(() => {\n  const entries = Array.from(this.heldWrites.entries());\n  ...\n}, this.holdMs);",
+        where: 'workspaceWatcher.ts:517 — scheduleHoldResolve()',
+        timers: ['!holdResolve cb (1.300 file)'],
+        notes: { ai: '✍️ đã ghi 1.300 file' },
+        wires: [['n-libuv', 'n-timers', 'hết 2s', 'orange']],
+      },
+      {
+        title: 'Vòng for chạy — không có await',
+        desc: 'Callback lên stack và chạy vòng <b>for</b> qua 1.300 file. Mỗi vòng: <b>loadSnapshot</b> (serialize lại cả map — HOT-2) và <b>fire()</b> làm mọi tab đang mở <b>postSet()</b> (HOT-3). <span class="warn">Không có một await nào ⇒ stack không bao giờ trống cho tới khi xong cả 1.300 vòng.</span>',
+        code: "for (const [filePath, w] of entries) {   // N = 1.300\n  this.triggerDiff(filePath, ...);        // loadSnapshot + fire()\n}                                          // ❌ không await",
+        where: 'workspaceWatcher.ts:520',
+        stack: ['holdResolve cb', 'for (i = 1..1300)', 'triggerDiff()', 'loadSnapshot()', '!store.save(cả map)', '!fire → postSet() × T'],
+        counter: ['i = ', 1, 1300],
+        loop: 'stuck', hot: true,
+        wires: [['n-timers', 'n-loop', 'lấy task', 'purple'], ['n-loop', 'n-stack', '', 'red']],
+      },
+      {
+        title: 'Mỗi vòng thả một openDiff() dở dang',
+        desc: '<b>openDiff(...).catch()</b> không được await: nó chạy tới <code>await readFile</code> rồi bị bỏ đó, vòng for đi tiếp. Kết quả: <b>1.300 lệnh đọc file</b> dồn xuống libuv cùng lúc.',
+        code: "this.diffManager.openDiff(filePath, { preserveFocus: true })\n  .catch(err => ...);   // ❌ fire-and-forget",
+        where: 'workspaceWatcher.ts:476 — triggerDiff()',
+        stack: ['holdResolve cb', 'for (i = …)', 'triggerDiff()', 'openDiff() → await readFile'],
+        libuv: ['!📖 readFile × 1 … 1.300'],
+        counter: ['readFile đang chờ: ', 1, 1300],
+        loop: 'stuck', hot: true,
+        wires: [['n-stack', 'n-libuv', 'readFile × N', 'red']],
+      },
+      {
+        title: 'User click Accept All — phải xếp hàng',
+        desc: 'Người dùng bấm nút. Tin nhắn IPC tới nơi nhưng <b>chỉ được xếp hàng</b>: stack vẫn bận với vòng for. VS Code đo được Extension Host không trả lời ⇒ ghi log <span class="warn">"Extension host is unresponsive"</span>.',
+        code: "2026-10-19 20:53:57 [info] Extension host (pid 14828) is unresponsive.\nUNRESPONSIVE extension host: 'konan1947.ai-cli-diff-view'\n  took 24.78% of 831ms",
+        where: 'log của KenneLu — issue #37',
+        stack: ['holdResolve cb', 'for (i = …)', 'triggerDiff()', '!fire → postSet() × T'],
+        ipc: ['@🖱 click Accept All (đang chờ)'],
+        libuv: ['!📖 readFile × 1.300'],
+        counter: ['i = ', 900, 1300],
+        loop: 'stuck', hot: true,
+        notes: { vscode: '🖱 user click… không phản hồi' },
+        wires: [['n-vscode', 'n-ipc', 'click', 'blue']],
+      },
+      {
+        title: 'Vòng for xong — 1.300 callback ùa vào',
+        desc: 'Vòng for kết thúc, nhưng libuv đã đọc xong hàng loạt file ⇒ <b>1.300 I/O callback</b>, mỗi cái resolve một Promise ⇒ <b>1.300 microtask</b>. Microtask được ưu tiên hơn IPC ⇒ click vẫn chờ.',
+        code: "// mỗi openDiff tiếp tục sau await readFile:\nconst hunks = calculateHunks(snapshot, modified); // O(S·D)\nawait this.closeTextTabsFor(absPath);              // quét O(T) tab\nawait executeCommand('vscode.openWith', ...);",
+        where: 'diffManager.ts:125 — openDiff()',
+        stack: ['openDiff #k (sau await)', 'calculateHunks()', '!closeTextTabsFor() O(T)'],
+        micro: ['!openDiff tiếp × 1.300'],
+        io: ['!readFile xong × 1.300'],
+        ipc: ['@🖱 click Accept All (đang chờ)'],
+        loop: 'stuck', hot: true,
+        wires: [['n-libuv', 'n-io', 'xong × N', 'red'], ['n-io', 'n-micro', 'resolve × N', 'red'], ['n-micro', 'n-stack', '', 'red']],
+      },
+      {
+        title: '1.300 lệnh mở tab dồn sang VS Code',
+        desc: 'Mỗi openDiff gửi <b>vscode.openWith</b>. VS Code tạo 1.300 webview Monaco (5–7 GB RAM — HOT-5). Mỗi tab mở lại sinh IPC <b>onDidChangeTabs</b> + <b>resolveCustomTextEditor</b> + lần <b>fire()</b> thứ hai ⇒ thêm việc cho chính luồng đang nghẽn.',
+        code: "await executeCommand('vscode.openWith', ...);\nthis._onDidChangeDiffs.fire();   // event 2/2 cho mỗi file",
+        where: 'diffManager.ts:164-170',
+        stack: ['openDiff #k', '!fire → postSet() × T'],
+        micro: ['!openDiff tiếp × …'],
+        ipc: ['@🖱 click Accept All (đang chờ)', '!onDidChangeTabs × N', '!resolveCustomTextEditor × N', "!'ready' × N"],
+        loop: 'stuck', hot: true,
+        notes: { vscode: '🗂️ 1.340 tab · 5–7 GB RAM', webview: '!1.300 webview Monaco' },
+        wires: [['n-stack', 'n-vscode', 'openWith × N', 'red'], ['n-vscode', 'n-webview', 'tạo webview × N', 'red'], ['n-vscode', 'n-ipc', 'event × N', 'red']],
+      },
+      {
+        title: 'Rất lâu sau, click mới được chạy',
+        desc: 'Chỉ khi stack và microtask trống, event loop mới bốc được click. <b>acceptAllPending()</b> lại dispose 1.300 webview liên tiếp (HOT-6) — log ghi nhận cửa sổ đứng <span class="warn">~61 giây</span>.',
+        code: "async acceptAllPending() {\n  this.snapshots.clear();\n  for (const p of pendingFiles) this.closePanel(p); // dispose × N\n}",
+        where: 'diffManager.ts:272',
+        stack: ['acceptAllPending()', '!closePanel → dispose() × 1.300'],
+        ipc: ['!onDidChangeTabs × N (nav bar reload × 2N)'],
+        loop: 'fast', hot: true,
+        wires: [['n-ipc', 'n-loop', 'cuối cùng…', 'blue'], ['n-loop', 'n-stack', '', 'purple'], ['n-stack', 'n-vscode', 'đóng tab × N', 'red']],
+      },
+    ],
+  },
+
+  {
+    id: 'fix', name: 'Sau khi sửa: batch + nhường lượt', color: 'var(--blue)',
+    steps: [
+      {
+        title: 'Cùng 1.300 file, hết holdMs',
+        desc: 'Điểm xuất phát giống hệt kịch bản HOT-1.',
+        code: "this.holdResolveTimer = setTimeout(() => void this.drainHeld(), this.holdMs);",
+        where: 'đề xuất sửa — workspaceWatcher.ts',
+        timers: ['holdResolve cb (1.300 file)'],
+        wires: [['n-libuv', 'n-timers', 'hết 2s', 'orange']],
+      },
+      {
+        title: 'Batch 1: 20 file, gộp một event',
+        desc: 'Chỉ xử lý <b>20 file</b>, và <code>onDidChangeDiffs</code> được <b>gộp</b> thành một lần cho cả batch. Tab diff chỉ <code>postSet()</code> khi chính file của nó đổi — tab khác nhận message <code>nav</code> nhỏ.',
+        code: "for (let i = 0; i < entries.length; i += 20) {\n  for (const e of entries.slice(i, i + 20)) {\n    await this.triggerDiffAsync(e);\n  }\n  this.diffManager.flushChangeEvent(); // fire 1 lần\n  await new Promise(r => setTimeout(r, 0)); // nhường lượt\n}",
+        where: 'đề xuất sửa',
+        stack: ['drainHeld()', 'batch 1 (file 1–20)', '+fire 1 lần (đã gộp)', '+postSet chỉ tab liên quan'],
+        counter: ['đã xử lý: ', 1, 20],
+        loop: 'fast',
+        wires: [['n-timers', 'n-loop', 'lấy task', 'purple'], ['n-loop', 'n-stack', '', 'purple']],
+      },
+      {
+        title: 'setTimeout(0): thật sự nhường lượt',
+        desc: '<b>await setTimeout(0)</b> đặt phần còn lại vào hàng <b>Timers</b> (macrotask) và nhả stack. Đúng lúc đó user click — tin nhắn vào hàng IPC.',
+        code: "await new Promise(r => setTimeout(r, 0));",
+        where: 'đề xuất sửa',
+        libuv: ['⏱ 0ms → batch 2'],
+        ipc: ['@🖱 click Accept All'],
+        notes: { vscode: '🖱 user click' },
+        wires: [['n-stack', 'n-libuv', 'setTimeout(0)', 'orange'], ['n-vscode', 'n-ipc', 'click', 'blue']],
+      },
+      {
+        title: 'Click được xử lý giữa hai batch',
+        desc: 'Stack trống ⇒ event loop đi một vòng và bốc được tin nhắn IPC. Click phản hồi trong vài chục ms thay vì chờ cả 1.300 file. <b>Extension host không còn bị báo unresponsive.</b>',
+        code: "// click handler chạy ngay\nawait diffManager.acceptAllPending();",
+        where: 'commandsRegistry.ts:113',
+        stack: ['+acceptAllPending()'],
+        timers: ['batch 2 (file 21–40)'],
+        loop: 'fast',
+        notes: { vscode: '+ ✅ phản hồi ngay' },
+        wires: [['n-ipc', 'n-loop', 'click', 'blue'], ['n-loop', 'n-stack', '', 'green'], ['n-libuv', 'n-timers', 'hết 0ms', 'orange']],
+      },
+      {
+        title: 'Batch tiếp theo chạy tiếp',
+        desc: 'Event loop quay lại hàng Timers lấy batch 2. Công việc vẫn xong, nhưng được chia nhỏ — mỗi khúc chỉ chiếm luồng JS vài chục ms.',
+        code: "// lặp: batch → flush event → setTimeout(0) → batch …",
+        where: 'đề xuất sửa',
+        stack: ['drainHeld()', 'batch 2 (file 21–40)', '+fire 1 lần (đã gộp)'],
+        counter: ['đã xử lý: ', 21, 40],
+        loop: 'fast',
+        wires: [['n-timers', 'n-loop', 'lấy task', 'purple'], ['n-loop', 'n-stack', '', 'purple']],
+      },
+      {
+        title: 'So sánh',
+        desc: '<b>Trước:</b> ~2N lần fire × T tab ⇒ O(N²·S·D + N³), một mạch đồng bộ dài, click chờ hàng chục giây.<br><b>Sau:</b> N/20 lần fire, chỉ tab liên quan tính lại ⇒ O(N·S·D); luồng JS được nhả sau mỗi batch. Kết hợp thêm ngưỡng số tab tự mở để giải quyết bộ nhớ (HOT-5).',
+        code: "// Trước:  for (...) triggerDiff()          ❌\n// Sau:    batch + coalesce + setTimeout(0) ✅",
+        where: 'docs/PERF_HOTSPOTS_SWIMLANE.md',
+        stack: [],
+        notes: { vscode: '+ ✅ UI mượt', webview: '+ ✅ chỉ tab liên quan render lại' },
+        wires: [],
+      },
+    ],
+  },
+];
+
+/* ===================================================================== */
+const COLORS = {
+  blue: '#3b82f6', purple: '#7c3aed', orange: '#ea580c', green: '#16a34a',
+  pink: '#db2777', red: '#dc2626',
+};
+const STEP_MS = 4200;
+const $ = (id) => document.getElementById(id);
+
+let scenarioIdx = 0;
+let stepIdx = 0;
+let playing = true;
+let timer = null;
+let counterTimer = null;
+let wireTimers = [];
+let prevChips = {};
+
+function buildDefs() {
+  const defs = $('defs');
+  for (const [name, color] of Object.entries(COLORS)) {
+    const m = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+    m.setAttribute('id', `arrow-${name}`);
+    m.setAttribute('viewBox', '0 0 10 10');
+    m.setAttribute('refX', '8'); m.setAttribute('refY', '5');
+    m.setAttribute('markerWidth', '7'); m.setAttribute('markerHeight', '7');
+    m.setAttribute('orient', 'auto-start-reverse');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M0,0 L10,5 L0,10 z');
+    p.setAttribute('fill', color);
+    m.appendChild(p);
+    defs.appendChild(m);
+  }
+}
+
+function buildTabs() {
+  const tabs = $('tabs');
+  tabs.innerHTML = '';
+  SCENARIOS.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.className = 'tab' + (i === scenarioIdx ? ' active' : '');
+    b.innerHTML = `<span class="dot" style="background:${s.color}"></span>${s.name}`;
+    b.onclick = () => { scenarioIdx = i; stepIdx = 0; buildTabs(); render(); };
+    tabs.appendChild(b);
+  });
+}
+
+function buildDots() {
+  const dots = $('dots');
+  dots.innerHTML = '';
+  SCENARIOS[scenarioIdx].steps.forEach((_, i) => {
+    const d = document.createElement('button');
+    d.title = `Bước ${i + 1}`;
+    if (i === stepIdx) d.className = 'on';
+    d.onclick = () => { stepIdx = i; render(); };
+    dots.appendChild(d);
+  });
+}
+
+function chipClass(text) {
+  if (text.startsWith('!')) return ['hot', text.slice(1)];
+  if (text.startsWith('@')) return ['user', text.slice(1)];
+  if (text.startsWith('+')) return ['ok', text.slice(1)];
+  return ['', text];
+}
+
+function fillList(id, items, reverse) {
+  const ul = $(id);
+  const list = reverse ? [...items].reverse() : items;
+  const before = prevChips[id] || [];
+  ul.innerHTML = '';
+  if (list.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = id === 'l-stack' ? '(trống — luồng JS rảnh)' : '(trống)';
+    ul.appendChild(li);
+  }
+  for (const raw of list) {
+    const [cls, text] = chipClass(raw);
+    const li = document.createElement('li');
+    li.className = `chip ${cls}` + (before.includes(raw) ? '' : ' enter');
+    li.textContent = text;
+    ul.appendChild(li);
+  }
+  prevChips[id] = list.slice();
+}
+
+function setNote(id, text) {
+  const el = $(id);
+  if (!text) { el.textContent = ''; el.style.color = ''; return; }
+  const [cls, t] = chipClass(text);
+  el.textContent = t;
+  el.style.color = cls === 'hot' ? 'var(--red)' : cls === 'ok' ? 'var(--green)' : '';
+}
+
+function anchorPath(fromEl, toEl) {
+  const s = $('stage').getBoundingClientRect();
+  const a = fromEl.getBoundingClientRect();
+  const b = toEl.getBoundingClientRect();
+  const ac = { x: a.left + a.width / 2 - s.left, y: a.top + a.height / 2 - s.top };
+  const bc = { x: b.left + b.width / 2 - s.left, y: b.top + b.height / 2 - s.top };
+  const dx = bc.x - ac.x, dy = bc.y - ac.y;
+  let p1, p2, c1, c2;
+  // Ưu tiên nối theo chiều dọc khi hai khối chồng nhau theo phương ngang.
+  const overlapX = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+  if (Math.abs(dy) > Math.abs(dx) * 0.55 || overlapX > 30) {
+    const down = dy > 0;
+    p1 = { x: ac.x, y: down ? a.bottom - s.top : a.top - s.top };
+    p2 = { x: bc.x, y: down ? b.top - s.top - 4 : b.bottom - s.top + 4 };
+    const k = Math.max(30, Math.abs(p2.y - p1.y) * 0.45) * (down ? 1 : -1);
+    c1 = { x: p1.x, y: p1.y + k }; c2 = { x: p2.x, y: p2.y - k };
+  } else {
+    const right = dx > 0;
+    p1 = { x: right ? a.right - s.left : a.left - s.left, y: ac.y };
+    p2 = { x: right ? b.left - s.left - 4 : b.right - s.left + 4, y: bc.y };
+    const k = Math.max(30, Math.abs(p2.x - p1.x) * 0.45) * (right ? 1 : -1);
+    c1 = { x: p1.x + k, y: p1.y }; c2 = { x: p2.x - k, y: p2.y };
+  }
+  return `M${p1.x},${p1.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${p2.x},${p2.y}`;
+}
+
+function drawWire([from, to, label, colorName], index, layer) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const fromEl = $(from), toEl = $(to);
+  if (!fromEl || !toEl) return;
+  const color = COLORS[colorName] || COLORS.blue;
+  const g = document.createElementNS(NS, 'g');
+  g.style.color = color;
+
+  const path = document.createElementNS(NS, 'path');
+  const pid = `wire-${index}-${Date.now()}`;
+  path.setAttribute('id', pid);
+  path.setAttribute('d', anchorPath(fromEl, toEl));
+  path.setAttribute('class', 'wire draw');
+  path.setAttribute('stroke', color);
+  path.setAttribute('marker-end', `url(#arrow-${colorName in COLORS ? colorName : 'blue'})`);
+  g.appendChild(path);
+
+  // Chấm sáng chạy dọc mũi tên.
+  for (let k = 0; k < 2; k++) {
+    const dot = document.createElementNS(NS, 'circle');
+    dot.setAttribute('r', k === 0 ? '6' : '4');
+    dot.setAttribute('fill', color);
+    dot.setAttribute('class', 'pulse');
+    dot.setAttribute('opacity', k === 0 ? '1' : '.55');
+    const anim = document.createElementNS(NS, 'animateMotion');
+    anim.setAttribute('dur', '1.4s');
+    anim.setAttribute('repeatCount', 'indefinite');
+    anim.setAttribute('begin', `${k * 0.7}s`);
+    const mpath = document.createElementNS(NS, 'mpath');
+    mpath.setAttribute('href', `#${pid}`);
+    anim.appendChild(mpath);
+    dot.appendChild(anim);
+    g.appendChild(dot);
+  }
+
+  layer.appendChild(g);
+
+  // Nhãn có số thứ tự ở giữa mũi tên.
+  const len = path.getTotalLength();
+  const mid = path.getPointAtLength(len / 2);
+  const lg = document.createElementNS(NS, 'g');
+  lg.setAttribute('class', 'wlabel');
+  const text = label || '';
+  const w = text ? text.length * 6.2 + 34 : 22;
+  const rect = document.createElementNS(NS, 'rect');
+  rect.setAttribute('x', mid.x - w / 2); rect.setAttribute('y', mid.y - 11);
+  rect.setAttribute('width', w); rect.setAttribute('height', 22);
+  rect.setAttribute('rx', 11); rect.setAttribute('fill', '#fff');
+  lg.appendChild(rect);
+  const circ = document.createElementNS(NS, 'circle');
+  circ.setAttribute('cx', mid.x - w / 2 + 11); circ.setAttribute('cy', mid.y);
+  circ.setAttribute('r', 8); circ.setAttribute('fill', color);
+  lg.appendChild(circ);
+  const num = document.createElementNS(NS, 'text');
+  num.setAttribute('x', mid.x - w / 2 + 11); num.setAttribute('y', mid.y + 3.5);
+  num.setAttribute('text-anchor', 'middle'); num.setAttribute('class', 'num');
+  num.textContent = String(index + 1);
+  lg.appendChild(num);
+  if (text) {
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', mid.x - w / 2 + 24); t.setAttribute('y', mid.y + 4);
+    t.textContent = text;
+    lg.appendChild(t);
+  }
+  layer.appendChild(lg);
+}
+
+function drawWires(animated) {
+  wireTimers.forEach(clearTimeout);
+  wireTimers = [];
+  const layer = $('wireLayer');
+  layer.innerHTML = '';
+  const step = SCENARIOS[scenarioIdx].steps[stepIdx];
+  const nodes = new Set();
+  step.wires.forEach((w, i) => {
+    const go = () => {
+      drawWire(w, i, layer);
+      [w[0], w[1]].forEach((id) => { $(id)?.classList.add('active'); nodes.add(id); });
+    };
+    if (animated) wireTimers.push(setTimeout(go, i * 650)); else go();
+  });
+}
+
+function runCounter(cfg) {
+  clearInterval(counterTimer);
+  const el = $('counter');
+  if (!cfg) { el.className = 'counter'; return; }
+  const [prefix, from, to] = cfg;
+  el.className = 'counter show';
+  const t0 = performance.now();
+  const dur = STEP_MS * 0.85;
+  const tick = () => {
+    const p = Math.min(1, (performance.now() - t0) / dur);
+    el.textContent = prefix + Math.round(from + (to - from) * p).toLocaleString('vi-VN');
+    if (p >= 1) clearInterval(counterTimer);
+  };
+  tick();
+  counterTimer = setInterval(tick, 40);
+}
+
+function render() {
+  const sc = SCENARIOS[scenarioIdx];
+  const step = sc.steps[stepIdx];
+
+  document.querySelectorAll('.node.active').forEach((n) => n.classList.remove('active'));
+
+  $('stepNum').textContent = stepIdx + 1;
+  $('stepTitle').textContent = step.title;
+  $('stepDesc').innerHTML = step.desc;
+  $('stepCode').textContent = step.code;
+  $('stepWhere').textContent = step.where ? '📍 ' + step.where : '';
+
+  fillList('l-stack', step.stack || [], true);
+  fillList('l-micro', step.micro || []);
+  fillList('l-timers', step.timers || []);
+  fillList('l-io', step.io || []);
+  fillList('l-ipc', step.ipc || []);
+  fillList('l-libuv', step.libuv || []);
+
+  const notes = step.notes || {};
+  setNote('note-ai', notes.ai);
+  setNote('note-vscode', notes.vscode);
+  setNote('note-webview', notes.webview);
+
+  $('host').classList.toggle('hot', !!step.hot);
+  const wheel = $('wheel');
+  wheel.classList.remove('fast', 'stuck');
+  if (step.loop) wheel.classList.add(step.loop);
+  $('loopState').textContent = step.loop === 'stuck'
+    ? '⛔ kẹt — stack không trống'
+    : step.loop === 'fast' ? 'đang chạy callback' : 'đang chờ việc';
+  $('loopState').style.color = step.loop === 'stuck' ? 'var(--red)' : '';
+
+  runCounter(step.counter);
+  buildDots();
+  // Chờ layout ổn định (chip mới) rồi mới tính vị trí mũi tên.
+  requestAnimationFrame(() => drawWires(true));
+  restartTimer();
+}
+
+function restartTimer() {
+  clearTimeout(timer);
+  const bar = $('bar');
+  bar.style.transition = 'none';
+  bar.style.width = '0';
+  if (!playing) return;
+  requestAnimationFrame(() => {
+    bar.style.transition = `width ${STEP_MS}ms linear`;
+    bar.style.width = '100%';
+  });
+  timer = setTimeout(() => go(1, true), STEP_MS);
+}
+
+function go(delta, auto) {
+  const n = SCENARIOS[scenarioIdx].steps.length;
+  if (auto && stepIdx + delta >= n) {
+    scenarioIdx = (scenarioIdx + 1) % SCENARIOS.length;
+    stepIdx = 0;
+    buildTabs();
+  } else {
+    stepIdx = (stepIdx + delta + n) % n;
+  }
+  render();
+}
+
+function setPlaying(p) {
+  playing = p;
+  $('play').textContent = playing ? '⏸ Dừng' : '▶ Chạy';
+  restartTimer();
+}
+
+$('prev').onclick = () => go(-1);
+$('next').onclick = () => go(1);
+$('play').onclick = () => setPlaying(!playing);
+$('restart').onclick = () => { stepIdx = 0; render(); };
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight') go(1);
+  else if (e.key === 'ArrowLeft') go(-1);
+  else if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
+});
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => drawWires(false), 120);
+});
+
+buildDefs();
+buildTabs();
+render();
+</script>
+</body>
+</html>
