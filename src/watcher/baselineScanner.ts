@@ -11,7 +11,7 @@ import * as vscode from 'vscode';
 import { isExcludedPathSegment } from './pathExclusions';
 import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 import { BaselineStore } from './baselineStore';
-import { isTextFile } from './fileTypeRules';
+import { isTextFile, looksBinary } from './fileTypeRules';
 
 export class BaselineScanner {
   private static readonly DEFAULT_CONCURRENCY = 4;
@@ -63,7 +63,7 @@ export class BaselineScanner {
     if (relativeSegments.slice(0, -1).some(segment => segment.startsWith('.'))) {
       return;
     }
-    if (isExcludedPathSegment(fullPath) || !isTextFile(path.basename(fullPath))) {
+    if (isExcludedPathSegment(fullPath) || !isTextFile(fullPath)) {
       return;
     }
     if (this.store.hasState(fullPath)) {
@@ -80,6 +80,7 @@ export class BaselineScanner {
         return;
       }
       const content = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+      if (looksBinary(content)) { return; }
       if (exceedsLineLimit(content)) {
         if (!this.store.hasState(fullPath)) {
           this.store.markSizeSkipped(fullPath);

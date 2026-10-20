@@ -15,7 +15,7 @@ import * as path from 'path';
 import { DiffManager } from '../diff/diffManager';
 import { BaselineScanner } from './baselineScanner';
 import { BaselineStore } from './baselineStore';
-import { isTextFile } from './fileTypeRules';
+import { isTextFile, looksBinary } from './fileTypeRules';
 import { isExcludedPathSegment } from './pathExclusions';
 import { exceedsLineLimit, exceedsSizeLimitByBytes } from './fileSizeLimit';
 import { BurstMeterConfig, WriteBurstMeter } from './writeBurstMeter';
@@ -390,7 +390,7 @@ export class WorkspaceWatcher {
         }
         if ((type & vscode.FileType.Directory) !== 0) {
           pending.push(childUri);
-        } else if ((type & vscode.FileType.File) !== 0 && isTextFile(name)) {
+        } else if ((type & vscode.FileType.File) !== 0 && isTextFile(childUri.fsPath)) {
           // The directory already had a settle delay, so do not add the normal
           // 200ms file-write delay again. Existing file debounce handles overlap
           // with a child onDidCreate event that VS Code did deliver.
@@ -432,7 +432,7 @@ export class WorkspaceWatcher {
     this.lastProcessed.set(absPath, now);
     this.pruneStaleMapEntries();
 
-    if (!isTextFile(path.basename(absPath))) { return; }
+    if (!isTextFile(absPath)) { return; }
     if (!this.isInWorkspace(absPath)) { return; }
 
     if (this.baselineScansInProgress > 0) {
@@ -475,6 +475,8 @@ export class WorkspaceWatcher {
       }
 
       const newContentRaw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+      // Mẫu includedPaths rộng (vd: `templates/`) có thể khớp cả file nhị phân.
+      if (looksBinary(newContentRaw)) { return; }
 
       // File vượt giới hạn số dòng -> coi như không tồn tại với extension:
       // không giữ baseline, không mở diff. Xoá cả baseline cũ phòng khi file

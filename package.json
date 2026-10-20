@@ -35,7 +35,15 @@
             "customOnly"
           ],
           "default": "defaultAndCustom",
-          "description": "Controls whether AI CLI Diff View uses its built-in text file rules together with custom settings, or only the custom settings."
+          "description": "Controls whether AI CLI Diff View uses its built-in text file rules together with ai-cli-diff-view.includedPaths, or only includedPaths."
+        },
+        "ai-cli-diff-view.includedPaths": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Extra files to track for AI edits — a baseline is kept and edits open a diff — on top of the built-in list (`.ts`, `.py`, `.md`, `Dockerfile`, …). Uses `.gitignore` syntax, one pattern per entry, matched relative to each workspace folder's root:\n\n- `*.prisma` — every `.prisma` file, at any depth\n- `Jenkinsfile` — every file named exactly `Jenkinsfile`\n- `config.*.local` — `config.dev.local`, `config.prod.local` (`*` = any characters, `?` = exactly one)\n- `templates/**/*.tpl` — `.tpl` files only inside `templates`\n- `/scripts/*` — files directly in `scripts` at the repo root\n- `!*.lock` — stop tracking `.lock` files, even though they are on the built-in list\n\n`.prisma` on its own only matches a file named exactly `.prisma` — use `*.prisma`. `excludedPaths` and `.gitignore` always win, and binary files are skipped even if a pattern matches them."
         },
         "ai-cli-diff-view.supportedFileExtensions": {
           "type": "array",
@@ -43,7 +51,8 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional file extensions that AI CLI Diff View should treat as text files. Entries may be written with or without a leading dot."
+          "description": "Additional file extensions that AI CLI Diff View should treat as text files. Entries may be written with or without a leading dot.",
+          "deprecationMessage": "Deprecated: use ai-cli-diff-view.includedPaths (.gitignore syntax) instead. Still read for now."
         },
         "ai-cli-diff-view.supportedFilenames": {
           "type": "array",
@@ -51,7 +60,8 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional exact filenames that AI CLI Diff View should treat as text files."
+          "description": "Additional exact filenames that AI CLI Diff View should treat as text files.",
+          "deprecationMessage": "Deprecated: use ai-cli-diff-view.includedPaths (.gitignore syntax) instead. Still read for now."
         },
         "ai-cli-diff-view.supportedFilenamePatterns": {
           "type": "array",
@@ -59,7 +69,8 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional filename glob patterns that AI CLI Diff View should treat as text files. Patterns match only the basename and support * and ? wildcards."
+          "description": "Additional filename glob patterns that AI CLI Diff View should treat as text files. Patterns match only the basename and support * and ? wildcards.",
+          "deprecationMessage": "Deprecated: use ai-cli-diff-view.includedPaths (.gitignore syntax) instead. Still read for now."
         },
         "ai-cli-diff-view.maxFileLines": {
           "type": "number",

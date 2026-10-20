@@ -301,7 +301,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private loadSettingsPayload(): TerminalSettingsPayload {
     return {
       ...this.loadSettings(),
-      supportedFileExtensions: this.loadSupportedFileExtensions(),
+      includedPaths: this.loadIncludedPaths(),
       ...this.loadBurstDetectionSettings(),
       ...this.loadSoundNotificationSettings(),
       ...this.loadFileLimitSettings(),
@@ -333,7 +333,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** Trim, drop empty entries and duplicates. Pattern parsing is left to `pathExclusions.ts`. */
+  /** Trim, drop empty entries and duplicates. Pattern parsing is left to `pathExclusions.ts` / `fileTypeRules.ts`. */
   private normalizeExclusionList(values: unknown): string[] {
     if (!Array.isArray(values)) {
       return [];
@@ -454,42 +454,18 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     ]);
   }
 
-  private loadSupportedFileExtensions(): string[] {
+  private loadIncludedPaths(): string[] {
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
-    return this.normalizeSupportedFileExtensions(config.get<string[]>('supportedFileExtensions', []));
+    return this.normalizeExclusionList(config.get<string[]>('includedPaths', []));
   }
 
-  private normalizeSupportedFileExtensions(values: unknown): string[] {
-    if (!Array.isArray(values)) {
-      return [];
-    }
-
-    const seen = new Set<string>();
-    const normalized: string[] = [];
-    for (const value of values) {
-      if (typeof value !== 'string') {
-        continue;
-      }
-      const ext = value.trim().toLowerCase();
-      if (!ext) {
-        continue;
-      }
-      const withDot = ext.startsWith('.') ? ext : `.${ext}`;
-      if (!seen.has(withDot)) {
-        seen.add(withDot);
-        normalized.push(withDot);
-      }
-    }
-    return normalized;
-  }
-
-  private async saveSupportedFileExtensions(values: unknown): Promise<void> {
+  private async saveIncludedPaths(values: unknown): Promise<void> {
+    // Same skip as excludedPaths: every write triggers a baseline rescan.
+    const current = this.loadIncludedPaths();
+    const next = this.normalizeExclusionList(values);
+    if (next.length === current.length && next.every((entry, i) => entry === current[i])) { return; }
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
-    await config.update(
-      'supportedFileExtensions',
-      this.normalizeSupportedFileExtensions(values),
-      vscode.ConfigurationTarget.Global
-    );
+    await config.update('includedPaths', next, vscode.ConfigurationTarget.Global);
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -675,7 +651,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           };
           void Promise.all([
             this.saveSettings(sanitized),
-            this.saveSupportedFileExtensions(incoming.supportedFileExtensions),
+            this.saveIncludedPaths(incoming.includedPaths),
             this.saveBurstDetectionSettings(incoming),
             this.saveSoundNotificationSettings(incoming),
             this.saveFileLimitSettings(incoming),

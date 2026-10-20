@@ -133,7 +133,7 @@ function rules(): ignore.Ignore | undefined {
  * Splits `absPath` into its workspace folder root and the path below it.
  * Picks the innermost folder when workspace folders are nested.
  */
-function splitByWorkspaceFolder(absPath: string): { root: string; relParts: string[] } | undefined {
+export function splitByWorkspaceFolder(absPath: string): { root: string; relParts: string[] } | undefined {
   let best: { root: string; relParts: string[] } | undefined;
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const root = folder.uri.fsPath;

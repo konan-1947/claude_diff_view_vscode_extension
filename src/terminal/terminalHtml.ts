@@ -1095,28 +1095,40 @@ ${FONT_OPTIONS.map((f) => {
         <div class="setting-help">Plays a sound when Claude finishes a turn or needs input (Windows only). Writes to <code>~/.claude/settings.json</code>.</div>
         <div class="field file-ext-field">
           <div class="label-row">
-            <label>Custom file extensions</label>
+            <label>Included files</label>
             <button class="info-btn" type="button" data-info="info-file-ext" aria-expanded="false"
-              title="About custom file extensions" aria-label="About custom file extensions">${INFO_ICON_SVG}</button>
+              title="About included files" aria-label="About included files">${INFO_ICON_SVG}</button>
           </div>
           <div id="info-file-ext" class="setting-info" hidden>
-            Files with these extensions are treated as text and tracked for AI edits, on top of
-            the built-in list (<code>.ts</code>, <code>.py</code>, <code>.md</code>, …). Add one
-            when edits to a file type you use never open a diff. Applies to every repo you open.
+            Extra files to track for AI edits — a baseline is kept and edits open a diff — on top
+            of the built-in list (<code>.ts</code>, <code>.py</code>, <code>.md</code>,
+            <code>Dockerfile</code>, …). Add one when edits to a file you care about never open a
+            diff. Uses <code>.gitignore</code> syntax, the reverse of Excluded paths below, matched
+            relative to each workspace folder's root. Applies to every repo you open.
             <table class="info-examples">
-              <tr><th>Type</th><th>Tracks</th></tr>
-              <tr><td><code>.prisma</code></td><td><code>schema.prisma</code>, <code>db/user.prisma</code></td></tr>
-              <tr><td><code>tf</code></td><td>same as <code>.tf</code> — the leading dot is optional</td></tr>
-              <tr><td><code>.tf, .hcl</code></td><td>adds both at once</td></tr>
+              <tr><th>Pattern</th><th>Tracks</th></tr>
+              <tr><td><code>*.prisma</code></td><td>every <code>.prisma</code> file, at any depth</td></tr>
+              <tr><td><code>Jenkinsfile</code></td><td>every file named exactly <code>Jenkinsfile</code> — no extension needed</td></tr>
+              <tr><td><code>config.*.local</code></td><td><code>config.dev.local</code>, <code>config.prod.local</code>; <code>*</code> = any characters, <code>?</code> = exactly one</td></tr>
+              <tr><td><code>templates/**/*.tpl</code></td><td><code>.tpl</code> files only inside <code>templates</code>; <code>*</code> stays within one folder, <code>**</code> spans folders</td></tr>
+              <tr><td><code>/scripts/*</code></td><td>files directly in <code>scripts</code> at the repo root — <code>src/scripts</code> is not affected</td></tr>
+              <tr><td><code>!*.lock</code></td><td>stop tracking <code>.lock</code> files, even though they are on the built-in list</td></tr>
             </table>
+            Watch out: <code>.prisma</code> on its own only matches a file named exactly
+            <code>.prisma</code>. To track all Prisma files, use <code>*.prisma</code>.
+            <br><br>
+            Excluded paths and <code>.gitignore</code> always win: a file that is both included and
+            excluded is not tracked. Binary files (images, <code>.dll</code>, …) are skipped even if
+            a pattern matches them.
+            <br><br>
             Type in the last row and press Enter; separate several with commas. Double-click a
             row to edit it, select it and press Delete to remove it.
           </div>
           <div class="file-ext-controls">
             <div class="file-ext-list">
-              <table class="file-ext-table" aria-label="Custom file extensions">
+              <table class="file-ext-table" aria-label="Included files">
                 <thead>
-                  <tr><th>Extension</th></tr>
+                  <tr><th>Pattern</th></tr>
                 </thead>
                 <tbody id="file-ext-body"></tbody>
               </table>
@@ -1985,22 +1997,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const fMaxAutoOpen = document.getElementById('f-max-auto-open');
       const customRows = document.querySelectorAll('.custom-only');
 
-      function parseFileExtensions(value) {
-        const seen = new Set();
-        const result = [];
-        String(value || '').split(/[,\\n]/).forEach((part) => {
-          const trimmed = part.trim().toLowerCase();
-          if (!trimmed) return;
-          const ext = trimmed.startsWith('.') ? trimmed : '.' + trimmed;
-          if (seen.has(ext)) return;
-          seen.add(ext);
-          result.push(ext);
-        });
-        return result;
-      }
-
-      // Pattern .gitignore: giữ nguyên hoa/thường, không tự thêm dấu chấm.
-      function parseExcludedPaths(value) {
+      // Pattern .gitignore (Included files + Excluded paths): giữ nguyên hoa/thường, không tự thêm dấu chấm.
+      function parsePatterns(value) {
         const seen = new Set();
         const result = [];
         String(value || '').split(/[,\\n]/).forEach((part) => {
@@ -2012,7 +2010,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return result;
       }
 
-      // Bảng New/Edit/Delete dùng chung cho Custom file extensions và Excluded paths.
+      // Bảng New/Edit/Delete dùng chung cho Included files và Excluded paths.
       // Nhập trực tiếp trong bảng: dòng cuối luôn là ô thêm mới (Enter để thêm,
       // nhiều mục cách nhau bằng dấu phẩy); double-click / Edit sửa ngay tại dòng.
       function createListEditor(body, btnNew, btnEdit, btnDelete, parse, placeholder) {
@@ -2169,21 +2167,21 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       }
 
       const listEditors = {
-        fileExtensions: createListEditor(
+        includedPaths: createListEditor(
           document.getElementById('file-ext-body'),
           document.getElementById('btn-ext-new'),
           document.getElementById('btn-ext-edit'),
           document.getElementById('btn-ext-delete'),
-          parseFileExtensions,
-          'Type an extension, e.g. .prisma, and press Enter'
+          parsePatterns,
+          'e.g. *.prisma, Jenkinsfile or templates/**/*.tpl — press Enter'
         ),
         excludedPaths: createListEditor(
           document.getElementById('excluded-path-body'),
           document.getElementById('btn-excl-new'),
           document.getElementById('btn-excl-edit'),
           document.getElementById('btn-excl-delete'),
-          parseExcludedPaths,
-          '*.html'
+          parsePatterns,
+          'e.g. *.log, generated/ or /docs — press Enter'
         ),
       };
 
@@ -2221,7 +2219,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fCursorStyle.value = s.cursorStyle;
         fCursorBlink.checked = s.cursorBlink;
         fSoundNotifications.checked = s.soundNotificationsEnabled;
-        listEditors.fileExtensions.set(s.supportedFileExtensions);
+        listEditors.includedPaths.set(s.includedPaths);
         listEditors.excludedPaths.set(s.excludedPaths);
         fRespectGitignore.checked = s.respectGitignore;
         fBurstEnabled.checked = s.burstDetectionEnabled;
@@ -2257,7 +2255,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           cursorStyle: fCursorStyle.value,
           cursorBlink: !!fCursorBlink.checked,
           soundNotificationsEnabled: !!fSoundNotifications.checked,
-          supportedFileExtensions: listEditors.fileExtensions.get(),
+          includedPaths: listEditors.includedPaths.get(),
           burstDetectionEnabled: !!fBurstEnabled.checked,
           burstDetectionWindowMs: isFinite(burstWindow) ? Math.min(5000, Math.max(50, burstWindow)) : DEFAULTS.burstDetectionWindowMs,
           burstDetectionThreshold: isFinite(burstThreshold) ? Math.min(500, Math.max(2, burstThreshold)) : DEFAULTS.burstDetectionThreshold,

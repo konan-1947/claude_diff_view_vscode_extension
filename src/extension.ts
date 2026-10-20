@@ -3,7 +3,7 @@ import { DiffManager } from './diff/diffManager';
 import { DiffEditorProvider, DIFF_EDITOR_VIEW_TYPE } from './diff/diffWebviewPanel';
 import { IAiRunner } from './runner/aiRunner';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
-import { refreshTextFileRules } from './watcher/fileTypeRules';
+import { migrateLegacyTextFileSettings, refreshTextFileRules } from './watcher/fileTypeRules';
 import { refreshFileSizeLimit } from './watcher/fileSizeLimit';
 import { clearGitignoreCache, isExcludedPathSegment, refreshPathExclusions } from './watcher/pathExclusions';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
@@ -59,6 +59,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 async function activateExtension(context: vscode.ExtensionContext): Promise<void> {
   debugLog(`activate:start mode=${context.extensionMode} workspace=${vscode.workspace.workspaceFile?.fsPath ?? 'none'}`);
 
+  // Before the first read, so the rules and the Included files table see the result.
+  await migrateLegacyTextFileSettings();
   refreshTextFileRules();
   refreshFileSizeLimit();
   refreshPathExclusions();
@@ -170,10 +172,14 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('ai-cli-diff-view.supportedFileDetectionMode') ||
+          e.affectsConfiguration('ai-cli-diff-view.includedPaths') ||
           e.affectsConfiguration('ai-cli-diff-view.supportedFileExtensions') ||
           e.affectsConfiguration('ai-cli-diff-view.supportedFilenames') ||
           e.affectsConfiguration('ai-cli-diff-view.supportedFilenamePatterns')) {
         refreshTextFileRules();
+        // A newly included file has no baseline yet: its next write would look
+        // brand new and Revert all would delete it (same as excludedPaths below).
+        workspaceWatcher.rebuildBaselineAfterRuleChange();
       }
       if (e.affectsConfiguration('ai-cli-diff-view.maxFileLines')) {
         refreshFileSizeLimit();

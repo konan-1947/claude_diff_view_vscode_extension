@@ -13,6 +13,7 @@ import { calculateHunks, Hunk } from './hunkCalculator';
 import { detectEol, fromLf, toLf } from './eol';
 import { detectLanguageId } from './language';
 import { exceedsLineLimit } from '../watcher/fileSizeLimit';
+import { looksBinary } from '../watcher/fileTypeRules';
 import { DIFF_EDITOR_VIEW_TYPE } from './diffWebviewPanel';
 import { SnapshotStore, SnapshotState } from './snapshotStore';
 import { sortLikePendingTree } from './treeOrder';
@@ -152,7 +153,7 @@ export class DiffManager {
       // Đường built-in runner cũng phải tôn trọng maxFileLines, nếu không setting
       // chỉ đúng với đường workspace watcher. Không snapshot -> openDiff() thoát
       // sớm vì không có snapshot -> file lớn không mở diff, đúng như mong đợi.
-      if (exceedsLineLimit(content)) { return; }
+      if (looksBinary(content) || exceedsLineLimit(content)) { return; }
       this.setSnapshot(absPath,{ content, fileExistedBefore: true });
       this.rememberDisplayPath(filePath);
     } catch {

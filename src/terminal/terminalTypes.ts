@@ -42,7 +42,8 @@ export interface ExclusionSettings {
 
 export interface TerminalSettingsPayload
   extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings, FileLimitSettings, ExclusionSettings {
-  supportedFileExtensions: string[];
+  /** `.gitignore`-style patterns of extra files to track. See `src/watcher/fileTypeRules.ts`. */
+  includedPaths: string[];
 }
 
 export const DEFAULT_BURST_DETECTION_SETTINGS: BurstDetectionSettings = {
