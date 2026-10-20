@@ -55,6 +55,18 @@ export interface DiffPreviewMetadata {
   hunks: number;
 }
 
+/** What the right-hand side of a diff was read from, cheap to compare. */
+type ContentStamp =
+  | { document: vscode.TextDocument; version: number }
+  | { mtime: number; size: number }
+  | { missing: true };
+
+function sameStamp(a: ContentStamp, b: ContentStamp): boolean {
+  if ('document' in a) { return 'document' in b && a.document === b.document && a.version === b.version; }
+  if ('mtime' in a) { return 'mtime' in b && a.mtime === b.mtime && a.size === b.size; }
+  return 'missing' in b;
+}
+
 export class DiffManager {
   private _onDidChangeDiffs = new vscode.EventEmitter<void>();
   public readonly onDidChangeDiffs = this._onDidChangeDiffs.event;
@@ -66,6 +78,17 @@ export class DiffManager {
    * add/remove instead of scanning all pending files per tab (issue #37, HOT-3b).
    */
   private pendingOrder: { display: string[]; index: Map<string, number> } | undefined;
+  /**
+   * Diff stats per pending file for the PENDING FILES view, reused while neither
+   * the snapshot nor the current content changed, so a refresh no longer reads
+   * and diffs every pending file (issue #37, HOT-3e). Holds no file contents of
+   * its own: `snapshot` is the same string the snapshot map already keeps.
+   */
+  private metadataCache = new Map<string, {
+    snapshot: string;
+    stamp: ContentStamp;
+    metadata: DiffPreviewMetadata | undefined;
+  }>();
   /** normalized key -> path with the real on-disk case, for display only. */
   private displayPaths: Map<string, string> = new Map();
   private readonly store: SnapshotStore;
@@ -335,11 +358,13 @@ export class DiffManager {
 
   private deleteSnapshot(absPath: string): void {
     this.snapshots.delete(absPath);
+    this.metadataCache.delete(absPath);
     this.pendingOrder = undefined;
   }
 
   private clearSnapshots(): void {
     this.snapshots.clear();
+    this.metadataCache.clear();
     this.pendingOrder = undefined;
   }
 
@@ -383,13 +408,19 @@ export class DiffManager {
    */
   async getDiffPreviewFile(filePath: string): Promise<DiffPreviewFile | undefined> {
     const absPath = normalizePath(filePath);
+    return this.buildDiffPreviewFile(absPath, vscode.workspace.textDocuments.find(
+      (document) => normalizePath(document.uri.fsPath) === absPath
+    ));
+  }
+
+  private async buildDiffPreviewFile(
+    absPath: string,
+    openDocument: vscode.TextDocument | undefined
+  ): Promise<DiffPreviewFile | undefined> {
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return undefined; }
 
     let currentContent = '';
-    const openDocument = vscode.workspace.textDocuments.find(
-      (document) => normalizePath(document.uri.fsPath) === absPath
-    );
     if (openDocument) {
       currentContent = openDocument.getText();
     } else {
@@ -426,17 +457,49 @@ export class DiffManager {
    * Agent secondary bar remains a navigator, not a second diff renderer.
    */
   async getDiffPreviewMetadata(): Promise<DiffPreviewMetadata[]> {
+    const openDocuments = new Map<string, vscode.TextDocument>();
+    for (const document of vscode.workspace.textDocuments) {
+      openDocuments.set(normalizePath(document.uri.fsPath), document);
+    }
     const files = await Promise.all(this.getPendingFiles().map(async (filePath) => {
-      const preview = await this.getDiffPreviewFile(filePath);
-      if (!preview) { return undefined; }
-      return {
+      const absPath = normalizePath(filePath);
+      const snapshot = this.snapshots.get(absPath)?.content;
+      if (snapshot === undefined) { return undefined; }
+      // Stamps are taken before reading: a change racing with the read only
+      // makes the next refresh recompute, never keeps stale numbers.
+      const openDocument = openDocuments.get(absPath);
+      const stamp = await this.currentContentStamp(absPath, openDocument);
+      const cached = this.metadataCache.get(absPath);
+      if (cached && cached.snapshot === snapshot && sameStamp(cached.stamp, stamp)) {
+        return cached.metadata;
+      }
+      const preview = await this.buildDiffPreviewFile(absPath, openDocument);
+      const metadata = preview && {
         filePath: preview.filePath,
         additions: preview.hunks.reduce((total, hunk) => total + hunk.addedLines.length, 0),
         deletions: preview.hunks.reduce((total, hunk) => total + hunk.removedLines.length, 0),
         hunks: preview.hunks.length,
       };
+      if (this.snapshots.has(absPath)) {
+        this.metadataCache.set(absPath, { snapshot, stamp, metadata });
+      }
+      return metadata;
     }));
     return files.filter((file): file is DiffPreviewMetadata => file !== undefined);
+  }
+
+  /** Identifies the right-hand content without reading it: the open document, else the file on disk. */
+  private async currentContentStamp(
+    absPath: string,
+    document: vscode.TextDocument | undefined
+  ): Promise<ContentStamp> {
+    if (document) { return { document, version: document.version }; }
+    try {
+      const stat = await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
+      return { mtime: stat.mtime, size: stat.size };
+    } catch {
+      return { missing: true };
+    }
   }
 
   /** Apply a manual edit made in the aggregate preview to the workspace document. */
