@@ -68,6 +68,8 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   const workspaceWatcher  = new WorkspaceWatcher(diffManager, () => !agentModeActive);
   const gitBranchWatcher  = new GitBranchWatcher(diffManager, context.workspaceState, workspaceWatcher);
   const navigationManager = new NavigationManager(diffManager);
+  // Write out a burst save still waiting in DiffManager when the window closes or reloads.
+  context.subscriptions.push({ dispose: () => diffManager.flushPendingSave() });
   debugLog('activate:core services constructed');
 
   const diffEditorProvider = new DiffEditorProvider(context.extensionUri, diffManager);

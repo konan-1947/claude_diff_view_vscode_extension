@@ -16,6 +16,7 @@ import { exceedsLineLimit } from '../watcher/fileSizeLimit';
 import { DIFF_EDITOR_VIEW_TYPE } from './diffWebviewPanel';
 import { SnapshotStore, SnapshotState } from './snapshotStore';
 import { sortLikePendingTree } from './treeOrder';
+import { coalesce } from '../util/coalesce';
 
 function normalizePath(filePath: string): string {
   const fsPath = vscode.Uri.file(path.resolve(filePath)).fsPath;
@@ -92,6 +93,15 @@ export class DiffManager {
   /** normalized key -> path with the real on-disk case, for display only. */
   private displayPaths: Map<string, string> = new Map();
   private readonly store: SnapshotStore;
+  /**
+   * Every save rewrites the whole snapshot map into workspaceState, so saving once
+   * per file of an agent burst costs O(N²·S) (issue #37, HOT-2). Burst paths go
+   * through scheduleSave(): the first save after a quiet spell still runs at once,
+   * later ones in the same burst are merged. User actions keep saveNow().
+   */
+  private readonly saveSoon = coalesce(() => this.saveNow());
+  private savePending = false;
+  private lastSaveAt = 0;
   /** filePath (normalized) -> active webview panel. */
   private panels: Map<string, vscode.WebviewPanel> = new Map();
   /** filePath (normalized) -> last cursor + top visible line seen in Monaco modified editor. */
@@ -132,7 +142,7 @@ export class DiffManager {
       if (isFileNotFound(err)) {
         this.setSnapshot(absPath,{ content: '', fileExistedBefore: false });
         this.rememberDisplayPath(filePath);
-        void this.store.save(this.snapshots);
+        this.scheduleSave();
       }
       return;
     }
@@ -149,7 +159,7 @@ export class DiffManager {
       // File có thể bị xóa hoặc không đọc được sau khi stat — không tạo snapshot rỗng.
       return;
     }
-    void this.store.save(this.snapshots);
+    this.scheduleSave();
   }
 
   async openDiff(filePath: string, options?: { preserveFocus?: boolean }): Promise<void> {
@@ -175,7 +185,7 @@ export class DiffManager {
       // Accept must keep it. There is simply no text hunk to render.
       if (!snapshot.fileExistedBefore) { return; }
       this.deleteSnapshot(absPath);
-      void this.store.save(this.snapshots);
+      this.scheduleSave();
       this._onDidChangeDiffs.fire();
       return;
     }
@@ -231,7 +241,7 @@ export class DiffManager {
     if (!this.snapshots.has(absPath)) {
       this.setSnapshot(absPath,{ content, fileExistedBefore });
       this.rememberDisplayPath(filePath);
-      void this.store.save(this.snapshots);
+      this.scheduleSave();
       this._onDidChangeDiffs.fire();
     }
   }
@@ -247,7 +257,7 @@ export class DiffManager {
     const nextTarget = this.nextPendingAfter(absPath);
 
     this.deleteSnapshot(absPath);
-    void this.store.save(this.snapshots);
+    this.saveNow();
     this.closePanel(absPath);
     await this.reopenAsTextEditor(absPath);
 
@@ -275,7 +285,7 @@ export class DiffManager {
     }
 
     this.deleteSnapshot(absPath);
-    void this.store.save(this.snapshots);
+    this.saveNow();
     this.closePanel(absPath);
     if (snapshot.fileExistedBefore) {
       await this.reopenAsTextEditor(absPath);
@@ -294,7 +304,7 @@ export class DiffManager {
     const count = pendingFiles.length;
     this.clearSnapshots();
     this.displayPaths.clear();
-    void this.store.save(this.snapshots);
+    this.saveNow();
     for (const p of pendingFiles) {
       this.closePanel(normalizePath(p));
     }
@@ -349,6 +359,27 @@ export class DiffManager {
   }
 
   // ---- Snapshot mutations: always go through these so pendingOrder stays valid ----
+
+  /** Save now if a burst save is still waiting, e.g. on deactivate. */
+  flushPendingSave(): void {
+    if (this.savePending) { this.saveNow(); }
+  }
+
+  private scheduleSave(): void {
+    if (!this.savePending && Date.now() - this.lastSaveAt >= 500) {
+      this.saveNow();
+      return;
+    }
+    this.savePending = true;
+    this.saveSoon.schedule();
+  }
+
+  private saveNow(): void {
+    this.saveSoon.dispose();
+    this.savePending = false;
+    this.lastSaveAt = Date.now();
+    void this.store.save(this.snapshots);
+  }
 
   private setSnapshot(absPath: string, snapshot: SnapshotState): void {
     // Overwriting an existing key keeps its position, so the order only changes on add.
@@ -530,7 +561,7 @@ export class DiffManager {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) { return; }
     this.deleteSnapshot(absPath);
-    void this.store.save(this.snapshots);
+    this.saveNow();
     this.closePanel(absPath);
     this._onDidChangeDiffs.fire();
   }
@@ -550,7 +581,7 @@ export class DiffManager {
       await this.writeFile(absPath, snapshot.content);
     }
     this.deleteSnapshot(absPath);
-    void this.store.save(this.snapshots);
+    this.saveNow();
     this.closePanel(absPath);
     this._onDidChangeDiffs.fire();
   }
@@ -571,7 +602,7 @@ export class DiffManager {
       this.deleteSnapshot(absPath);
       this.closePanel(absPath);
     }
-    void this.store.save(this.snapshots);
+    this.saveNow();
     this._onDidChangeDiffs.fire();
   }
 
@@ -595,7 +626,7 @@ export class DiffManager {
       this.deleteSnapshot(absPath);
       this.closePanel(absPath);
     }
-    void this.store.save(this.snapshots);
+    this.saveNow();
     this._onDidChangeDiffs.fire();
   }
 
@@ -640,6 +671,8 @@ export class DiffManager {
       : this.getLiveActiveDiffPath();
 
     this.disposeAll();
+    this.saveSoon.dispose();
+    this.savePending = false;
     await this.store.clear();
 
     if (activeDiffPath) {
@@ -792,7 +825,7 @@ export class DiffManager {
       ...snapshot,
       content: fromLf(newOriginal, detectEol(snapshot.content)),
     });
-    void this.store.save(this.snapshots);
+    this.saveNow();
 
     if (newOriginal === newCurrent) {
       await this.accept(absPath);
@@ -824,7 +857,7 @@ export class DiffManager {
       const nextTarget = this.nextPendingAfter(absPath);
 
       this.deleteSnapshot(absPath);
-      void this.store.save(this.snapshots);
+      this.saveNow();
       this.closePanel(absPath);
 
       if (nextTarget) {

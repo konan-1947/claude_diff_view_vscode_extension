@@ -32,6 +32,11 @@ export class SnapshotStore {
     return result;
   }
 
+  /**
+   * Ghi đè cả map vào 1 key (Memento không có cập nhật từng phần). DiffManager gộp
+   * các lần gọi trong 1 burst (HOT-2). Nếu vẫn nặng: chuyển sang nhật ký append-only,
+   * xem mục "Để sau" trong docs/PERF_ISSUE_37_CHECKLIST.md.
+   */
   save(snapshots: Map<string, SnapshotState>): Thenable<void> {
     const obj: Record<string, SnapshotState> = {};
     for (const [absPath, snapshot] of snapshots.entries()) {
