@@ -638,6 +638,8 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
+    /* Size container so .aggregate-editor can size itself in cqh. */
+    container-type: size;
   }
   .diff-add { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
   .diff-delete { color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c); }
@@ -772,8 +774,10 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   .aggregate-editor {
     width: 100%;
-    height: 420px;
-    min-height: 220px;
+    /* aggregateDiff.js sets the height to the file's content height; long files cap here. */
+    height: 90cqh;
+    max-height: 90cqh;
+    min-height: 40px;
   }
   .aggregate-diff-added-line { background-color: rgba(46, 160, 67, 0.18); }
   .aggregate-diff-added-gutter {
@@ -1398,6 +1402,18 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
             navigator.clipboard.writeText(t.getSelection()).catch(() => {});
             return false;
           }
+          // Ctrl/Cmd+V pastes clipboard text (Claude Code on Windows waits for the terminal to
+          // paste; it ignores ^V). With no text (e.g. an image), send a raw ^V instead so CLIs
+          // that read the clipboard themselves (opencode image paste) still get the key.
+          // The native paste event is suppressed in onSessionCreated, otherwise it duplicates the text.
+          if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'v' || e.key === 'V')) {
+            e.preventDefault();
+            navigator.clipboard.readText().then((text) => {
+              if (text) t.paste(text);
+              else t.input('\\x16');
+            }).catch(() => t.input('\\x16'));
+            return false;
+          }
           // Ctrl+Insert copies.
           if (e.ctrlKey && e.key === 'Insert' && t.hasSelection()) {
             navigator.clipboard.writeText(t.getSelection()).catch(() => {});
@@ -1490,6 +1506,13 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         t.open(host);
         const ta = host.querySelector('.xterm-helper-textarea');
         if (ta) {
+          // VS Code still runs its own paste in the webview on Ctrl+V (keydown preventDefault
+          // does not stop it), so xterm's native paste handler would paste a second time.
+          // Ctrl/Cmd+V is handled in attachCustomKeyEventHandler instead.
+          ta.addEventListener('paste', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+          }, true);
           ta.addEventListener('focus', () => {
             vscode.postMessage({ type: 'terminalFocusState', focused: true });
           });

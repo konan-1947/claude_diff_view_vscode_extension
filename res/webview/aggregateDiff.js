@@ -467,6 +467,10 @@
               updateHunkNav(state);
             }
           }),
+          // Short files take their real height; CSS max-height caps long ones at 90% of the
+          // preview. contentHeight includes the removed-line view zones, but not the
+          // horizontal scrollbar, which would otherwise cover the last line.
+          state.editor.onDidContentSizeChange(() => fitEditorHeight(state)),
           state.editor.onDidScrollChange(() => repositionHoveredGroup(state)),
           state.editor.onDidLayoutChange(() => repositionHoveredGroup(state))
         );
@@ -483,12 +487,23 @@
     }
     requestAnimationFrame(() => {
       try {
+        fitEditorHeight(state);
         state.editor.layout();
         if (isNewEditor && data.hunks.length) {
           state.editor.revealLineInCenter(data.hunks[0].modifiedStart + 1);
         }
       } catch (_) { /* section may be closing */ }
     });
+  }
+
+  function fitEditorHeight(state) {
+    if (!state.editor || !state.editorHost) { return; }
+    const height = state.editor.getContentHeight()
+      + state.editor.getLayoutInfo().horizontalScrollbarHeight;
+    const next = Math.ceil(height) + 'px';
+    if (state.editorHost.style.height !== next) {
+      state.editorHost.style.height = next;
+    }
   }
 
   function renderDiffDecorations(monaco, state) {
