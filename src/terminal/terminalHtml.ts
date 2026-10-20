@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
+import { PENDING_TREE_CSS } from '../views/pendingTree';
 import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 
 interface FontOption {
@@ -320,6 +321,38 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     z-index: 10;
   }
   #settings-overlay[hidden] { display: none; }
+  /* Pending Files is drawn over the terminal; the terminal keeps running underneath. */
+  #pending-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    background: var(--vscode-sideBar-background, #1e1e1e);
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+  }
+  #pending-overlay[hidden] { display: none; }
+  .pending-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px 6px 10px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+  }
+  .pending-head h2 {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.85;
+  }
+  #pending-tree { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; padding-bottom: 5px; }
+  #pending-tree * { box-sizing: border-box; }
+  ${PENDING_TREE_CSS}
   .settings-head {
     display: flex;
     align-items: center;
@@ -965,6 +998,18 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     <button id="tab-add" class="tab-add" type="button" title="New terminal" aria-label="New terminal">+</button>
   </div>
   <div id="content">
+    <div id="pending-overlay" hidden>
+      <div class="pending-head">
+        <h2>Pending files</h2>
+        <button id="btn-pending-back" class="header-btn" type="button" title="Back to terminal" aria-label="Back to terminal">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div id="pending-tree" class="pending-tree"></div>
+    </div>
     <div id="term-wrap">
       <div id="err"></div>
       <div id="term-host"></div>
@@ -1473,6 +1518,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         next.host.classList.add('active');
         next.tab.classList.add('active');
         activeId = id;
+        vscode.postMessage({ type: 'activeSession', id });
         // scroll the tab into view
         try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
         reportPanelTitle();
@@ -1485,7 +1531,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       let focusOnSessionCreated = false;
 
-      function onSessionCreated(id, title) {
+      function onSessionCreated(id, title, restoring) {
         const host = document.createElement('div');
         host.className = 'term-pane';
         host.dataset.id = id;
@@ -1531,6 +1577,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           vscode.postMessage({ type: 'input', id, data });
         });
         sessions.set(id, sess);
+        // A restored tab is activated by onRestoreSessions after its screen is replayed.
+        if (restoring) return;
         activateTab(id);
         // also fit + report dims (activateTab already does this on the rAF tick)
         if (focusOnSessionCreated) {
@@ -1584,12 +1632,49 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return target !== baseline;
       }
 
+      // Sessions outlive this webview. The extension replies to 'ready' with
+      // restoreSessions (shells already running) or sessionCreated (first start).
       requestAnimationFrame(() => {
         vscode.postMessage({ type: 'ready' });
         vscode.postMessage({ type: 'getSettings' });
-        // Bootstrap the first session. Extension will reply with sessionCreated.
-        vscode.postMessage({ type: 'createSession', cols: 80, rows: 24 });
       });
+
+      function markExited(s, id, code) {
+        s.exited = true;
+        s.term.writeln('\\r\\n\\x1b[2m[shell exited: ' + code + '] press any key to restart\\x1b[0m');
+        const once = s.term.onData(() => {
+          once.dispose();
+          s.exited = false;
+          try { s.term.reset(); } catch (_) {}
+          vscode.postMessage({ type: 'restart', id });
+        });
+      }
+
+      function onRestoreSessions(list, restoreActiveId) {
+        const written = [];
+        for (const snap of list) {
+          if (sessions.has(snap.id)) continue;
+          onSessionCreated(snap.id, snap.title, true);
+          const s = sessions.get(snap.id);
+          // Replay at the size it was serialized at; activateTab fits and reflows
+          // only once the replay is parsed, otherwise lines wrap at the wrong width.
+          try { s.term.resize(snap.cols, snap.rows); } catch (_) {}
+          written.push(new Promise((resolve) => s.term.write(snap.serialized, resolve)).then(() => {
+            if (snap.exited) markExited(s, snap.id, snap.exitCode);
+          }));
+          if (snap.rawTitle) {
+            s.rawTitle = snap.rawTitle;
+            applySessionTitle(s);
+          }
+        }
+        Promise.all(written).then(() => {
+          const ids = Array.from(sessions.keys());
+          const target = restoreActiveId && sessions.has(restoreActiveId) ? restoreActiveId : ids[ids.length - 1];
+          // activateTab focuses the terminal itself.
+          focusOnSessionCreated = false;
+          if (target) activateTab(target);
+        });
+      }
 
       const ro = new ResizeObserver(() => {
         const sess = sessions.get(activeId);
@@ -1696,6 +1781,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         if (!msg) return;
         if (msg.type === 'sessionCreated') {
           onSessionCreated(msg.id, msg.title);
+        } else if (msg.type === 'pendingFiles') {
+          onPendingFiles(msg.html || '');
+        } else if (msg.type === 'restoreSessions') {
+          onRestoreSessions(msg.sessions || [], msg.activeId);
         } else if (msg.type === 'sessionClosed') {
           onSessionClosed(msg.id);
         } else if (msg.type === 'data') {
@@ -1703,16 +1792,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           if (s) s.term.write(msg.data);
         } else if (msg.type === 'exit') {
           const s = sessions.get(msg.id);
-          if (s) {
-            s.exited = true;
-            s.term.writeln('\\r\\n\\x1b[2m[shell exited: ' + msg.code + '] press any key to restart\\x1b[0m');
-            const once = s.term.onData(() => {
-              once.dispose();
-              s.exited = false;
-              try { s.term.reset(); } catch (_) {}
-              vscode.postMessage({ type: 'restart', id: msg.id });
-            });
-          }
+          if (s) markExited(s, msg.id, msg.code);
         } else if (msg.type === 'error') {
           showError('PTY error: ' + msg.message);
         } else if (msg.type === 'settings') {
@@ -1835,11 +1915,48 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         }
       });
 
+      // ---- Pending Files overlay ----
+      // Shown over the terminal instead of switching views: hiding the terminal
+      // view would dispose this webview and drop its xterm tabs.
       const btnTogglePage = document.getElementById('btn-toggle-page');
-      // Pending files live in their own view (PENDING FILES); this only switches to it.
-      btnTogglePage.addEventListener('click', () => {
-        vscode.postMessage({ type: 'showPendingFiles' });
+      const pendingOverlay = document.getElementById('pending-overlay');
+      const pendingTree = document.getElementById('pending-tree');
+      function setPendingOverlay(open) {
+        if (pendingOverlay.hidden === !open) return;
+        pendingOverlay.hidden = !open;
+        vscode.postMessage({ type: 'pendingOverlay', open });
+        if (!open) {
+          const sess = sessions.get(activeId);
+          if (sess) requestAnimationFrame(() => { try { sess.term.focus(); } catch (_) {} });
+        }
+      }
+      btnTogglePage.addEventListener('click', () => setPendingOverlay(pendingOverlay.hidden));
+      document.getElementById('btn-pending-back').addEventListener('click', () => setPendingOverlay(false));
+      pendingOverlay.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') setPendingOverlay(false);
       });
+      pendingTree.addEventListener('click', (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        const toggle = target.closest('[data-folder-toggle]');
+        if (toggle) {
+          toggle.parentElement.classList.toggle('collapsed');
+          return;
+        }
+        const file = target.closest('[data-path]');
+        if (file) vscode.postMessage({ type: 'openPendingFile', path: file.dataset.path });
+      });
+      function onPendingFiles(html) {
+        // Keep folders the user collapsed collapsed across refreshes.
+        const collapsed = new Set(Array.from(pendingTree.querySelectorAll('.folder-block.collapsed > .folder'))
+          .map((el) => el.textContent));
+        const scrollTop = pendingTree.scrollTop;
+        pendingTree.innerHTML = html;
+        pendingTree.querySelectorAll('.folder-block > .folder').forEach((el) => {
+          if (collapsed.has(el.textContent)) el.parentElement.classList.add('collapsed');
+        });
+        pendingTree.scrollTop = scrollTop;
+      }
 
       // ---- Settings overlay ----
       const overlay = document.getElementById('settings-overlay');

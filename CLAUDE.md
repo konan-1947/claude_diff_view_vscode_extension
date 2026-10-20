@@ -74,12 +74,12 @@ There used to be a third, hook-based pipeline (`PreToolUse`/`PostToolUse` hooks 
 
 ### Integrated terminal
 
-`src/terminal/` is an embedded PTY terminal (xterm.js webview + `node-pty`), shown by default in the Secondary Side Bar (extension.ts moves it there once via a one-time globalState flag). `src/terminal/terminalPanel.ts` (`TerminalPanelProvider`, view id `ai-cli-diff-view.terminal`) manages PTY sessions; its ☰ header button switches to the separate PENDING FILES view (`agentChangesPanel`) rather than rendering a file list of its own. `ptySession.ts` wraps node-pty, and on Windows each spawned shell gets its environment rebuilt from the registry by `freshEnv.ts` (since `process.env` is a startup snapshot); `fontInstaller.ts` handles terminal fonts; `terminalHtml.ts` / `terminalTypes.ts` hold the webview shell and settings types.
+`src/terminal/` is an embedded PTY terminal (xterm.js webview + `node-pty`), shown by default in the Secondary Side Bar (extension.ts moves it there once via a one-time globalState flag). `src/terminal/terminalPanel.ts` (`TerminalPanelProvider`, view id `ai-cli-diff-view.terminal`) manages PTY sessions; its ☰ header button opens a Pending Files overlay drawn over the terminal inside the same webview (tree HTML from `src/views/pendingTree.ts`, shared with `agentChangesPanel`) — never hide the terminal view with a `when` clause for this, since that disposes the webview. PTY sessions live in one `TerminalSessionStore` (`terminalSessions.ts`, created in extension.ts) shared by the side bar provider and the Agent mode panel provider, so shells survive Agent mode toggles (the side bar view is removed by its `when` clause in Agent mode, which disposes its webview); each session mirrors its screen in an `@xterm/headless` terminal, and a newly attached webview's `ready` is answered with `restoreSessions` (serialized via `@xterm/addon-serialize`) instead of spawning a new shell. `ptySession.ts` wraps node-pty, and on Windows each spawned shell gets its environment rebuilt from the registry by `freshEnv.ts` (since `process.env` is a startup snapshot); `fontInstaller.ts` handles terminal fonts; `terminalHtml.ts` / `terminalTypes.ts` hold the webview shell and settings types.
 
 ### UI composition
 
 - `src/terminal/terminalPanel.ts` — terminal + built-in runner status + pending files (Secondary Side Bar).
-- `src/views/agentChangesPanel.ts` — "Changes" webview (`ai-cli-diff-view.agentChanges`): pending files as a folder tree with diff stats; shown in agent mode or on the terminal's files page.
+- `src/views/agentChangesPanel.ts` — "Changes" webview (`ai-cli-diff-view.agentChanges`): pending files as a folder tree with diff stats; shown only in agent mode.
 - `src/views/navBarPanel.ts` — pending-diff nav bar webview (`ai-cli-diff-view.navBar`), declared in `package.json`.
 - `src/views/diffActionPanel.ts` — diff action controls.
 

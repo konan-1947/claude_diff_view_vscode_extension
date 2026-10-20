@@ -73,7 +73,8 @@ export const MAX_AUTO_OPEN_DIFFS_CEILING = 1000;
 export type IncomingMessage =
   | { type: 'ready' }
   | { type: 'toggleAgentMode' }
-  | { type: 'showPendingFiles' }
+  | { type: 'pendingOverlay'; open: boolean }
+  | { type: 'openPendingFile'; path: string }
   | { type: 'createSession'; cols: number; rows: number }
   | { type: 'closeSession'; id: string }
   | { type: 'input'; id: string; data: string }
@@ -101,7 +102,20 @@ export type IncomingMessage =
   | { type: 'introduceSeen' }
   | { type: 'terminalFocusState'; focused: boolean }
   | { type: 'sessionTitle'; title: string }
+  | { type: 'activeSession'; id: string }
   | { type: 'viewTooNarrow' };
+
+/** One running session, as sent to a newly attached webview so it can redraw the tab. */
+export interface SessionSnapshot {
+  id: string;
+  title: string;
+  rawTitle: string;
+  serialized: string;
+  cols: number;
+  rows: number;
+  exited: boolean;
+  exitCode: number;
+}
 
 export const DEFAULT_SETTINGS: TerminalSettings = {
   fontFamily: 'Consolas, "Courier New", monospace',

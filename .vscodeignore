@@ -8,6 +8,8 @@ node_modules/**
 !node_modules/@vscode/codicons/dist/**
 !node_modules/material-icon-theme/icons/**
 !node_modules/node-pty/**
+!node_modules/@xterm/headless/**
+!node_modules/@xterm/addon-serialize/**
 !node_modules/diff/**
 !node_modules/ignore/**
 !node_modules/monaco-editor/min/**

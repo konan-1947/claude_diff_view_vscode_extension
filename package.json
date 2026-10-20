@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
-  "version": "4.1.2",
+  "version": "5.0.1-preview",
   "publisher": "konan1947",
   "license": "MIT",
   "repository": {
@@ -154,13 +154,13 @@
           "id": "ai-cli-diff-view.terminal",
           "name": "AI CLI",
           "type": "webview",
-          "when": "ai-cli-diff-view.terminalVisible && !ai-cli-diff-view.terminalFilesPage"
+          "when": "ai-cli-diff-view.terminalVisible"
         },
         {
           "id": "ai-cli-diff-view.agentChanges",
           "name": "PENDING FILES",
           "type": "webview",
-          "when": "ai-cli-diff-view.agentModeActive || ai-cli-diff-view.terminalVisible && ai-cli-diff-view.terminalFilesPage"
+          "when": "ai-cli-diff-view.agentModeActive"
         }
       ],
       "explorer": [
@@ -206,11 +206,6 @@
         "title": "AI CLI Diff: Open Pending File"
       },
       {
-        "command": "ai-cli-diff-view.showTerminal",
-        "title": "Back to Terminal",
-        "icon": "$(terminal)"
-      },
-      {
         "command": "ai-cli-diff-view.nextFile",
         "title": "AI CLI Diff: Next Edited File"
       },
@@ -245,16 +240,7 @@
         "key": "alt+l",
         "when": "ai-cli-diff-view.hasPendingDiff"
       }
-    ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "ai-cli-diff-view.showTerminal",
-          "when": "view == ai-cli-diff-view.agentChanges && ai-cli-diff-view.terminalFilesPage",
-          "group": "navigation"
-        }
-      ]
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -272,6 +258,8 @@
   "dependencies": {
     "@vscode/codicons": "^0.0.45",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
     "diff": "^9.0.0",
     "dompurify": "^3.4.17",
