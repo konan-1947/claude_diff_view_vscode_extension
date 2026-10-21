@@ -2,11 +2,26 @@ src/**
 code_to_test/**
 .claude/**
 .vscode/**
+.idea/**
+docs/**
+scripts/**
 ts_error.txt
 *.vsix
+.gitignore
+tsconfig.json
+plan.md
+AGENTS.md
+CLAUDE.md
+QWEN.md
+CURSOR_DIFF_CHECKLIST.md
+# Ảnh chỉ dùng cho repo (README trỏ vào media/introduce, nav bar dùng media/meo_*.png)
+claude_diff_view.png
+meo_diff.png
+meo_ngu.png
+media/empty-diff-background.png
+media/accept-hunk.svg
+media/revert-hunk.svg
 node_modules/**
-!node_modules/@vscode/codicons/dist/**
-!node_modules/material-icon-theme/icons/**
 !node_modules/node-pty/**
 !node_modules/@xterm/headless/**
 !node_modules/@xterm/addon-serialize/**
@@ -17,6 +32,7 @@ node_modules/**
 !node_modules/node-pty/**/*.d.ts
 **/*.map
 !out/**
+out/**/*.map
 !node_modules/marked/lib/marked.umd.js
 !node_modules/dompurify/dist/purify.min.js
 !node_modules/mermaid/dist/mermaid.min.js
