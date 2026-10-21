@@ -59,12 +59,14 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
 
   const introBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'introduce'));
   const introSlides: IntroSlide[] = [
-    { src: `${introBase}/welcome.png`, caption: 'Welcome to AI CLI Diff — review every AI edit before it lands.' },
-    { src: `${introBase}/image1.png`,  caption: 'Accept or reject each AI change with one click in the side panel.' },
-    { src: `${introBase}/image2.png`,  caption: 'Run an AI CLI agent right inside the embedded terminal.' },
-    { src: `${introBase}/image3.png`,  caption: 'See changed files in their real folder structure.' },
-    { src: `${introBase}/image4.png`,  caption: 'Review changes hunk by hunk directly in the editor.' },
-    { src: `${introBase}/image5.png`,  caption: 'Customize terminal font, theme, and cursor from the Settings popover.' },
+    { src: `${introBase}/sidebar-inline-diff.png`,   caption: 'Welcome to AI CLI Diff — every AI edit becomes a diff you accept or reject block by block.' },
+    { src: `${introBase}/sidebar-pending-files.png`, caption: 'See every changed file in its real folder structure, with +/- line counts.' },
+    { src: `${introBase}/agent-mode.png`,            caption: 'Agent mode: the terminal takes the editor area, with changed files beside it.' },
+    { src: `${introBase}/agent-aggregate-diff.png`,  caption: 'Review all changes on one page, and accept or reject whole files.' },
+    { src: `${introBase}/agent-file-diff.png`,       caption: 'Click a file in the tree to jump straight to its changes.' },
+    { src: `${introBase}/agent-preview-csv.png`,     caption: 'Preview CSV, Markdown, images and code without leaving the terminal.' },
+    { src: `${introBase}/agent-preview-mermaid.png`, caption: 'Mermaid diagrams render right in the panel.' },
+    { src: `${introBase}/sidebar-settings.png`,      caption: 'Choose which files are tracked and customize the terminal from Settings.' },
   ];
 
   const nonce = randomNonce();
