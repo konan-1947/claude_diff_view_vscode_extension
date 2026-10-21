@@ -10,10 +10,13 @@
  *   được mở bù khi có chỗ trống.
  * - Chọn file đầu theo thứ tự cây, như PENDING FILES / Alt+L.
  * - Mở theo đợt nhỏ, `await` và nhường event loop giữa các đợt.
+ * - Không bao giờ cướp focus (burst hay ghi lẻ đều vậy): người dùng có thể
+ *   đang gõ cho agent khi file được ghi.
  */
 
 export interface AutoOpenDeps {
-  openDiff(path: string, preserveFocus: boolean): Promise<void>;
+  /** Must open without taking keyboard focus. */
+  openDiff(path: string): Promise<void>;
   isPending(path: string): boolean;
   /** Position in Pending Files tree order. */
   pendingIndex(path: string): number;
@@ -30,8 +33,7 @@ const BATCH_SIZE = 10;
 const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 export class AutoOpenQueue {
-  /** path -> preserveFocus (false wins: a lone write opens like before). */
-  private queue = new Map<string, boolean>();
+  private queue = new Set<string>();
   private drainTimer: NodeJS.Timeout | undefined;
   private draining = false;
   private disposed = false;
@@ -40,10 +42,9 @@ export class AutoOpenQueue {
 
   constructor(private readonly deps: AutoOpenDeps) {}
 
-  enqueue(path: string, preserveFocus: boolean): void {
+  enqueue(path: string): void {
     if (this.disposed) { return; }
-    const queued = this.queue.get(path);
-    this.queue.set(path, queued === undefined ? preserveFocus : queued && preserveFocus);
+    this.queue.add(path);
     // Writes released in the same tick (a burst dump) are sorted and capped together.
     if (!this.drainTimer && !this.draining) {
       this.drainTimer = setTimeout(() => {
@@ -64,13 +65,13 @@ export class AutoOpenQueue {
     this.draining = true;
     try {
       while (this.queue.size > 0 && !this.disposed) {
-        const entries = Array.from(this.queue.entries());
+        const entries = Array.from(this.queue);
         this.queue.clear();
         if (!this.deps.shouldAutoOpen()) { continue; }
 
         const candidates = entries
-          .filter(([p]) => this.deps.isPending(p))
-          .sort(([a], [b]) => this.deps.pendingIndex(a) - this.deps.pendingIndex(b));
+          .filter((p) => this.deps.isPending(p))
+          .sort((a, b) => this.deps.pendingIndex(a) - this.deps.pendingIndex(b));
         const max = this.deps.maxOpen();
         const slots = max > 0 ? Math.max(0, max - this.deps.openDiffCount()) : candidates.length;
         const toOpen = candidates.slice(0, slots);
@@ -88,9 +89,9 @@ export class AutoOpenQueue {
         for (let i = 0; i < toOpen.length && !this.disposed; i += BATCH_SIZE) {
           if (!this.deps.shouldAutoOpen()) { break; }
           // Accept All / a git branch switch may have resolved files meanwhile.
-          const batch = toOpen.slice(i, i + BATCH_SIZE).filter(([p]) => this.deps.isPending(p));
-          await Promise.all(batch.map(([p, preserveFocus]) =>
-            this.deps.openDiff(p, preserveFocus).catch((err: unknown) => {
+          const batch = toOpen.slice(i, i + BATCH_SIZE).filter((p) => this.deps.isPending(p));
+          await Promise.all(batch.map((p) =>
+            this.deps.openDiff(p).catch((err: unknown) => {
               console.error('[ai-cli-diff-view] auto-open diff failed:', err);
             })
           ));

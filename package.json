@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
-  "version": "5.0.2-preview",
+  "version": "5.0.3",
   "publisher": "konan1947",
   "license": "AGPL-3.0-only",
   "repository": {
@@ -135,6 +135,11 @@
           "type": "boolean",
           "default": false,
           "description": "Play a sound when Claude finishes a turn or needs input (Windows only). Writes Notification/Stop hooks to ~/.claude/settings.json."
+        },
+        "ai-cli-diff-view.preventAltMenuFocus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep focus in the terminal after Alt+Tab: sets VS Code's window.customMenuBarAltFocus to false, so releasing Alt no longer moves focus to the menu bar. Turning this off restores that setting if this extension changed it."
         }
       }
     },

@@ -27,6 +27,11 @@ export interface SoundNotificationSettings {
   soundNotificationsEnabled: boolean;
 }
 
+/** See `src/commands/altMenuFocus.ts`. */
+export interface FocusSettings {
+  preventAltMenuFocus: boolean;
+}
+
 /** Giới hạn kích thước file được theo dõi. Xem `src/watcher/fileSizeLimit.ts`. */
 export interface FileLimitSettings {
   maxFileLines: number;
@@ -41,7 +46,7 @@ export interface ExclusionSettings {
 }
 
 export interface TerminalSettingsPayload
-  extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings, FileLimitSettings, ExclusionSettings {
+  extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings, FocusSettings, FileLimitSettings, ExclusionSettings {
   /** `.gitignore`-style patterns of extra files to track. See `src/watcher/fileTypeRules.ts`. */
   includedPaths: string[];
 }
@@ -55,6 +60,10 @@ export const DEFAULT_BURST_DETECTION_SETTINGS: BurstDetectionSettings = {
 
 export const DEFAULT_SOUND_NOTIFICATION_SETTINGS: SoundNotificationSettings = {
   soundNotificationsEnabled: false,
+};
+
+export const DEFAULT_FOCUS_SETTINGS: FocusSettings = {
+  preventAltMenuFocus: true,
 };
 
 export const DEFAULT_FILE_LIMIT_SETTINGS: FileLimitSettings = {

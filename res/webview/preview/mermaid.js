@@ -1,23 +1,26 @@
 (function () {
   'use strict';
 
-  let initialised = false;
+  let appliedTheme;
   let counter = 0;
 
-  function isLightTheme() {
-    return document.body.classList.contains('vscode-light');
+  function mermaidTheme() {
+    const classes = document.body.classList;
+    return classes.contains('vscode-light') || classes.contains('vscode-high-contrast-light') ? 'default' : 'dark';
   }
 
   // Draws `source` into `container`. Rejects with the mermaid syntax error.
   function draw(container, source) {
     return window.aiCliPreviewLibs.mermaid().then((mermaid) => {
-      if (!initialised) {
+      // Re-initialise when the VS Code theme changed since the last diagram.
+      const theme = mermaidTheme();
+      if (theme !== appliedTheme) {
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: 'strict',
-          theme: isLightTheme() ? 'default' : 'dark',
+          theme,
         });
-        initialised = true;
+        appliedTheme = theme;
       }
       const id = 'ai-cli-mermaid-' + (counter += 1);
       return mermaid.render(id, source).then((result) => {

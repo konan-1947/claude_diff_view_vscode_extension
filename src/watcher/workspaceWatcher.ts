@@ -76,7 +76,7 @@ export class WorkspaceWatcher {
     this.snapshots = new BaselineStore();
     this.baselineScanner = new BaselineScanner(this.snapshots);
     this.autoOpen = new AutoOpenQueue({
-      openDiff: (p, preserveFocus) => this.diffManager.openDiff(p, preserveFocus ? { preserveFocus: true } : undefined),
+      openDiff: (p) => this.diffManager.openDiff(p, { preserveFocus: true }),
       isPending: (p) => this.diffManager.hasPendingDiff(p),
       pendingIndex: (p) => this.diffManager.getPendingIndex(p),
       openDiffCount: () => this.diffManager.getOpenPanelCount(),
@@ -536,8 +536,7 @@ export class WorkspaceWatcher {
     filePath: string,
     originalContent: string,
     newContent: string,
-    fileExistedBefore: boolean,
-    fromBurstDump = false
+    fileExistedBefore: boolean
   ): void {
     this.diffManager.loadSnapshot(filePath, originalContent, fileExistedBefore);
     // Agent Mode owns review in its central preview. Keep the pending snapshot
@@ -546,7 +545,7 @@ export class WorkspaceWatcher {
       return;
     }
     // Capped and opened in small batches, see AutoOpenQueue (issue #37, HOT-1).
-    this.autoOpen.enqueue(filePath, fromBurstDump);
+    this.autoOpen.enqueue(filePath);
   }
 
   /**
@@ -594,7 +593,7 @@ export class WorkspaceWatcher {
       const entries = Array.from(this.heldWrites.entries());
       this.heldWrites.clear();
       for (const [filePath, w] of entries) {
-        this.triggerDiff(filePath, w.originalContent, w.newContent, w.fileExistedBefore, true);
+        this.triggerDiff(filePath, w.originalContent, w.newContent, w.fileExistedBefore);
       }
     }, this.holdMs);
   }

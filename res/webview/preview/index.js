@@ -131,6 +131,19 @@
     document.dispatchEvent(new CustomEvent('ai-cli-preview-close-request'));
   });
 
+  // VS Code swaps the body's theme class on a theme change; redraw an open
+  // rendered preview so diagrams pick up the new colours.
+  const themeClass = () => Array.from(document.body.classList).filter((c) => c.startsWith('vscode-')).sort().join(' ');
+  let lastThemeClass = themeClass();
+  new MutationObserver(() => {
+    const next = themeClass();
+    if (next === lastThemeClass) return;
+    lastThemeClass = next;
+    if (!data || mode !== 'preview' || !hasPreview(data)) return;
+    token += 1;
+    showPreview(data);
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
   window.aiCliFilePreview = { open, close };
   window.addEventListener('message', (event) => {
     const msg = event.data || {};

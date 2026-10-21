@@ -8,6 +8,7 @@ import { refreshFileSizeLimit } from './watcher/fileSizeLimit';
 import { clearGitignoreCache, isExcludedPathSegment, refreshPathExclusions } from './watcher/pathExclusions';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { registerAllCommands } from './commands/commandsRegistry';
+import { applyAltMenuFocus } from './commands/altMenuFocus';
 import { NavigationManager } from './diff/navigationManager';
 import { NavBarPanel } from './views/navBarPanel';
 import { AgentChangesPanel } from './views/agentChangesPanel';
@@ -64,6 +65,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   refreshTextFileRules();
   refreshFileSizeLimit();
   refreshPathExclusions();
+  void applyAltMenuFocus(context).catch((err: unknown) => debugError('activate:altMenuFocus failed', err));
   debugLog('activate:configuration initialized');
 
   const diffManager       = new DiffManager(context);
@@ -191,6 +193,9 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
         // dropping an exclusion would make them look brand new — and Revert all
         // would delete them. Rebuild the baseline against the new rules.
         workspaceWatcher.rebuildBaselineAfterRuleChange();
+      }
+      if (e.affectsConfiguration('ai-cli-diff-view.preventAltMenuFocus')) {
+        void applyAltMenuFocus(context).catch((err: unknown) => debugError('altMenuFocus failed', err));
       }
     })
   );

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
 import { PENDING_TREE_CSS } from '../views/pendingTree';
-import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
+import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_FOCUS_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 
 interface FontOption {
   label: string;
@@ -655,14 +655,48 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
+    position: relative;
     /* Size container so .aggregate-editor can size itself in cqh. */
     container-type: size;
   }
   .diff-add { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
   .diff-delete { color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c); }
   .diff-preview-content {
+    /* Rail width; padding and the rail both resolve % against the preview width. */
+    --diff-rail-width: clamp(56px, 11%, 140px);
     overflow: auto;
-    padding: 16px 18px 28px;
+    /* Wide right gutter: room to wheel-scroll the list without landing in a file. */
+    padding: 16px calc(var(--diff-rail-width) + 30px) 28px 18px;
+  }
+  /* Marks that gutter. pointer-events: none so the wheel falls through to the list. */
+  .diff-preview-rail {
+    position: absolute;
+    top: 16px;
+    bottom: 28px;
+    right: 16px;
+    width: clamp(56px, 11%, 140px);
+    padding: 18px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    box-sizing: border-box;
+    border: 1px dashed rgba(128,128,128,0.4);
+    border-radius: 8px;
+    color: rgba(128,128,128,0.45);
+    pointer-events: none;
+    user-select: none;
+  }
+  .diff-preview-rail svg {
+    flex: 0 1 auto;
+    width: 46%;
+    max-height: 34%;
+    min-height: 0;
+  }
+  .diff-rail-label {
+    font-size: 11px;
+    white-space: nowrap;
   }
   .diff-preview-status {
     padding: 28px 12px;
@@ -1095,6 +1129,11 @@ ${FONT_OPTIONS.map((f) => {
           <input id="f-sound-notifications" type="checkbox">
         </div>
         <div class="setting-help">Plays a sound when Claude finishes a turn or needs input (Windows only). Writes to <code>~/.claude/settings.json</code>.</div>
+        <div class="field">
+          <label for="f-prevent-alt-menu-focus">Keep terminal focus on Alt</label>
+          <input id="f-prevent-alt-menu-focus" type="checkbox">
+        </div>
+        <div class="setting-help">Stops Alt (e.g. Alt+Tab back to VS Code) from moving focus to the menu bar. Sets VS Code's <code>window.customMenuBarAltFocus</code> to off.</div>
         <div class="field file-ext-field">
           <div class="label-row">
             <label>Included files</label>
@@ -1265,6 +1304,11 @@ ${FONT_OPTIONS.map((f) => {
         <main id="diff-preview-content" class="diff-preview-content">
           <div id="diff-preview-status" class="diff-preview-status">Loading pending changes…</div>
         </main>
+        <div class="diff-preview-rail" aria-hidden="true">
+          <svg viewBox="0 0 40 110" preserveAspectRatio="xMidYMid meet"><path d="M20 2 38 38H27v70H13V38H2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>
+          <span class="diff-rail-label">Scroll here</span>
+          <svg viewBox="0 0 40 110" preserveAspectRatio="xMidYMid meet"><path d="M20 108 38 72H27V2H13v70H2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>
+        </div>
       </div>
     </div>
     <div id="file-preview-overlay" hidden>
@@ -1333,7 +1377,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return;
       }
 
-      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS, ...DEFAULT_EXCLUSION_SETTINGS })};
+      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FOCUS_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS, ...DEFAULT_EXCLUSION_SETTINGS })};
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
       const termHost = document.getElementById('term-host');
@@ -1990,6 +2034,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const fCursorStyle = document.getElementById('f-cursor-style');
       const fCursorBlink = document.getElementById('f-cursor-blink');
       const fSoundNotifications = document.getElementById('f-sound-notifications');
+      const fPreventAltMenuFocus = document.getElementById('f-prevent-alt-menu-focus');
       const fRespectGitignore = document.getElementById('f-respect-gitignore');
       const fBurstEnabled = document.getElementById('f-burst-enabled');
       const fBurstWindow = document.getElementById('f-burst-window');
@@ -2221,6 +2266,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fCursorStyle.value = s.cursorStyle;
         fCursorBlink.checked = s.cursorBlink;
         fSoundNotifications.checked = s.soundNotificationsEnabled;
+        fPreventAltMenuFocus.checked = s.preventAltMenuFocus;
         listEditors.includedPaths.set(s.includedPaths);
         listEditors.excludedPaths.set(s.excludedPaths);
         fRespectGitignore.checked = s.respectGitignore;
@@ -2257,6 +2303,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           cursorStyle: fCursorStyle.value,
           cursorBlink: !!fCursorBlink.checked,
           soundNotificationsEnabled: !!fSoundNotifications.checked,
+          preventAltMenuFocus: !!fPreventAltMenuFocus.checked,
           includedPaths: listEditors.includedPaths.get(),
           burstDetectionEnabled: !!fBurstEnabled.checked,
           burstDetectionWindowMs: isFinite(burstWindow) ? Math.min(5000, Math.max(50, burstWindow)) : DEFAULTS.burstDetectionWindowMs,

@@ -16,10 +16,12 @@ import {
   DEFAULT_BURST_DETECTION_SETTINGS,
   DEFAULT_EXCLUSION_SETTINGS,
   DEFAULT_FILE_LIMIT_SETTINGS,
+  DEFAULT_FOCUS_SETTINGS,
   DEFAULT_SETTINGS,
   DEFAULT_SOUND_NOTIFICATION_SETTINGS,
   ExclusionSettings,
   FileLimitSettings,
+  FocusSettings,
   MAX_FILE_LINES_CEILING,
   MAX_AUTO_OPEN_DIFFS_CEILING,
   IncomingMessage,
@@ -304,6 +306,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       includedPaths: this.loadIncludedPaths(),
       ...this.loadBurstDetectionSettings(),
       ...this.loadSoundNotificationSettings(),
+      ...this.loadFocusSettings(),
       ...this.loadFileLimitSettings(),
       ...this.loadExclusionSettings(),
     };
@@ -403,6 +406,23 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
     await config.update('soundNotificationsEnabled', enabled, vscode.ConfigurationTarget.Global);
     applySoundNotifications(enabled);
+  }
+
+  private loadFocusSettings(): FocusSettings {
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    return {
+      preventAltMenuFocus: config.get<boolean>('preventAltMenuFocus', DEFAULT_FOCUS_SETTINGS.preventAltMenuFocus),
+    };
+  }
+
+  /** The window setting itself is applied by the config listener in extension.ts. */
+  private async saveFocusSettings(incoming: Partial<FocusSettings>): Promise<void> {
+    if (typeof incoming.preventAltMenuFocus !== 'boolean' ||
+        incoming.preventAltMenuFocus === this.loadFocusSettings().preventAltMenuFocus) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    await config.update('preventAltMenuFocus', incoming.preventAltMenuFocus, vscode.ConfigurationTarget.Global);
   }
 
   private loadBurstDetectionSettings(): BurstDetectionSettings {
@@ -654,6 +674,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.saveIncludedPaths(incoming.includedPaths),
             this.saveBurstDetectionSettings(incoming),
             this.saveSoundNotificationSettings(incoming),
+            this.saveFocusSettings(incoming),
             this.saveFileLimitSettings(incoming),
             this.saveExclusionSettings(incoming),
           ]).then(() => {
