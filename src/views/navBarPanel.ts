@@ -68,6 +68,7 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
         <div class="line line-all-changes">
           <button class="btn btn-accept-all" onclick="send('acceptAllChanges')">Accept All Changes</button>
         </div>
+        <div class="pending-total">${info.total.toLocaleString('en-US')} pending ${info.total === 1 ? 'file' : 'files'}</div>
       </div>` : `<div class="empty">No pending diffs</div>`;
 
     return `<!DOCTYPE html>
@@ -201,6 +202,14 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     font-weight: 500;
     white-space: nowrap;
     padding: 0 4px;
+  }
+
+  .pending-total {
+    text-align: center;
+    font-size: 15px;
+    font-weight: 600;
+    font-style: italic;
+    opacity: 0.85;
   }
 
   .empty {

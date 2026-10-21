@@ -21,6 +21,7 @@ interface PendingFile {
  * overlay inside the terminal webview. Scoped under `.pending-tree`.
  */
 export const PENDING_TREE_CSS = `
+  .pending-tree .pending-summary { margin-bottom: 4px; padding: 6px 12px; border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25)); color: var(--vscode-descriptionForeground); font-size: 13px; font-weight: 600; font-style: italic; }
   .pending-tree .row { width: 100%; min-height: 22px; display: flex; align-items: center; padding: 2px 8px; gap: 5px; }
   .pending-tree .folder { color: var(--vscode-foreground); font-weight: 500; border: 0; background: transparent; text-align: left; cursor: pointer; font: inherit; }
   .pending-tree .folder:hover { background: var(--vscode-list-hoverBackground); }
@@ -63,7 +64,9 @@ export function renderPendingTree(
   iconBase: string,
 ): string {
   const rows = renderChildren(createTree(metadata).children, 0, activeFilePath, iconBase);
-  return rows || '<div class="empty">No pending changes</div>';
+  if (!rows) { return '<div class="empty">No pending changes</div>'; }
+  const count = metadata.length;
+  return `<div class="pending-summary">${count.toLocaleString('en-US')} pending ${count === 1 ? 'file' : 'files'}</div>${rows}`;
 }
 
 function renderChildren(
