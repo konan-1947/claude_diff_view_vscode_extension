@@ -20,6 +20,7 @@ npx @vscode/vsce package
 - There is no lint, formatter, or test runner configured. `npm run compile` is the minimum correctness gate. Manually validate diff rendering, accept/revert, and navigation against the sample files in `code_to_test/`.
 - `node-pty` is a **native module**. If the integrated terminal fails to load (ABI mismatch against VS Code's Electron), rebuild it with the `@electron/rebuild` devDependency. There is no postinstall script wiring this up.
 - Monaco and xterm assets are consumed directly from `node_modules/` at runtime (loaded into webviews via `localResourceRoots`); there is no separate asset bundling step.
+- Many code comments and most `docs/` files are written in Vietnamese; match the language of the surrounding comments when editing. `AGENTS.md` and `QWEN.md` are sibling context files for other CLIs; `QWEN.md` is stale (it still describes the removed Claude hook installation), so when they disagree this file is authoritative. Never edit `out/` by hand.
 - Strict TypeScript (`tsconfig.json`: `strict: true`, CommonJS, ES2020 target). 2-space indentation, semicolons, single quotes; `PascalCase` for classes/providers, `camelCase` for functions/variables, `kebab-case` for asset filenames.
 
 ## Architecture
@@ -99,6 +100,10 @@ Pending-file navigation logic lives in `src/diff/navigationManager.ts`, reachabl
 
 ### Important implementation constraints
 
+- Line endings: **LF in the middle, EOL at the boundary** (`src/diff/eol.ts`). Everything fed to `calculateHunks()` and posted to the webview has been through `toLf()`; only the points that write back to the document/disk call `fromLf()` with the file's detected EOL. Skipping this makes every line differ by a trailing `\r` and the diff shows the whole file replaced (bug #15, `docs/BUG_ISSUE_15_FULL_FILE_DIFF.md`).
+- Agent bursts can touch hundreds or thousands of files (perf issue #37, `docs/PERF_ISSUE_37_CHECKLIST.md`, `docs/PERF_HOTSPOTS_SWIMLANE.md`). Per-event work must be batched: UI refreshes (Pending Files, nav bar, Changes panel, aggregate preview, `.gitignore` changes) go through `coalesce()` in `src/util/coalesce.ts` (trailing debounce with a max wait), and snapshot persistence on burst paths uses `DiffManager`'s coalesced `scheduleSave()` — user actions keep `saveNow()`, and `flushPendingSave()` runs on deactivate. Don't add an unbatched per-file save or postMessage in a watcher path.
+- Deleting a tracked file or folder untracks it entirely (baseline, held write, pending diff and its tab), but only after `DELETE_SETTLE_MS` and a re-check in `WorkspaceWatcher.handleExternalDelete()` — many tools write via unlink + recreate, and untracking immediately would make the rewrite look brand new (Revert all would then delete it).
+- Info/warning toasts use `notify()` (`src/util/notify.ts`), which auto-closes after 2 s and has no buttons; errors stay on `showErrorMessage`.
 - Path normalization is load-bearing: paths go through `vscode.Uri.file(...).fsPath` and are lowercased on Windows before comparison. `canonicalCasePath` (via `fs.realpathSync.native`) is used when calling VS Code APIs so tab titles show the on-disk case.
 - Snapshot persistence is designed to survive restarts; changes to snapshot shape or cleanup affect restore logic as well as live diffing.
 - Built-in session launch is Claude-only; Codex/Qwen (and Claude, when not run via `startSession`) edits are reviewed through the workspace watcher.
