@@ -4,7 +4,7 @@
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
   "version": "5.0.2-preview",
   "publisher": "konan1947",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/konan-1947/claude_diff_view_vscode_extension.git"

@@ -127,4 +127,4 @@ npx @vscode/vsce package
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE)
