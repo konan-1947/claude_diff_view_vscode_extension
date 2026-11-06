@@ -31,6 +31,7 @@ import {
   TerminalSettingsPayload,
   ThemePreset,
 } from './terminalTypes';
+import { THEME_PRESET_IDS } from './terminalThemes';
 
 const SETTINGS_KEY = 'ai-cli-diff-view.terminal.settings';
 const INTRODUCE_SEEN_KEY = 'ai-cli-diff-view.introduce.seen';
@@ -284,8 +285,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private normalizePreset(v: unknown): ThemePreset {
-    const presets: ThemePreset[] = ['vscode', 'default-dark', 'solarized-dark', 'dracula', 'custom'];
-    return presets.includes(v as ThemePreset) ? (v as ThemePreset) : DEFAULT_SETTINGS.themePreset;
+    const presets: string[] = ['vscode', 'custom', ...THEME_PRESET_IDS];
+    return presets.includes(v as string) ? (v as ThemePreset) : DEFAULT_SETTINGS.themePreset;
   }
 
   private normalizeCursorStyle(v: unknown): CursorStyle {

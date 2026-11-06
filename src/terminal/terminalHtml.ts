@@ -2,11 +2,21 @@ import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
 import { PENDING_TREE_CSS } from '../views/pendingTree';
 import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_FOCUS_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
+import { TERMINAL_THEMES } from './terminalThemes';
 
 interface FontOption {
   label: string;
   value: string;
   primary: string;
+}
+
+function themeOptionsHtml(): string {
+  const group = (label: string, g: 'dark' | 'light'): string =>
+    `<optgroup label="${label}">` +
+    TERMINAL_THEMES.filter((t) => t.group === g)
+      .map((t) => `<option value="${t.id}">${t.label}</option>`).join('') +
+    '</optgroup>';
+  return group('Dark', 'dark') + group('Light', 'light');
 }
 
 const FONT_OPTIONS: ReadonlyArray<FontOption> = [
@@ -1137,9 +1147,7 @@ ${FONT_OPTIONS.map((f) => {
           <label for="f-preset">Theme</label>
           <select id="f-preset">
             <option value="vscode">Follow VS Code</option>
-            <option value="default-dark">Default Dark</option>
-            <option value="solarized-dark">Solarized Dark</option>
-            <option value="dracula">Dracula</option>
+            ${themeOptionsHtml()}
             <option value="custom">Custom</option>
           </select>
         </div>
@@ -1463,14 +1471,11 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return v || fallback;
       }
 
+      const BUILTIN_THEMES = ${JSON.stringify(Object.fromEntries(TERMINAL_THEMES.map((t) => [t.id, t.colors])))};
+
       function resolveTheme(s) {
+        if (BUILTIN_THEMES[s.themePreset]) return BUILTIN_THEMES[s.themePreset];
         switch (s.themePreset) {
-          case 'default-dark':
-            return { background: '#1e1e1e', foreground: '#cccccc', cursor: '#ffffff' };
-          case 'solarized-dark':
-            return { background: '#002b36', foreground: '#93a1a1', cursor: '#93a1a1' };
-          case 'dracula':
-            return { background: '#282a36', foreground: '#f8f8f2', cursor: '#f8f8f2' };
           case 'custom':
             return {
               background: s.customColors.background,

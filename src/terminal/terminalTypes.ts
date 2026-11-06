@@ -1,4 +1,7 @@
-export type ThemePreset = 'vscode' | 'default-dark' | 'solarized-dark' | 'dracula' | 'custom';
+import type { TERMINAL_THEMES } from './terminalThemes';
+
+/** `vscode` / `custom` are resolved in the webview; every other id comes from `TERMINAL_THEMES`. */
+export type ThemePreset = 'vscode' | 'custom' | (typeof TERMINAL_THEMES)[number]['id'];
 export type CursorStyle = 'block' | 'underline' | 'bar';
 
 export interface TerminalColors {
