@@ -691,6 +691,7 @@ export class DiffManager {
   disposeAll(): void {
     this.clearSnapshots();
     this.displayPaths.clear();
+    this.lastCursors.clear();
     for (const panel of this.panels.values()) {
       panel.dispose();
     }
@@ -716,6 +717,10 @@ export class DiffManager {
     this.saveSoon.dispose();
     this.savePending = false;
     await this.store.clear();
+    // disposeAll() xoá panels trước khi chúng dispose nên unregisterPanel() không
+    // bắn event; các file pending không có tab thì không có panel nào. Phải báo
+    // thẳng để Pending Files / nav bar / Changes / context key refresh (issue #43).
+    this._onDidChangeDiffs.fire();
 
     if (activeDiffPath) {
       await this.reopenAsTextEditor(activeDiffPath);
