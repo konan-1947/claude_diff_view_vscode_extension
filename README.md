@@ -2,6 +2,8 @@
 
 Cursor-like diff review for any AI CLI agent's file edits — right inside VS Code.
 
+
+
 Run Claude, Codex, Qwen or any other AI CLI. Every file it touches becomes a reviewable diff you can accept or reject block by block — no setup, no hooks. Switch to **Agent mode** for a full-screen terminal with a live tree of changed files, an all-in-one diff view and instant previews.
 
 ![Review AI edits block by block](media/introduce/sidebar-inline-diff.png)
