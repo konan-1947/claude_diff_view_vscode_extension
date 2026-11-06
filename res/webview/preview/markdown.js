@@ -48,14 +48,18 @@
     }));
   }
 
-  function render(host, data) {
+  function render(host, data, isStale) {
     return Promise.all([window.aiCliPreviewLibs.marked(), window.aiCliPreviewLibs.purify()]).then(([marked, purify]) => {
+      // A newer render started while the libs were loading: drop this one.
+      if (isStale && isStale()) return undefined;
       const root = document.createElement('article');
       root.className = 'markdown-body';
       const html = marked.parse(data.content || '', { gfm: true, async: false });
       // DOMPurify drops <script>, on* handlers and javascript: URLs; the file may be untrusted.
       root.innerHTML = purify.sanitize(html);
       fixLinks(root, data.baseUri);
+      // Never accumulate: the last render always replaces earlier ones.
+      host.textContent = '';
       host.appendChild(root);
       return renderMermaidBlocks(root);
     }).catch((error) => {

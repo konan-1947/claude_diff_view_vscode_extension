@@ -11,6 +11,8 @@
 
   // Draws `source` into `container`. Rejects with the mermaid syntax error.
   function draw(container, source) {
+    // Skeleton placeholder: reserves height while the ~5 MB lib loads and the SVG renders.
+    container.classList.add('is-loading');
     return window.aiCliPreviewLibs.mermaid().then((mermaid) => {
       // Re-initialise when the VS Code theme changed since the last diagram.
       const theme = mermaidTheme();
@@ -23,13 +25,21 @@
         appliedTheme = theme;
       }
       const id = 'ai-cli-mermaid-' + (counter += 1);
-      return mermaid.render(id, source).then((result) => {
+      // Without a host element mermaid draws its temp node in <body>, visible
+      // below the content; give it an off-screen one instead.
+      const scratch = document.createElement('div');
+      scratch.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden;';
+      document.body.appendChild(scratch);
+      return mermaid.render(id, source, scratch).then((result) => {
         container.innerHTML = result.svg;
       }).finally(() => {
-        // A failed render leaves its scratch element behind in <body>.
+        // A failed render leaves its temp element behind.
         const leftover = document.getElementById('d' + id);
         if (leftover) leftover.remove();
+        scratch.remove();
       });
+    }).finally(() => {
+      container.classList.remove('is-loading');
     });
   }
 

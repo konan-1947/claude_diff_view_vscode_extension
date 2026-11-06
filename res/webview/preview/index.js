@@ -66,7 +66,7 @@
     activeRenderer = renderer;
     const current = token;
     renderHost.scrollTop = 0;
-    return Promise.resolve(renderer.render(renderHost, file)).catch((error) => {
+    return Promise.resolve(renderer.render(renderHost, file, () => current !== token)).catch((error) => {
       if (current !== token) return;
       renderHost.textContent = '';
       const box = document.createElement('div');

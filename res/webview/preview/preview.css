@@ -79,6 +79,21 @@
 /* Mermaid */
 .mermaid-diagram { display: flex; justify-content: center; margin: 1em 0; overflow: auto; }
 .mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-diagram.is-loading {
+  min-height: 160px;
+  border-radius: 6px;
+  background: linear-gradient(90deg,
+    rgba(128, 128, 128, 0.12) 25%, rgba(128, 128, 128, 0.24) 50%, rgba(128, 128, 128, 0.12) 75%);
+  background-size: 200% 100%;
+  animation: mermaid-skeleton 1.4s ease-in-out infinite;
+}
+@keyframes mermaid-skeleton {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mermaid-diagram.is-loading { animation: none; }
+}
 
 /* Image */
 .image-preview { display: flex; flex-direction: column; height: 100%; }
