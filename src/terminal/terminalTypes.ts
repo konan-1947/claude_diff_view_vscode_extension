@@ -85,7 +85,8 @@ export type IncomingMessage =
   | { type: 'toggleAgentMode' }
   | { type: 'pendingOverlay'; open: boolean }
   | { type: 'openPendingFile'; path: string }
-  | { type: 'createSession'; cols: number; rows: number }
+  | { type: 'createSession'; cols: number; rows: number; agent?: string }
+  | { type: 'requestAgents' }
   | { type: 'closeSession'; id: string }
   | { type: 'input'; id: string; data: string }
   | { type: 'resize'; id: string; cols: number; rows: number }

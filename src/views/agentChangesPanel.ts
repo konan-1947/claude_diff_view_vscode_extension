@@ -116,7 +116,7 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
   <button class="view-diff" data-action="toggleDiff" title="${this.previewOpen ? 'Back to terminal' : 'View diff'}">${this.previewOpen ? 'Back to terminal' : 'View diff'}</button>
   <button data-action="showIntroduce" title="Introduce" aria-label="Introduce"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button>
   <button data-action="showSettings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-  <button class="agent-mode" data-action="toggleAgentMode" title="Turn off Agent mode">Tắt Agent mode</button>
+  <button class="agent-mode" data-action="toggleAgentMode" title="Turn off Agent mode">Exit Agent mode</button>
 </header>` : '';
     this.view.webview.html = `<!DOCTYPE html>
 <html lang="en">
@@ -124,14 +124,18 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${this.view.webview.cspSource}; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
 <style>
+
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { margin: 0; padding: 0 0 5px; overflow-x: hidden; overflow-y: auto; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: 12px var(--vscode-font-family); }
-  .panel-header { position: sticky; top: 0; z-index: 2; background: var(--vscode-sideBar-background); min-height: 40px; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
-  .panel-header button { min-width: 30px; height: 30px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-icon-foreground); background: transparent; border: 0; border-radius: 4px; cursor: pointer; font: inherit; font-size: 13px; line-height: 1; }
-  .panel-header button:hover { background: var(--vscode-toolbar-hoverBackground); }
-  .panel-header .view-diff { padding: 0 12px; color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-button-border, rgba(128,128,128,.45)); }
-  .panel-header .agent-mode { margin-left: auto; padding: 0 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+  .panel-header { position: sticky; top: 0; z-index: 2; background: var(--vscode-sideBar-background); min-height: 38px; display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .panel-header button { min-width: 26px; height: 26px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-icon-foreground); background: transparent; border: 1px solid transparent; border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px; line-height: 1; opacity: .75; white-space: nowrap; transition: background .12s, border-color .12s, opacity .12s; }
+  .panel-header button:hover { background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
+  .panel-header button:active { transform: translateY(1px); }
+  .panel-header button:focus-visible { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: 1px; }
+  .panel-header .view-diff { padding: 0 12px; color: var(--vscode-foreground); border-color: var(--vscode-panel-border, rgba(128,128,128,.4)); opacity: 1; }
+  .panel-header .agent-mode { margin-left: auto; padding: 0 12px; color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 16%, transparent); border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 50%, transparent); opacity: 1; }
+  .panel-header .agent-mode:hover { background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 30%, transparent); border-color: var(--vscode-button-background, #0e639c); }
 ${PENDING_TREE_CSS}
 </style>
 </head>

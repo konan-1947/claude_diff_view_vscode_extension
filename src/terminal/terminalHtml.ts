@@ -88,116 +88,109 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
 <link rel="stylesheet" href="${xtermCss}">
 <link rel="stylesheet" href="${previewCss}">
 <style>
-  html, body { height: 100%; margin: 0; padding: 0; }
+  /* html must clip too: body's overflow only clips its own box when html's overflow is not visible
+     (otherwise it propagates to the viewport and the rounded corners get overdrawn). */
+  html { height: 100%; margin: 0; padding: 4px; box-sizing: border-box; overflow: hidden; background: var(--vscode-sideBar-background, #1e1e1e); }
+  body { margin: 0; padding: 0; height: 100%; }
+  /* Dark outer frame around the whole tab (tab strip + terminal) to make it stand out. */
   body {
+    border: 1px solid #000;
+    border-radius: 8px;
+    box-sizing: border-box;
+    isolation: isolate;
     background: var(--vscode-sideBar-background, #1e1e1e);
     color: var(--vscode-foreground, #cccccc);
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
-  #header {
-    flex: 0 0 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 8px;
-    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
-    background: var(--vscode-sideBar-background);
-    font-family: var(--vscode-font-family);
-    font-size: 11px;
-    user-select: none;
-  }
-  /* The header follows the terminal colours. */
-  body.page-terminal #header {
-    border-bottom-color: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
-    background: var(--chrome-bg, var(--vscode-sideBar-background));
-    color: var(--chrome-fg, var(--vscode-foreground));
-  }
-  #header-title {
-    opacity: 0.75;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
+  /* Header actions — herdr-style: quiet ghost icon buttons, one soft accent pill. */
   #header-actions {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
   }
   .header-separator {
     width: 1px;
-    height: 16px;
-    margin: 0 5px;
+    height: 14px;
+    margin: 0 4px;
     background: var(--vscode-panel-border, rgba(128,128,128,0.45));
+  }
+  .agent-mode-btn,
+  .view-diff-btn {
+    height: 26px;
+    padding: 0 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 24px;
+    white-space: nowrap;
+    box-sizing: border-box;
+    transition: background 0.12s, border-color 0.12s, transform 0.06s;
   }
   .agent-mode-btn {
     min-width: 92px;
-    height: 22px;
-    padding: 0 9px;
-    color: var(--vscode-button-foreground);
-    background: var(--vscode-button-background);
-    border: 1px solid var(--vscode-button-border, transparent);
-    border-radius: 3px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    line-height: 20px;
-    white-space: nowrap;
+    color: var(--chrome-fg, var(--vscode-foreground));
+    background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--vscode-button-background, #0e639c) 50%, transparent);
   }
-  .agent-mode-btn:hover { background: var(--vscode-button-hoverBackground); }
-  .agent-mode-btn:active { transform: translateY(1px); }
+  .agent-mode-btn:hover {
+    background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 30%, transparent);
+    border-color: var(--vscode-button-background, #0e639c);
+  }
   #btn-view-diff[hidden] { display: none; }
   body.agent-mode-active #header-actions { display: none; }
   .view-diff-btn {
     min-width: 76px;
-    height: 22px;
-    padding: 0 9px;
-    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-    background: var(--vscode-button-secondaryBackground, transparent);
-    border: 1px solid var(--vscode-button-border, rgba(128,128,128,0.45));
-    border-radius: 3px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    line-height: 20px;
-    white-space: nowrap;
+    color: var(--chrome-fg, var(--vscode-foreground));
+    background: transparent;
+    border: 1px solid var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.4)));
   }
-  .view-diff-btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
-  .view-diff-btn:active { transform: translateY(1px); }
+  .view-diff-btn:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
+  .agent-mode-btn:active, .view-diff-btn:active { transform: translateY(1px); }
+  .agent-mode-btn:focus-visible, .view-diff-btn:focus-visible, .header-btn:focus-visible, .tab-add:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder, #007fd4);
+    outline-offset: 1px;
+  }
   .header-btn {
+    width: 26px;
+    height: 26px;
+    padding: 0;
     background: transparent;
     color: var(--vscode-icon-foreground, var(--vscode-foreground));
     border: none;
+    border-radius: 7px;
     cursor: pointer;
-    padding: 3px;
-    border-radius: 4px;
     line-height: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.12s, color 0.12s;
+    opacity: 0.75;
+    transition: background 0.12s, color 0.12s, opacity 0.12s;
   }
   .header-btn svg { display: block; }
-  .header-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); color: var(--vscode-foreground); }
-  body.page-terminal #header .header-btn:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); color: var(--chrome-fg, var(--vscode-foreground)); }
-  body.page-terminal #header .header-btn { color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground))); }
-  body.page-terminal #header .header-separator { background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.45))); }
+  .header-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); color: var(--vscode-foreground); opacity: 1; }
+  body.page-terminal #tab-strip .header-btn:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); color: var(--chrome-fg, var(--vscode-foreground)); }
+  body.page-terminal #tab-strip .header-btn { color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground))); }
+  body.page-terminal #tab-strip .header-separator { background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.45))); }
   .header-btn:active { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.28)); }
 
-
-
-  /* Tab strip */
+  /* Tab strip — rounded pills, a raised active tab and a "+" that opens the launcher menu. */
   #tab-strip {
-    flex: 0 0 28px;
-    height: 28px;
+    flex: 0 0 38px;
+    height: 38px;
     display: flex;
-    align-items: stretch;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    box-sizing: border-box;
     background: var(--chrome-bg, var(--vscode-sideBar-background));
     border-bottom: 1px solid var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.25)));
     color: var(--chrome-fg, var(--vscode-foreground));
     font-family: var(--vscode-font-family);
-    font-size: 11px;
+    font-size: 12px;
     user-select: none;
     min-width: 0;
   }
@@ -205,40 +198,39 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     /* Shrink-only: the + button stays right after the last tab instead of at the far edge. */
     flex: 0 1 auto;
     display: flex;
+    align-items: center;
+    gap: 4px;
     overflow-x: auto;
     overflow-y: hidden;
     min-width: 0;
-    scrollbar-width: thin;
+    scrollbar-width: none;
   }
-  .tabs::-webkit-scrollbar { height: 4px; }
-  .tabs::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(128,128,128,0.4)); border-radius: 2px; }
+  .tabs::-webkit-scrollbar { display: none; }
   .tab {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     padding: 0 4px 0 10px;
-    min-width: 90px;
-    max-width: 160px;
-    height: 100%;
-    border-right: 1px solid var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.18)));
+    min-width: 72px;
+    max-width: 180px;
+    height: 26px;
+    flex: 0 0 auto;
+    border: 1px solid transparent;
+    border-radius: 7px;
     cursor: pointer;
     position: relative;
     overflow: hidden;
     box-sizing: border-box;
     color: var(--chrome-fg, var(--vscode-foreground));
-    opacity: 0.78;
+    opacity: 0.7;
+    transition: background 0.12s, border-color 0.12s, opacity 0.12s;
   }
   .tab:hover { background: var(--chrome-hover, var(--vscode-list-hoverBackground, rgba(128,128,128,0.12))); opacity: 1; }
   .tab.active {
     background: var(--chrome-active, var(--vscode-editor-background));
+    border-color: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.3)));
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
     opacity: 1;
-  }
-  .tab.active::after {
-    content: '';
-    position: absolute;
-    left: 0; right: 0; bottom: 0;
-    height: 1px;
-    background: var(--vscode-focusBorder, #007fd4);
   }
   .tab-title {
     flex: 1 1 auto;
@@ -247,24 +239,27 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     white-space: nowrap;
   }
   .tab-close {
-    flex: 0 0 16px;
-    width: 16px;
-    height: 16px;
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 3px;
+    border-radius: 5px;
     opacity: 0;
     font-size: 14px;
     line-height: 1;
   }
-  .tab:hover .tab-close, .tab.active .tab-close { opacity: 0.7; }
+  .tab:hover .tab-close, .tab.active .tab-close { opacity: 0.6; }
   .tab-close:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); opacity: 1; }
   .tab-add {
-    flex: 0 0 28px;
+    flex: 0 0 26px;
+    width: 26px;
+    height: 26px;
     margin-right: auto;
     background: transparent;
     border: none;
+    border-radius: 7px;
     color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground)));
     cursor: pointer;
     font-size: 16px;
@@ -272,8 +267,57 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    opacity: 0.75;
+    transition: background 0.12s, opacity 0.12s;
   }
-  .tab-add:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
+  .tab-add:hover, .tab-add[aria-expanded="true"] { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); opacity: 1; }
+
+  /* Launcher menu opened by the "+" button */
+  .agent-menu {
+    position: fixed;
+    z-index: 50;
+    min-width: 220px;
+    max-width: calc(100vw - 16px);
+    padding: 6px;
+    box-sizing: border-box;
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-sideBar-background)));
+    color: var(--vscode-menu-foreground, var(--vscode-foreground));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, rgba(128,128,128,0.35)));
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    font-family: var(--vscode-font-family);
+    font-size: 13px;
+  }
+  .agent-menu[hidden] { display: none; }
+  .agent-menu-label {
+    padding: 6px 10px 4px;
+    font-size: 11px;
+    opacity: 0.6;
+  }
+  .agent-menu-sep { height: 1px; margin: 6px 4px; background: var(--vscode-menu-separatorBackground, rgba(128,128,128,0.3)); }
+  .agent-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .agent-item:hover:not(:disabled), .agent-item:focus-visible {
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(128,128,128,0.2)));
+    color: var(--vscode-menu-selectionForeground, inherit);
+    outline: none;
+  }
+  .agent-item:disabled { opacity: 0.45; cursor: default; }
+  .agent-item .agent-icon { flex: 0 0 18px; display: inline-flex; align-items: center; justify-content: center; }
+  .agent-item .agent-name { flex: 1 1 auto; }
+  .agent-item .agent-hint { flex: 0 0 auto; font-size: 12px; opacity: 0.6; }
 
   #content {
     flex: 1 1 auto;
@@ -285,7 +329,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     position: absolute;
     inset: 0;
     overflow: hidden;
-    background: var(--vscode-editor-background);
+    background: var(--term-bg, var(--vscode-editor-background));
   }
   #term-host { width: 100%; height: 100%; position: relative; }
   .term-pane {
@@ -294,7 +338,13 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     display: none;
   }
   .term-pane.active { display: block; }
-  .xterm { padding: 4px 0 0 6px; height: 100%; }
+  /* xterm.css paints .xterm-viewport black and stretches it over the padding box, which showed
+     as a hard black frame (top/left/bottom, not right). Paint the whole terminal with the theme
+     colour instead, so the padding blends into it on every side. */
+  .term-pane,
+  .xterm,
+  .xterm .xterm-viewport { background-color: var(--term-bg, var(--vscode-editor-background)) !important; }
+  .xterm { padding: 8px 4px 6px 10px; height: 100%; box-sizing: border-box; }
 
 
   #err {
@@ -785,21 +835,23 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   .aggregate-file-actions button,
   .aggregate-hunk-actions button {
-    padding: 3px 7px;
+    padding: 0 10px;
+    height: 22px;
     border: 1px solid var(--vscode-button-border, rgba(128,128,128,0.4));
-    border-radius: 3px;
+    border-radius: 7px;
     color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
     background: var(--vscode-button-secondaryBackground, transparent);
     cursor: pointer;
     font-family: var(--vscode-font-family);
-    font-size: 10px;
+    font-size: 11px;
+    transition: background 0.12s, border-color 0.12s;
   }
   .aggregate-file-actions button:hover,
   .aggregate-hunk-actions button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
   .aggregate-file-actions .accept,
-  .aggregate-hunk-actions .accept { color: var(--vscode-testing-iconPassed, #73c991); }
+  .aggregate-hunk-actions .accept { color: var(--vscode-testing-iconPassed, #73c991); background: color-mix(in srgb, var(--vscode-testing-iconPassed, #73c991) 18%, transparent); border-color: transparent; }
   .aggregate-file-actions .reject,
-  .aggregate-hunk-actions .reject { color: var(--vscode-testing-iconFailed, #f14c4c); }
+  .aggregate-hunk-actions .reject { color: var(--vscode-testing-iconFailed, #f14c4c); background: color-mix(in srgb, var(--vscode-testing-iconFailed, #f14c4c) 18%, transparent); border-color: transparent; }
   .aggregate-file-body { padding: 0; }
   .aggregate-file-loading,
   .aggregate-file-error {
@@ -846,9 +898,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .aggregate-hunk-bar {
     display: inline-flex;
     gap: 4px;
-    padding: 3px 4px;
+    padding: 3px;
     border: 1px solid var(--vscode-editorWidget-border, rgba(128,128,128,.35));
-    border-radius: 4px;
+    border-radius: 9px;
     background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
     box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
     opacity: 0;
@@ -857,13 +909,15 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   .aggregate-hunk-bar.visible { opacity: 1; pointer-events: auto; }
   .aggregate-hunk-bar button {
-    padding: 2px 8px;
+    padding: 2px 10px;
     border: 0;
-    border-radius: 3px;
-    color: var(--vscode-button-foreground);
+    border-radius: 6px;
+    color: #fff;
     cursor: pointer;
     font: 11px var(--vscode-font-family);
+    transition: filter 0.12s;
   }
+  .aggregate-hunk-bar button:hover { filter: brightness(1.12); }
   .aggregate-hunk-bar .accept { background: var(--vscode-testing-iconPassed, #73c991); }
   .aggregate-hunk-bar .reject { background: var(--vscode-testing-iconFailed, #f14c4c); }
   .aggregate-file-section.is-collapsed .aggregate-editor { display: none; }
@@ -976,9 +1030,10 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
   }
   .btn {
-    padding: 6px 14px;
-    border-radius: 4px;
-    border: none;
+    padding: 0 14px;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid transparent;
     cursor: pointer;
     font-family: inherit;
     font-size: 12px;
@@ -995,14 +1050,14 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     border: 1px solid var(--vscode-button-secondaryBorder, rgba(128,128,128,0.35));
   }
   .btn:hover { filter: brightness(1.1); }
-  .btn:active { filter: brightness(0.95); }
+  .btn:active { filter: brightness(0.95); transform: translateY(1px); }
+  .btn:focus-visible { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: 1px; }
 </style>
 </head>
 <body class="page-terminal">
-  <div id="header">
-    <span id="header-title">
-      <span class="title-terminal">Terminal</span>
-    </span>
+  <div id="tab-strip">
+    <div id="tabs" class="tabs"></div>
+    <button id="tab-add" class="tab-add" type="button" title="New terminal or agent" aria-label="New terminal or agent" aria-haspopup="menu" aria-expanded="false">+</button>
     <div id="header-actions">
       <button id="btn-view-diff" class="view-diff-btn" type="button" title="Preview all pending changes" aria-label="Preview all pending changes" hidden>View diff</button>
       <button id="btn-toggle-page" class="header-btn" title="Switch view" aria-label="Switch view">
@@ -1029,10 +1084,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
       <button id="btn-agent-mode" class="agent-mode-btn" type="button" title="Open Agent mode" aria-label="Open Agent mode">Agent mode</button>
     </div>
   </div>
-  <div id="tab-strip">
-    <div id="tabs" class="tabs"></div>
-    <button id="tab-add" class="tab-add" type="button" title="New terminal" aria-label="New terminal">+</button>
-  </div>
+  <div id="agent-menu" class="agent-menu" role="menu" hidden></div>
   <div id="content">
     <div id="pending-overlay" hidden>
       <div class="pending-head">
@@ -1392,8 +1444,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       function setAgentModeState(active) {
         agentModeActive = !!active;
         document.body.classList.toggle('agent-mode-active', agentModeActive);
-        btnAgentMode.textContent = agentModeActive ? 'Tắt Agent mode' : 'Agent mode';
-        const label = agentModeActive ? 'Tắt Agent mode' : 'Bật Agent mode';
+        btnAgentMode.textContent = agentModeActive ? 'Exit Agent mode' : 'Agent mode';
+        const label = agentModeActive ? 'Exit Agent mode' : 'Enter Agent mode';
         btnAgentMode.title = label;
         btnAgentMode.setAttribute('aria-label', label);
         btnViewDiff.hidden = !agentModeActive;
@@ -1460,6 +1512,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         currentSettings = s;
         const theme = resolveTheme(s);
         applyChromeColors(s, theme);
+        document.documentElement.style.setProperty('--term-bg', theme.background);
         const wrap = document.getElementById('term-wrap');
         if (wrap) wrap.style.background = theme.background;
         for (const sess of sessions.values()) {
@@ -1742,11 +1795,119 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       });
       ro.observe(termHost);
 
-      btnAddTab.addEventListener('click', () => {
+      // "+" opens a launcher menu: a plain shell or one of the AI CLIs. Availability is
+      // looked up by the extension each time the menu opens (PATH can change at any time).
+      const agentMenu = document.getElementById('agent-menu');
+      let agentList = [];
+
+      const ICON_TERMINAL = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5l3.5 3.5L3 11.5"/><path d="M8.5 12h4.5"/></svg>';
+      const AGENT_COLORS = { claude: '#d97757', opencode: '#8b8b8b', copilot: '#6e56cf', codex: '#10a37f', pi: '#c9a227' };
+      function agentIconHtml(id, label) {
+        const color = AGENT_COLORS[id] || 'currentColor';
+        return '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="4" fill="' + color + '"/>' +
+          '<text x="8" y="11.2" text-anchor="middle" font-size="9" font-weight="700" fill="#fff" font-family="sans-serif">' +
+          String(label || id).charAt(0).toUpperCase() + '</text></svg>';
+      }
+
+      function startSession(agent) {
         const sess = sessions.get(activeId);
         const cols = sess ? sess.term.cols : 80;
         const rows = sess ? sess.term.rows : 24;
-        vscode.postMessage({ type: 'createSession', cols, rows });
+        vscode.postMessage({ type: 'createSession', cols, rows, agent });
+      }
+
+      function closeAgentMenu(refocus) {
+        if (agentMenu.hidden) return;
+        agentMenu.hidden = true;
+        btnAddTab.setAttribute('aria-expanded', 'false');
+        if (refocus) { try { btnAddTab.focus(); } catch (_) {} }
+      }
+
+      function addMenuItem(parent, iconHtml, name, hint, disabled, onPick) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'agent-item';
+        item.setAttribute('role', 'menuitem');
+        item.disabled = !!disabled;
+        const icon = document.createElement('span');
+        icon.className = 'agent-icon';
+        icon.innerHTML = iconHtml;
+        const label = document.createElement('span');
+        label.className = 'agent-name';
+        label.textContent = name;
+        item.appendChild(icon);
+        item.appendChild(label);
+        if (hint) {
+          const hintEl = document.createElement('span');
+          hintEl.className = 'agent-hint';
+          hintEl.textContent = hint;
+          item.appendChild(hintEl);
+        }
+        if (!disabled) {
+          item.addEventListener('click', () => { closeAgentMenu(false); onPick(); });
+        }
+        parent.appendChild(item);
+      }
+
+      function renderAgentMenu() {
+        agentMenu.textContent = '';
+        addMenuItem(agentMenu, ICON_TERMINAL, 'Terminal', '', false, () => startSession());
+        if (agentList.length === 0) return;
+        const sep = document.createElement('div');
+        sep.className = 'agent-menu-sep';
+        agentMenu.appendChild(sep);
+        const heading = document.createElement('div');
+        heading.className = 'agent-menu-label';
+        heading.textContent = 'Start an agent';
+        agentMenu.appendChild(heading);
+        let shortcut = 0;
+        agentList.forEach((agent) => {
+          const hint = agent.installed ? String(++shortcut) : 'not installed';
+          addMenuItem(agentMenu, agentIconHtml(agent.id, agent.label), agent.label, hint, !agent.installed, () => startSession(agent.id));
+        });
+      }
+
+      function positionAgentMenu() {
+        const rect = btnAddTab.getBoundingClientRect();
+        const width = agentMenu.offsetWidth;
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+        agentMenu.style.left = left + 'px';
+        agentMenu.style.top = (rect.bottom + 4) + 'px';
+      }
+
+      btnAddTab.addEventListener('click', () => {
+        if (!agentMenu.hidden) { closeAgentMenu(false); return; }
+        renderAgentMenu();
+        agentMenu.hidden = false;
+        btnAddTab.setAttribute('aria-expanded', 'true');
+        positionAgentMenu();
+        const first = agentMenu.querySelector('.agent-item:not(:disabled)');
+        if (first) first.focus();
+        vscode.postMessage({ type: 'requestAgents' });
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (agentMenu.hidden) return;
+        if (agentMenu.contains(e.target) || btnAddTab.contains(e.target)) return;
+        closeAgentMenu(false);
+      });
+      window.addEventListener('blur', () => closeAgentMenu(false));
+      agentMenu.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); closeAgentMenu(true); return; }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          const items = Array.from(agentMenu.querySelectorAll('.agent-item:not(:disabled)'));
+          if (items.length === 0) return;
+          const at = items.indexOf(document.activeElement);
+          const next = e.key === 'ArrowDown' ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+          items[next].focus();
+          return;
+        }
+        // Number keys start the matching installed agent, as the hints in the menu show.
+        if (/^[1-9]$/.test(e.key)) {
+          const installed = agentList.filter((agent) => agent.installed);
+          const agent = installed[Number(e.key) - 1];
+          if (agent) { e.preventDefault(); closeAgentMenu(false); startSession(agent.id); }
+        }
       });
 
       const themeObserver = new MutationObserver(() => {
@@ -1839,6 +2000,18 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         if (!msg) return;
         if (msg.type === 'sessionCreated') {
           onSessionCreated(msg.id, msg.title);
+        } else if (msg.type === 'agentAvailability') {
+          agentList = msg.agents || [];
+          // The menu may already be open (it opens first, availability arrives async).
+          if (!agentMenu.hidden) {
+            const hadFocus = agentMenu.contains(document.activeElement);
+            renderAgentMenu();
+            positionAgentMenu();
+            if (hadFocus) {
+              const first = agentMenu.querySelector('.agent-item:not(:disabled)');
+              if (first) first.focus();
+            }
+          }
         } else if (msg.type === 'pendingFiles') {
           onPendingFiles(msg.html || '');
         } else if (msg.type === 'restoreSessions') {

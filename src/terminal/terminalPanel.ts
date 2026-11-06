@@ -6,6 +6,7 @@ import { findInstallableForPrimary, installFont } from './fontInstaller';
 import { DiffManager } from '../diff/diffManager';
 import { sortLikePendingTree } from '../diff/treeOrder';
 import { buildTerminalHtml } from './terminalHtml';
+import { detectAgents, findAgent } from './agentLauncher';
 import { coalesce } from '../util/coalesce';
 import { openBeside } from '../preview/openBeside';
 import { getPreviewKind, isBinaryImage } from '../preview/previewKind';
@@ -595,8 +596,17 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             void this.webview?.postMessage({ type: 'showIntroduce' });
           }
           return;
-        case 'createSession':
-          this.sessions.create(msg.cols, msg.rows);
+        case 'createSession': {
+          const id = this.sessions.create(msg.cols, msg.rows);
+          const agent = findAgent(msg.agent);
+          // The PTY buffers input until the shell is ready, so the command runs once it starts.
+          if (agent) { this.sessions.write(id, agent.command + '\r'); }
+          return;
+        }
+        case 'requestAgents':
+          void detectAgents().then((agents) => {
+            void this.webview?.postMessage({ type: 'agentAvailability', agents });
+          });
           return;
         case 'closeSession':
           this.sessions.close(msg.id);
