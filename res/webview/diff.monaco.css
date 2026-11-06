@@ -61,10 +61,10 @@ body {
   border: none;
   background: transparent;
   color: inherit;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
-  border-radius: 4px;
+  border-radius: 7px;
   cursor: pointer;
   line-height: 1;
   display: inline-flex;
@@ -88,8 +88,9 @@ body {
   background: transparent;
   color: inherit;
   padding: 0 12px;
-  height: 22px;
-  border-radius: 4px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 7px;
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -99,22 +100,31 @@ body {
   align-items: center;
   justify-content: center;
   white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
 }
 
 .toolbar-btn.accept {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 16%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 50%, transparent);
+  color: inherit;
 }
 .toolbar-btn.accept:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+  background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 30%, transparent);
+  border-color: var(--vscode-button-background, #0e639c);
 }
 
 .toolbar-btn.reject {
   background: transparent;
+  border-color: var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
   color: inherit;
 }
 .toolbar-btn.reject:hover:not(:disabled) {
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18));
+}
+
+.nav-btn:focus-visible, .toolbar-btn:focus-visible, .hunk-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
 }
 
 .toolbar-btn:disabled {
@@ -187,7 +197,7 @@ body {
   border: 1px solid transparent;
   padding: 2px 10px;
   font-size: 11px;
-  border-radius: 3px;
+  border-radius: 6px;
   cursor: pointer;
   color: inherit;
   background: transparent;

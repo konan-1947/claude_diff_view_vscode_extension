@@ -56,10 +56,10 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   private buildHtml(): string {
     const info = this.navInfo;
     const bgNoDiffUri = this.view!.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_ngu.png'),
+      vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_ngu_wide.png'),
     ).toString();
     const bgHasDiffUri = this.view!.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_diff.png'),
+      vscode.Uri.joinPath(this.extensionUri, 'media', 'meo_diff_wide.png'),
     ).toString();
     const bodyClass = info ? 'has-diff' : 'no-diff';
 
@@ -103,18 +103,22 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     z-index: 0;
   }
 
+  /* The *_wide.png images are cropped to the drawing, so it fills the full width. */
   body.no-diff::before {
     inset: 8px 0 32px;
     opacity: 1;
     background-image: url('${bgNoDiffUri}');
   }
 
-  body.no-diff {
+  body.no-diff,
+  body.has-diff {
     justify-content: flex-end;
   }
 
+  /* The cat sits above the controls (reserved bottom space) so the button never covers it. */
   body.has-diff::before {
-    opacity: 0.3;
+    inset: 6px 0 78px;
+    opacity: 0.65;
     background-image: url('${bgHasDiffUri}');
   }
 
@@ -151,13 +155,14 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
     background: transparent;
     border: 1px solid var(--vscode-button-secondaryBorder, rgba(128,128,128,0.35));
     color: var(--vscode-foreground);
-    border-radius: 6px;
-    padding: 8px 12px;
+    border-radius: 7px;
+    padding: 0 12px;
+    height: 30px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
     font-family: inherit;
     text-align: center;
-    transition: background 0.1s;
+    transition: background 0.12s, border-color 0.12s;
   }
   .btn:hover {
     background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.1));
@@ -176,13 +181,15 @@ export class NavBarPanel implements vscode.WebviewViewProvider {
   .line-all-changes .btn { flex: 1 1 100%; }
 
   .btn-accept-all {
-    color: var(--vscode-button-foreground);
-    background: var(--vscode-button-background);
-    border-color: transparent;
+    color: var(--vscode-foreground);
+    background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 8%, transparent);
+    border-color: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
   }
   .btn-accept-all:hover {
-    background: var(--vscode-button-hoverBackground, rgba(76,175,80,0.2));
+    background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 18%, transparent);
+    border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 55%, transparent);
   }
+  .btn:focus-visible { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: 1px; }
 
   .btn-nav {
     width: 100%;
