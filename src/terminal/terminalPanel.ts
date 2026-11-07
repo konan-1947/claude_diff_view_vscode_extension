@@ -543,6 +543,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.webview = webview;
     const xtermDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm');
     const iconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons');
+    const appIconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'icons');
     const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
     const monacoDir = vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'monaco-editor', 'min');
     const webviewDir = vscode.Uri.joinPath(this.context.extensionUri, 'res', 'webview');
@@ -554,7 +555,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
     webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir, iconsDir, introDir, monacoDir, webviewDir, ...previewLibDirs, ...workspaceDirs],
+      localResourceRoots: [xtermDir, iconsDir, appIconsDir, introDir, monacoDir, webviewDir, ...previewLibDirs, ...workspaceDirs],
     };
 
     this.webviewMessageDisposable?.dispose();

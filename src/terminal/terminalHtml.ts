@@ -48,8 +48,20 @@ export interface BuildTerminalHtmlArgs {
 /** Icon "i" cho nút mở mô tả cạnh tiêu đề setting — cùng hình với nút Introduce. */
 const INFO_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
 
+// Custom AI CLI Diff View icon set: 24 grid, 20 live area, round caps/joins.
+// 16px with stroke-width 2.7 renders a ~1.8px stroke at this size.
+const TAB_ICON_ATTRS = 'viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+const TAB_ICON_LIST = `<svg ${TAB_ICON_ATTRS}><path d="M4 6.5h16M4 12h16M4 17.5h9"/></svg>`;
+const TAB_ICON_INFO = `<svg ${TAB_ICON_ATTRS}><circle cx="12" cy="12" r="8.75"/><path d="M12 11v5.5"/><path d="M12 7.5h.01"/></svg>`;
+const TAB_ICON_SETTINGS = `<svg ${TAB_ICON_ATTRS}><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2.5"/><circle cx="15" cy="16" r="2.5"/></svg>`;
+const TAB_ICON_BACK = `<svg class="btn-icon icon-back" ${TAB_ICON_ATTRS}><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M7 9l3 3-3 3"/><rect x="12.5" y="12.5" width="4" height="3.5" rx="1" fill="currentColor" stroke="none"/></svg>`;
+
 export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const { webview, extensionUri } = args;
+
+  const iconsBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'icons')).toString();
+  const agentModeIcon = `<img class="btn-icon icon-agent" src="${iconsBase}/agent-mode.svg" alt="" aria-hidden="true">`;
+  const viewDiffIcon = `<img class="btn-icon icon-diff" src="${iconsBase}/view-diff.png" alt="" aria-hidden="true">`;
 
   const xtermBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'xterm'));
   const xtermJs = `${xtermBase}/xterm.js`;
@@ -159,6 +171,20 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     border: 1px solid var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.4)));
   }
   .view-diff-btn:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); }
+  .agent-mode-btn,
+  .view-diff-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .agent-mode-btn .btn-icon,
+  .view-diff-btn .btn-icon { flex: 0 0 auto; height: 16px; width: auto; display: block; }
+  .view-diff-btn .icon-back { width: 16px; }
+  .view-diff-btn:not(.preview-open) .icon-back,
+  .view-diff-btn.preview-open .icon-diff { display: none; }
+  /* Narrow sidebar: labels no longer fit, so fall back to icon-only buttons. */
+  @media (max-width: 280px) {
+    .agent-mode-btn,
+    .view-diff-btn { width: 26px; min-width: 26px; padding: 0; }
+    .agent-mode-btn .btn-label,
+    .view-diff-btn .btn-label { display: none; }
+  }
   .agent-mode-btn:active, .view-diff-btn:active { transform: translateY(1px); }
   .agent-mode-btn:focus-visible, .view-diff-btn:focus-visible, .header-btn:focus-visible, .tab-add:focus-visible {
     outline: 1px solid var(--vscode-focusBorder, #007fd4);
@@ -376,13 +402,114 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     inset: 0;
     background: var(--vscode-sideBar-background, #1e1e1e);
     color: var(--vscode-foreground);
-    padding: 12px 14px 14px;
+    padding: 0 12px 14px;
     overflow: auto;
     font-family: var(--vscode-font-family);
     font-size: 12px;
     z-index: 10;
   }
   #settings-overlay[hidden] { display: none; }
+  .settings-head {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    margin: 0 -12px 12px !important;
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    background: var(--vscode-sideBar-background, #1e1e1e);
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.3));
+  }
+  .settings-head h2 { margin-right: auto !important; }
+  .settings-head-actions { display: flex; align-items: center; gap: 6px; }
+  .settings-head-actions .btn { height: 24px; padding: 0 12px; }
+  /* Cards flow into columns when there is room (Terminal + Behavior side by side) and stack when narrow. */
+  .settings-cards {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    align-items: stretch;
+  }
+  /* Wide panel: 2/3 + 1/3 rows keep the page balanced; narrow panel stacks everything. */
+  @media (min-width: 640px) {
+    .settings-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .settings-card { grid-column: span 3; }
+    .settings-card.span-2 { grid-column: span 2; }
+    .settings-card.span-1 { grid-column: span 1; }
+  }
+  .track-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 12px; }
+  @media (min-width: 900px) { .track-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .track-grid .file-ext-list { min-height: 72px; max-height: 120px; }
+  /* Aero / Frutiger glass: soft aqua tint, gloss highlight on top, inner light edge. */
+  .settings-card {
+    --card-accent: #3a9ad9;
+    container-type: inline-size;
+    padding: 0 10px 2px;
+    border: 1px solid color-mix(in srgb, var(--card-accent) 55%, transparent);
+    border-radius: 9px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.14) 0, rgba(255,255,255,0.03) 34px, transparent 35px),
+      color-mix(in srgb, var(--card-accent) 10%, transparent);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), inset 0 0 0 1px rgba(255,255,255,0.05), 0 2px 6px rgba(0,0,0,0.25);
+    min-width: 0;
+  }
+  .settings-card.danger { --card-accent: #e5534b; }
+  .settings-card .field { margin-bottom: 6px; gap: 6px; }
+  .settings-card .field label { flex-basis: 84px; }
+  /* Labels only wrap when the card is genuinely too narrow. */
+  .settings-card .field:has(input[type="checkbox"]) > label,
+  .settings-card .field:has(#f-max-auto-open, #f-max-file-lines) > label { flex: 0 1 auto; }
+  .settings-card .field:has(input[type="checkbox"]) { justify-content: flex-start; gap: 10px; }
+  .settings-card .label-row label { flex: none; white-space: nowrap; }
+  .settings-card .field.file-ext-field { align-self: stretch; margin-bottom: 8px; }
+  .track-grid .file-ext-controls { flex: 1 1 auto; }
+  .track-grid .file-ext-list { flex: 1 1 auto; }
+  .settings-card .setting-help { margin: -2px 0 8px; font-size: 10.5px; line-height: 1.4; }
+  .settings-card .field input[type="text"],
+  .settings-card .field input[type="number"],
+  .settings-card .field select { background: var(--vscode-input-background, #2a2a2a); border-color: color-mix(in srgb, var(--card-accent) 35%, transparent); border-radius: 5px; padding: 3px 6px; }
+  .settings-card-title {
+    margin: 0 -10px 8px;
+    padding: 5px 10px;
+    border-radius: 8px 8px 0 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--card-accent) 40%, transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--card-accent) 38%, transparent), color-mix(in srgb, var(--card-accent) 14%, transparent));
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.3);
+  }
+  @container (max-width: 250px) {
+    .settings-card .field:not(.field-check):not(:has(input[type="checkbox"])) { flex-direction: column; align-items: stretch; gap: 3px; }
+    .settings-card .field:not(.field-check):not(:has(input[type="checkbox"])) > label { flex: none; }
+  }
+  .settings-card .field.file-ext-field:last-child,
+  .settings-card .setting-help:last-child { margin-bottom: 8px; }
+  .settings-head-actions .btn-primary {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--vscode-button-background, #0e639c) 70%, #fff) 0, var(--vscode-button-background, #0e639c) 50%, color-mix(in srgb, var(--vscode-button-background, #0e639c) 85%, #000) 100%);
+    border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 70%, #000);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+  }
+  .settings-head-actions .btn-secondary {
+    background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.03));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
+  }
+  /* Short settings share a row; each cell wraps onto its own line when the panel is narrow. */
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 0 10px;
+  }
+  .field-grid .field { flex-direction: column; align-items: stretch; gap: 4px; }
+  .field-grid .field > label { flex: none; }
+  .field-grid .field input[type="number"] { flex: none; width: 100%; }
+  .field-grid .field.field-check { flex-direction: row; align-items: center; justify-content: space-between; align-self: end; min-height: 26px; }
+  .field-grid .field.field-check > label { flex: 1 1 auto; }
+  .settings-card .field.file-ext-field:last-child,
+  .settings-card .setting-help:last-child { margin-bottom: 8px; }
   /* Pending Files is drawn over the terminal; the terminal keeps running underneath. */
   #pending-overlay {
     position: absolute;
@@ -419,7 +546,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
   }
   .settings-head h2 {
     margin: 0;
@@ -616,16 +742,6 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9));
     font-size: 11px;
     margin-bottom: 10px;
-  }
-  .settings-section-title {
-    margin: 4px 0 10px;
-    padding-top: 10px;
-    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.22));
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    opacity: 0.7;
   }
 
   .install-controls { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; }
@@ -1069,29 +1185,25 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     <div id="tabs" class="tabs"></div>
     <button id="tab-add" class="tab-add" type="button" title="New terminal or agent" aria-label="New terminal or agent" aria-haspopup="menu" aria-expanded="false">+</button>
     <div id="header-actions">
-      <button id="btn-view-diff" class="view-diff-btn" type="button" title="Preview all pending changes" aria-label="Preview all pending changes" hidden>View diff</button>
+      <button id="btn-view-diff" class="view-diff-btn" type="button" title="Preview all pending changes" aria-label="Preview all pending changes" hidden>
+        ${viewDiffIcon}
+        ${TAB_ICON_BACK}
+        <span class="btn-label">View diff</span>
+      </button>
       <button id="btn-toggle-page" class="header-btn" title="Switch view" aria-label="Switch view">
-        <svg class="toggle-to-files" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M3 6h18"/>
-          <path d="M3 12h18"/>
-          <path d="M3 18h12"/>
-        </svg>
+        ${TAB_ICON_LIST}
       </button>
       <button id="btn-introduce" class="header-btn" title="Introduce" aria-label="Introduce">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="12" y1="16" x2="12" y2="12"/>
-          <line x1="12" y1="8" x2="12.01" y2="8"/>
-        </svg>
+        ${TAB_ICON_INFO}
       </button>
       <button id="btn-settings" class="header-btn" title="Settings" aria-label="Settings">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
+        ${TAB_ICON_SETTINGS}
       </button>
       <span class="header-separator" aria-hidden="true"></span>
-      <button id="btn-agent-mode" class="agent-mode-btn" type="button" title="Open Agent mode" aria-label="Open Agent mode">Agent mode</button>
+      <button id="btn-agent-mode" class="agent-mode-btn" type="button" title="Open Agent mode" aria-label="Open Agent mode">
+        ${agentModeIcon}
+        <span class="btn-label">Agent mode</span>
+      </button>
     </div>
   </div>
   <div id="agent-menu" class="agent-menu" role="menu" hidden></div>
@@ -1114,6 +1226,10 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
       <div id="settings-overlay" hidden>
         <div class="settings-head">
           <h2>Settings</h2>
+          <div class="settings-head-actions">
+            <button id="btn-reset" class="btn btn-secondary" type="button">Reset</button>
+            <button id="btn-apply" class="btn btn-primary" type="button">Apply</button>
+          </div>
           <button id="btn-close" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <line x1="18" y1="6" x2="6" y2="18"/>
@@ -1122,6 +1238,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
           </button>
         </div>
 
+        <div class="settings-cards">
+        <section class="settings-card span-2">
+        <h3 class="settings-card-title">Terminal appearance</h3>
         <div class="field">
           <label for="f-font-family">Font family</label>
           <select id="f-font-family">
@@ -1139,9 +1258,23 @@ ${FONT_OPTIONS.map((f) => {
             <span class="install-status" id="install-status"></span>
           </div>
         </div>
+        <div class="field-grid">
         <div class="field">
           <label for="f-font-size">Font size</label>
           <input id="f-font-size" type="number" min="6" max="32" step="1">
+        </div>
+        <div class="field">
+          <label for="f-cursor-style">Cursor style</label>
+          <select id="f-cursor-style">
+            <option value="block">Block</option>
+            <option value="underline">Underline</option>
+            <option value="bar">Bar</option>
+          </select>
+        </div>
+        <div class="field field-check">
+          <label for="f-cursor-blink">Cursor blink</label>
+          <input id="f-cursor-blink" type="checkbox">
+        </div>
         </div>
         <div class="field">
           <label for="f-preset">Theme</label>
@@ -1172,18 +1305,10 @@ ${FONT_OPTIONS.map((f) => {
             <span id="f-cursor-hex"></span>
           </div>
         </div>
-        <div class="field">
-          <label for="f-cursor-style">Cursor style</label>
-          <select id="f-cursor-style">
-            <option value="block">Block</option>
-            <option value="underline">Underline</option>
-            <option value="bar">Bar</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="f-cursor-blink">Cursor blink</label>
-          <input id="f-cursor-blink" type="checkbox">
-        </div>
+        </section>
+
+        <section class="settings-card span-1">
+        <h3 class="settings-card-title">Behavior</h3>
         <div class="field">
           <label for="f-sound-notifications">Sound notifications</label>
           <input id="f-sound-notifications" type="checkbox">
@@ -1194,6 +1319,11 @@ ${FONT_OPTIONS.map((f) => {
           <input id="f-prevent-alt-menu-focus" type="checkbox">
         </div>
         <div class="setting-help">Stops Alt (e.g. Alt+Tab back to VS Code) from moving focus to the menu bar. Sets VS Code's <code>window.customMenuBarAltFocus</code> to off.</div>
+        </section>
+
+        <section class="settings-card">
+        <h3 class="settings-card-title">File tracking</h3>
+        <div class="track-grid">
         <div class="field file-ext-field">
           <div class="label-row">
             <label>Included files</label>
@@ -1241,11 +1371,6 @@ ${FONT_OPTIONS.map((f) => {
             </div>
           </div>
         </div>
-        <div class="field">
-          <label for="f-respect-gitignore">Respect .gitignore</label>
-          <input id="f-respect-gitignore" type="checkbox">
-        </div>
-        <div class="setting-help">Files ignored by the repo's <code>.gitignore</code> (any folder level, nested repos included) or <code>.git/info/exclude</code> are never tracked — no diff. Turn off to review AI edits to ignored files such as <code>.env.local</code>.</div>
         <div class="field file-ext-field">
           <div class="label-row">
             <label>Excluded paths</label>
@@ -1292,29 +1417,43 @@ ${FONT_OPTIONS.map((f) => {
           </div>
         </div>
 
-        <h3 class="settings-section-title">Advanced</h3>
+        </div>
+        <div class="field">
+          <label for="f-respect-gitignore">Respect .gitignore</label>
+          <input id="f-respect-gitignore" type="checkbox">
+        </div>
+        <div class="setting-help">Files ignored by the repo's <code>.gitignore</code> (any folder level, nested repos included) or <code>.git/info/exclude</code> are never tracked — no diff. Turn off to review AI edits to ignored files such as <code>.env.local</code>.</div>
+        </section>
+
+        <section class="settings-card danger span-1">
+        <h3 class="settings-card-title">Advanced · Burst detection</h3>
         <div class="field">
           <label for="f-burst-enabled">Burst-write detection</label>
           <input id="f-burst-enabled" type="checkbox">
         </div>
+        <div class="field-grid">
         <div class="field">
-          <label for="f-burst-window">Burst window (ms)</label>
+          <label for="f-burst-window">Window (ms)</label>
           <input id="f-burst-window" type="number" min="50" max="5000" step="10">
         </div>
         <div class="field">
-          <label for="f-burst-threshold">Burst threshold (files)</label>
+          <label for="f-burst-threshold">Threshold (files)</label>
           <input id="f-burst-threshold" type="number" min="2" max="500" step="1">
         </div>
         <div class="field">
-          <label for="f-burst-hold">Burst hold (ms)</label>
+          <label for="f-burst-hold">Hold (ms)</label>
           <input id="f-burst-hold" type="number" min="500" max="10000" step="100">
+        </div>
         </div>
         <div class="setting-help">
           When this many files change within the window, files beyond the threshold are held
           for "Burst hold" ms — opened as a diff only if no git branch change is confirmed in
           time, so a real git checkout never flashes a diff tab.
         </div>
+        </section>
 
+        <section class="settings-card danger span-2">
+        <h3 class="settings-card-title">Advanced · Limits</h3>
         <div class="field">
           <label for="f-max-auto-open">Max auto-opened diffs</label>
           <input id="f-max-auto-open" type="number" min="0" max="1000" step="10">
@@ -1343,11 +1482,9 @@ ${FONT_OPTIONS.map((f) => {
           hand-written files — the TypeScript compiler's <code>checker.ts</code> is 54,433
           lines — and accept that opening such a diff may stall the editor.
         </div>
-
-        <div class="actions">
-          <button id="btn-reset" class="btn btn-secondary" type="button">Reset</button>
-          <button id="btn-apply" class="btn btn-primary" type="button">Apply</button>
+        </section>
         </div>
+
       </div>
     </div>
     <div id="diff-preview-overlay" hidden>
@@ -1449,10 +1586,16 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const filePreviewOverlay = document.getElementById('file-preview-overlay');
       let agentModeActive = false;
 
+      function setButtonLabel(button, text) {
+        const label = button.querySelector('.btn-label');
+        if (label) label.textContent = text;
+        else button.textContent = text;
+      }
+
       function setAgentModeState(active) {
         agentModeActive = !!active;
         document.body.classList.toggle('agent-mode-active', agentModeActive);
-        btnAgentMode.textContent = agentModeActive ? 'Exit Agent mode' : 'Agent mode';
+        setButtonLabel(btnAgentMode, agentModeActive ? 'Exit Agent mode' : 'Agent mode');
         const label = agentModeActive ? 'Exit Agent mode' : 'Enter Agent mode';
         btnAgentMode.title = label;
         btnAgentMode.setAttribute('aria-label', label);
@@ -2093,7 +2236,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         if (!filePreviewOverlay.hidden) closeFilePreview();
         diffPreviewOverlay.hidden = false;
         window.aiCliDiffPreview?.open(targetPath);
-        btnViewDiff.textContent = 'Back to terminal';
+        btnViewDiff.classList.add('preview-open');
+        setButtonLabel(btnViewDiff, 'Back to terminal');
         btnViewDiff.title = 'Back to terminal';
         btnViewDiff.setAttribute('aria-label', 'Back to terminal');
       }
@@ -2101,7 +2245,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       function closeDiffPreview() {
         diffPreviewOverlay.hidden = true;
         window.aiCliDiffPreview?.close();
-        btnViewDiff.textContent = 'View diff';
+        btnViewDiff.classList.remove('preview-open');
+        setButtonLabel(btnViewDiff, 'View diff');
         btnViewDiff.title = 'Preview all pending changes';
         btnViewDiff.setAttribute('aria-label', 'Preview all pending changes');
       }
@@ -2110,14 +2255,16 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         if (!diffPreviewOverlay.hidden) closeDiffPreview();
         filePreviewOverlay.hidden = false;
         window.aiCliFilePreview?.open(filePath);
-        btnViewDiff.textContent = 'Back to terminal';
+        btnViewDiff.classList.add('preview-open');
+        setButtonLabel(btnViewDiff, 'Back to terminal');
         btnViewDiff.title = 'Back to terminal';
       }
 
       function closeFilePreview() {
         filePreviewOverlay.hidden = true;
         window.aiCliFilePreview?.close();
-        btnViewDiff.textContent = 'View diff';
+        btnViewDiff.classList.remove('preview-open');
+        setButtonLabel(btnViewDiff, 'View diff');
         btnViewDiff.title = 'Preview all pending changes';
       }
 

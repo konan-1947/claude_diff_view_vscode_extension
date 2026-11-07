@@ -10,6 +10,15 @@ export interface AgentChangesActions {
   toggleAgentMode: () => void;
 }
 
+// Custom AI CLI Diff View icon set: 24 grid, 20 live area, round caps/joins.
+// 18px with stroke-width 2.4 renders a ~1.8px stroke at this size.
+const ICON_ATTRS = 'viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+// Terminal screen with a prompt chevron and a solid block cursor.
+const ICON_TERMINAL = `<svg class="btn-icon" ${ICON_ATTRS}><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M7 9l3 3-3 3"/><rect x="12.5" y="12.5" width="4" height="3.5" rx="1" fill="currentColor" stroke="none"/></svg>`;
+const ICON_INFO = `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="8.75"/><path d="M12 11v5.5"/><path d="M12 7.5h.01"/></svg>`;
+// Two sliders instead of a generic gear.
+const ICON_SETTINGS = `<svg ${ICON_ATTRS}><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2.5"/><circle cx="15" cy="16" r="2.5"/></svg>`;
+
 /** Agent mode's pending-files webview, with diff stats aligned independently of Git decorations. */
 export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = 'ai-cli-diff-view.agentChanges';
@@ -44,7 +53,7 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media', 'file-icons')],
+      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media', 'file-icons'), vscode.Uri.joinPath(this.extensionUri, 'media', 'icons')],
     };
     this.viewMessageDisposable?.dispose();
     this.viewMessageDisposable = webviewView.webview.onDidReceiveMessage((message: unknown) => {
@@ -112,11 +121,19 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
       vscode.Uri.joinPath(this.extensionUri, 'media', 'file-icons'),
     ).toString() + '/';
     const rows = renderPendingTree(this.metadata, this.activeFilePath, iconBase);
+    const toggleLabel = this.previewOpen ? 'Back to terminal' : 'View diff';
+    const appIconBase = this.view.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'media', 'icons'),
+    ).toString();
+    const toggleIcon = this.previewOpen
+      ? ICON_TERMINAL
+      : `<img class="btn-icon" src="${appIconBase}/view-diff.png" alt="" aria-hidden="true">`;
+    const agentIcon = `<img class="btn-icon" src="${appIconBase}/agent-mode.svg" alt="" aria-hidden="true">`;
     const header = this.showAgentActions ? `<header class="panel-header">
-  <button class="view-diff" data-action="toggleDiff" title="${this.previewOpen ? 'Back to terminal' : 'View diff'}">${this.previewOpen ? 'Back to terminal' : 'View diff'}</button>
-  <button data-action="showIntroduce" title="Introduce" aria-label="Introduce"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button>
-  <button data-action="showSettings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-  <button class="agent-mode" data-action="toggleAgentMode" title="Turn off Agent mode">Exit Agent mode</button>
+  <button class="view-diff" data-action="toggleDiff" title="${toggleLabel}" aria-label="${toggleLabel}">${toggleIcon}<span class="btn-label">${toggleLabel}</span></button>
+  <button data-action="showIntroduce" title="Introduce" aria-label="Introduce">${ICON_INFO}</button>
+  <button data-action="showSettings" title="Settings" aria-label="Settings">${ICON_SETTINGS}</button>
+  <button class="agent-mode" data-action="toggleAgentMode" title="Turn off Agent mode" aria-label="Turn off Agent mode">${agentIcon}<span class="btn-label">Exit Agent mode</span></button>
 </header>` : '';
     this.view.webview.html = `<!DOCTYPE html>
 <html lang="en">
@@ -136,6 +153,14 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
   .panel-header .view-diff { padding: 0 12px; color: var(--vscode-foreground); border-color: var(--vscode-panel-border, rgba(128,128,128,.4)); opacity: 1; }
   .panel-header .agent-mode { margin-left: auto; padding: 0 12px; color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 16%, transparent); border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 50%, transparent); opacity: 1; }
   .panel-header .agent-mode:hover { background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 30%, transparent); border-color: var(--vscode-button-background, #0e639c); }
+  .panel-header .view-diff, .panel-header .agent-mode { gap: 6px; }
+  .panel-header .btn-icon { display: block; flex: 0 0 auto; height: 16px; width: auto; }
+  /* Narrow sidebar: labels no longer fit, so fall back to icon-only buttons. */
+  @media (max-width: 380px) {
+    .panel-header .view-diff,
+    .panel-header .agent-mode { width: 26px; min-width: 26px; padding: 0; }
+    .panel-header .btn-label { display: none; }
+  }
 ${PENDING_TREE_CSS}
 </style>
 </head>
