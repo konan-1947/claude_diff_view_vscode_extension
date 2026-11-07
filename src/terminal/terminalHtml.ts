@@ -71,7 +71,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
   const previewDir = vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'preview');
   const previewCss = webview.asWebviewUri(vscode.Uri.joinPath(previewDir, 'preview.css'));
-  const previewScripts = ['libs', 'code', 'mermaid', 'markdown', 'image', 'csv', 'index']
+  const previewScripts = ['libs', 'code', 'zoom', 'mermaid', 'markdown', 'image', 'csv', 'index']
     .map((name) => webview.asWebviewUri(vscode.Uri.joinPath(previewDir, `${name}.js`)));
   const previewLibs = {
     marked: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'marked', 'lib', 'marked.umd.js')).toString(),
@@ -778,6 +778,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   #file-preview-overlay[hidden] { display: none; }
   .file-preview-card {
+    position: relative;
     width: calc(100% - 16px);
     max-width: none;
     height: calc(100% - 16px);

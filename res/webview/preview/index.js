@@ -32,6 +32,7 @@
 
   function setMode(next) {
     mode = next;
+    closeZoomViewer();
     modeButtons.forEach((button) => {
       const on = button.dataset.mode === next;
       button.classList.toggle('active', on);
@@ -42,7 +43,12 @@
     saveHint.hidden = next !== 'source';
   }
 
+  function closeZoomViewer() {
+    if (window.aiCliZoomViewer) window.aiCliZoomViewer.close();
+  }
+
   function disposeRenderer() {
+    closeZoomViewer();
     if (activeRenderer) activeRenderer.dispose();
     activeRenderer = undefined;
     renderHost.textContent = '';
@@ -144,10 +150,19 @@
     showPreview(data);
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
-  window.aiCliFilePreview = { open, close };
+  window.aiCliFilePreview = {
+    open,
+    close() {
+      closeZoomViewer();
+      close();
+    },
+  };
   window.addEventListener('message', (event) => {
     const msg = event.data || {};
-    if (msg.type === 'filePreviewData') setFile(msg);
+    if (msg.type === 'filePreviewData') {
+      closeZoomViewer();
+      setFile(msg);
+    }
     if (msg.type === 'filePreviewError') {
       modeBar.hidden = true;
       besideButton.hidden = true;

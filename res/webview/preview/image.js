@@ -18,7 +18,7 @@
     // <img>, never inline markup: an svg file may carry scripts, which an <img> will not run.
     const img = document.createElement('img');
     img.alt = data.label || '';
-    img.title = 'Click to toggle fit / actual size';
+    img.title = 'Click to zoom';
     img.addEventListener('load', () => {
       const dimensions = img.naturalWidth && img.naturalHeight
         ? img.naturalWidth + ' × ' + img.naturalHeight : '';
@@ -31,7 +31,9 @@
       box.textContent = 'Could not display this image';
       stage.appendChild(box);
     });
-    img.addEventListener('click', () => stage.classList.toggle('actual-size'));
+    img.addEventListener('click', () => {
+      window.aiCliZoomViewer.open({ src: img.currentSrc || img.src, title: data.label || 'Image', anchor: wrap });
+    });
     img.src = data.src;
     stage.appendChild(img);
     wrap.append(info, stage);

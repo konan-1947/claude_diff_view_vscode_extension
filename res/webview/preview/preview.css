@@ -78,7 +78,8 @@
 
 /* Mermaid */
 .mermaid-diagram { display: flex; justify-content: center; margin: 1em 0; overflow: auto; }
-.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-diagram svg { max-width: 100%; height: auto; cursor: zoom-in; }
+.markdown-body img { cursor: zoom-in; }
 .mermaid-diagram.is-loading {
   min-height: 160px;
   border-radius: 6px;
@@ -109,8 +110,6 @@
     repeating-conic-gradient(rgba(128, 128, 128, 0.18) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
 }
 .image-stage img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
-.image-stage.actual-size { display: block; }
-.image-stage.actual-size img { max-width: none; max-height: none; cursor: zoom-out; }
 
 /* CSV */
 .csv-preview { font-size: 12px; }
@@ -149,3 +148,28 @@
 }
 #file-preview-beside:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
 #file-preview-beside[hidden] { display: none; }
+
+/* Zoom viewer (click a diagram or image) */
+.file-preview-card > .zoom-viewer { position: absolute; z-index: 5; }
+.zoom-viewer {
+  position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column;
+  background: var(--vscode-editor-background, #1e1e1e); color: var(--vscode-foreground);
+  font: 12px var(--vscode-font-family);
+}
+.zoom-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-sideBar-background, rgba(128, 128, 128, 0.1));
+}
+.zoom-title { margin-right: 4px; white-space: nowrap; }
+.zoom-hint { margin-right: auto; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.zoom-percent { min-width: 44px; text-align: center; opacity: 0.85; font-variant-numeric: tabular-nums; }
+.zoom-btn {
+  height: 24px; min-width: 28px; padding: 0 8px; cursor: pointer; font: inherit; color: inherit;
+  background: transparent; border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4)); border-radius: 6px;
+}
+.zoom-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.zoom-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; cursor: grab; touch-action: none; user-select: none; }
+.zoom-stage.dragging { cursor: grabbing; }
+.zoom-content { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.zoom-content img { display: block; max-width: none; max-height: none; }

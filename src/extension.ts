@@ -19,6 +19,8 @@ import { coalesce } from './util/coalesce';
 
 const LOG_PREFIX = '[ai-cli-diff-view]';
 const AGENT_MODE_TABS_STATE_KEY = 'ai-cli-diff-view.agentMode.editorTabsState';
+// Whether Agent mode was on when the window last closed, so it comes back on the next launch.
+const AGENT_MODE_WAS_ACTIVE_KEY = 'ai-cli-diff-view.agentMode.wasActive';
 type ShowTabsSetting = 'multiple' | 'single' | 'none';
 
 interface AgentModeTabsState {
@@ -328,7 +330,12 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       agentModeTerminal = undefined;
       debugLog('agent-mode:central terminal panel disposed');
       if (agentModeActive) {
-        void exitAgentMode();
+        void exitAgentMode(false);
+        // A shutdown kills the extension host before this fires, so the flag survives a window close;
+        // a user closing the Agent tab by hand clears it.
+        setTimeout(() => {
+          if (!agentModeActive) { void context.workspaceState.update(AGENT_MODE_WAS_ACTIVE_KEY, false); }
+        }, 1500);
       }
     }, null, context.subscriptions);
 
@@ -347,6 +354,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     }
     try {
       agentModeActive = true;
+      void context.workspaceState.update(AGENT_MODE_WAS_ACTIVE_KEY, true);
       await vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.agentModeActive', true);
       agentChangesPanel.setAgentMode(true);
       await hideEditorTabs();
@@ -362,7 +370,12 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     }
   }
 
-  async function exitAgentMode(): Promise<void> {
+  // persist=false: the exit comes from the Agent panel being disposed, which also happens while the
+  // window shuts down — the caller decides later whether the user really closed it.
+  async function exitAgentMode(persist = true): Promise<void> {
+    if (persist) {
+      void context.workspaceState.update(AGENT_MODE_WAS_ACTIVE_KEY, false);
+    }
     if (!agentModeActive && !agentModeTabsState) {
       void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.agentModeActive', false);
       return;
@@ -572,6 +585,10 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   }
 
   updateNavBarState();
+  if (context.workspaceState.get<boolean>(AGENT_MODE_WAS_ACTIVE_KEY)) {
+    debugLog('agent-mode:restoring previous session state');
+    await enterAgentMode();
+  }
   debugLog('activate:complete');
 }
 

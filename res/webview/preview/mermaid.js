@@ -55,6 +55,7 @@
     const container = document.createElement('div');
     container.className = 'mermaid-diagram';
     host.appendChild(container);
+    window.aiCliZoomViewer.attach(container);
     return draw(container, data.content).catch((error) => showError(container, error));
   }
 

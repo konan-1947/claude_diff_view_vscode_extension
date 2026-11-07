@@ -58,6 +58,7 @@
       // DOMPurify drops <script>, on* handlers and javascript: URLs; the file may be untrusted.
       root.innerHTML = purify.sanitize(html);
       fixLinks(root, data.baseUri);
+      window.aiCliZoomViewer.attach(root, 'Image');
       // Never accumulate: the last render always replaces earlier ones.
       host.textContent = '';
       host.appendChild(root);
