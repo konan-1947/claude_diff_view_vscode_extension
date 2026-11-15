@@ -69,6 +69,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const addonFitJs = `${xtermBase}/addon-fit.js`;
   const monacoBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs'));
   const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
+  const terminalLinksJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'terminal-links.js'));
   const previewDir = vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'preview');
   const previewCss = webview.asWebviewUri(vscode.Uri.joinPath(previewDir, 'preview.css'));
   const previewScripts = ['libs', 'code', 'zoom', 'mermaid', 'markdown', 'image', 'csv', 'index']
@@ -1553,6 +1554,7 @@ ${FONT_OPTIONS.map((f) => {
   </div>
   <script nonce="${nonce}" src="${xtermJs}"></script>
   <script nonce="${nonce}" src="${addonFitJs}"></script>
+  <script nonce="${nonce}" src="${terminalLinksJs}"></script>
   <script nonce="${nonce}">
     window.__AI_CLI_MONACO_BASE__ = ${JSON.stringify(monacoBase.toString())};
     window.__AI_CLI_PREVIEW_LIBS__ = ${JSON.stringify(previewLibs)};
@@ -1685,6 +1687,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           cursorBlink: currentSettings.cursorBlink,
           allowProposedApi: true,
           theme: resolveTheme(currentSettings),
+          // OSC 8 hyperlinks (res/webview/terminal-links.js); the default handler needs window.open.
+          linkHandler: window.__AI_CLI_TERMINAL_LINKS__ ? window.__AI_CLI_TERMINAL_LINKS__.linkHandler : null,
         });
         t.attachCustomKeyEventHandler((e) => {
           if (e.type !== 'keydown') return true;
@@ -1800,6 +1804,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const t = makeXterm();
         const f = new FitAddon.FitAddon();
         t.loadAddon(f);
+        // Ctrl/Cmd+Click URLs and file paths (res/webview/terminal-links.js).
+        if (window.__AI_CLI_TERMINAL_LINKS__) {
+          try { window.__AI_CLI_TERMINAL_LINKS__.register(t); } catch (_) {}
+        }
         t.open(host);
         const ta = host.querySelector('.xterm-helper-textarea');
         if (ta) {

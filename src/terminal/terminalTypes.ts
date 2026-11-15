@@ -117,7 +117,9 @@ export type IncomingMessage =
   | { type: 'terminalFocusState'; focused: boolean }
   | { type: 'sessionTitle'; title: string }
   | { type: 'activeSession'; id: string }
-  | { type: 'viewTooNarrow' };
+  | { type: 'viewTooNarrow' }
+  | { type: 'openLink'; url: string }
+  | { type: 'openTerminalFile'; path: string; line?: number; col?: number };
 
 /** One running session, as sent to a newly attached webview so it can redraw the tab. */
 export interface SessionSnapshot {

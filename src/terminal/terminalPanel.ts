@@ -1,5 +1,8 @@
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { notify } from '../util/notify';
 import { TerminalSessionStore } from './terminalSessions';
 import { renderPendingTree } from '../views/pendingTree';
 import { findInstallableForPrimary, installFont } from './fontInstaller';
@@ -161,6 +164,50 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       this.pendingAgentFilePreviewPath = filePath;
     }
     return true;
+  }
+
+  /** Ctrl+Click on a URL / OSC 8 hyperlink in the terminal. */
+  private async openTerminalLink(url: string): Promise<void> {
+    let uri: vscode.Uri;
+    try {
+      uri = vscode.Uri.parse(url, true);
+    } catch {
+      return;
+    }
+    if (uri.scheme === 'file') {
+      await this.openTerminalFile(uri.fsPath);
+      return;
+    }
+    if (uri.scheme !== 'http' && uri.scheme !== 'https') {
+      return;
+    }
+    await vscode.env.openExternal(uri);
+  }
+
+  /** Ctrl+Click on a file path in the terminal: pending → diff, agent mode → in-panel preview. */
+  private async openTerminalFile(rawPath: string, line?: number, col?: number): Promise<void> {
+    const absPath = await resolveTerminalPath(rawPath);
+    if (!absPath) {
+      notify(`File not found: ${rawPath}`);
+      return;
+    }
+    try {
+      if (this.openFileInAgent(absPath)) {
+        return;
+      }
+      if (this.diffManager.hasPendingDiff(absPath)) {
+        await this.diffManager.openDiff(absPath);
+        return;
+      }
+      const options: vscode.TextDocumentShowOptions = { preview: true };
+      if (line && line > 0) {
+        const pos = new vscode.Position(line - 1, Math.max(0, (col ?? 1) - 1));
+        options.selection = new vscode.Range(pos, pos);
+      }
+      await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(absPath), options);
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Could not open file: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   focusTerminal(): void {
@@ -736,6 +783,12 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.panel.title = typeof msg.title === 'string' && msg.title.trim() ? msg.title : 'Agent Terminal';
           }
           return;
+        case 'openLink':
+          void this.openTerminalLink(msg.url);
+          return;
+        case 'openTerminalFile':
+          void this.openTerminalFile(msg.path, msg.line, msg.col);
+          return;
         case 'filePreviewOpenBeside':
           void openBeside(msg.path).catch((err: unknown) => {
             void vscode.window.showErrorMessage(`Could not open file beside: ${err instanceof Error ? err.message : String(err)}`);
@@ -965,4 +1018,48 @@ function currentMonacoTheme(): string {
     case vscode.ColorThemeKind.HighContrastLight: return 'hc-light';
     default: return 'vs-dark';
   }
+}
+
+/**
+ * Resolves a path printed in the terminal to an existing file. Relative paths are tried
+ * against every workspace folder (the shell starts in the first one; `cd` is not tracked),
+ * also without git's `a/` / `b/` diff prefix. Returns the on-disk case, or undefined.
+ */
+async function resolveTerminalPath(rawPath: string): Promise<string | undefined> {
+  let p = rawPath.trim();
+  if (!p) {
+    return undefined;
+  }
+  if (/^~[\/]/.test(p)) {
+    p = path.join(os.homedir(), p.slice(2));
+  }
+  const candidates: string[] = [];
+  if (path.isAbsolute(p)) {
+    candidates.push(p);
+  }
+  const relative = path.isAbsolute(p) && !/^[A-Za-z]:/.test(p) ? p.replace(/^[\/]+/, '') : p;
+  if (!path.isAbsolute(relative)) {
+    const variants = [relative];
+    if (/^[ab][\/]/.test(relative)) {
+      variants.push(relative.slice(2));
+    }
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      for (const v of variants) {
+        candidates.push(path.join(folder.uri.fsPath, v));
+      }
+    }
+  }
+  for (const candidate of candidates) {
+    const fsPath = vscode.Uri.file(candidate).fsPath;
+    try {
+      const stat = await fs.promises.stat(fsPath);
+      if (stat.isFile()) {
+        // realpath gives the on-disk case, so the tab title matches the file.
+        return await fs.promises.realpath(fsPath).catch(() => fsPath);
+      }
+    } catch {
+      // try the next candidate
+    }
+  }
+  return undefined;
 }
