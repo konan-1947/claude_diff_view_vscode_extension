@@ -277,21 +277,30 @@
     const total = state.groups.length;
     state.hunkNav.hidden = total === 0;
     state.hunkCounter.textContent = total === 0 ? '0 / 0' : (currentHunkIdx(state) + 1) + ' / ' + total;
-    state.hunkPrev.disabled = total < 2;
-    state.hunkNext.disabled = total < 2;
+    // A single block stays clickable: it jumps back to that block after scrolling away (#47).
+    state.hunkPrev.disabled = total === 0;
+    state.hunkNext.disabled = total === 0;
   }
 
   function gotoHunk(state, direction) {
-    if (!state || state.groups.length < 2) { return; }
+    if (!state || state.groups.length === 0) { return; }
     if (state.collapsed) { toggleCollapsed(state); }
     const total = state.groups.length;
     state.hunkIdx = (currentHunkIdx(state) + direction + total) % total;
     updateHunkNav(state);
     if (!state.editor) {
+      // The card's editor is not mounted yet: remember the block and reveal it in
+      // mountEditor once the file content arrives, instead of needing a second click.
+      state.pendingHunkIdx = state.hunkIdx;
       scrollToFile(state);
       requestFile(state.meta.path);
       return;
     }
+    revealHunk(state);
+  }
+
+  function revealHunk(state) {
+    if (!state.editor || !state.groups[state.hunkIdx]) { return; }
     const line = state.groups[state.hunkIdx].startLine;
     releasePin();
     state.editor.setPosition({ lineNumber: line, column: 1 });
@@ -489,7 +498,16 @@
       try {
         fitEditorHeight(state);
         state.editor.layout();
-        if (isNewEditor && data.hunks.length) {
+        if (state.pendingHunkIdx !== undefined) {
+          // Set by gotoHunk before the editor existed; the groups may have changed since.
+          const idx = state.pendingHunkIdx;
+          state.pendingHunkIdx = undefined;
+          if (state.groups.length) {
+            state.hunkIdx = idx < state.groups.length ? idx : 0;
+            updateHunkNav(state);
+            revealHunk(state);
+          }
+        } else if (isNewEditor && data.hunks.length) {
           state.editor.revealLineInCenter(data.hunks[0].modifiedStart + 1);
         }
       } catch (_) { /* section may be closing */ }

@@ -123,8 +123,9 @@
       const acc = document.getElementById('btn-accept-file');
       const rej = document.getElementById('btn-reject-file');
       const has = total > 0;
-      if (prev) { prev.disabled = !has || total < 2; }
-      if (next) { next.disabled = !has || total < 2; }
+      // Một khối vẫn bấm được: cuộn đi xa rồi bấm để quay lại khối đó (#47).
+      if (prev) { prev.disabled = !has; }
+      if (next) { next.disabled = !has; }
       if (acc) { acc.disabled = !has || state.inFlight; }
       if (rej) { rej.disabled = !has || state.inFlight; }
     }
