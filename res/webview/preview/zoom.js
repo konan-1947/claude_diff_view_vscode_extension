@@ -120,6 +120,9 @@
     mount.appendChild(root);
     // Keep pointer events from reaching the host's click-outside / close handlers.
     ['mousedown', 'click'].forEach((type) => root.addEventListener(type, (e) => e.stopPropagation()));
+    // Right-click used to close the viewer (#49): keep the event from reaching VS Code's
+    // webview context menu (its Cut/Copy/Paste do nothing here anyway).
+    root.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
 
     if (options.svg) {
       const clone = options.svg.cloneNode(true);
