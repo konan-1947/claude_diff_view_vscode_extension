@@ -118,10 +118,29 @@ const renderedMarkdown = computed(() => {
   padding: 0px;
 }
 
+/* Marker type belongs to the list, not the item: a numbered list keeps its
+   numbers and a nested list reads as a sub-level. */
+.markdown-content :deep(ul) {
+  list-style-type: disc;
+}
+
+.markdown-content :deep(ul ul) {
+  list-style-type: circle;
+}
+
+.markdown-content :deep(ol) {
+  list-style-type: decimal;
+  /* room for two-digit numbers */
+  margin-left: 20px;
+}
+
 .markdown-content :deep(li) {
   padding-top: 2px;
   padding-bottom: 2px;
-  list-style-type: disc;
+}
+
+.markdown-content :deep(li)::marker {
+  color: var(--cs-fg-52);
 }
 
 .markdown-content :deep(blockquote) {

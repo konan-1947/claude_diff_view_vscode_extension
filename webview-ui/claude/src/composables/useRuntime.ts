@@ -108,7 +108,12 @@ export function useRuntime(): RuntimeInstance {
         if (!disposed) appContext.assetUris(assets.assetUris);
       } catch (e) { console.warn('[runtime] assets fetch failed', e); }
 
-      await sessionStore.listSessions();
+      // A failed history load must not stop the tab from getting a session.
+      try {
+        await sessionStore.listSessions();
+      } catch (e) {
+        console.warn('[runtime] session list failed', e);
+      }
       const resumeId = window.UIC_BOOTSTRAP?.resume;
       if (!disposed && resumeId && !sessionStore.activeSession()) {
         const previous = sessionStore.sessions().find((s) => s.sessionId() === resumeId);

@@ -14,6 +14,12 @@ headlessly: there is no PTY, no xterm and no TUI scraping.
   2. `claude` on `PATH`
   3. well-known install locations
   4. the SDK's bundled binary (development checkouts only; never shipped)
+
+  Each candidate goes through `resolveCliTarget()`: the SDK spawns without a
+  shell, and Node on Windows refuses `.cmd`/`.bat` that way (`spawn EINVAL`), so
+  package-manager shims (npm/pnpm/yarn/bun/volta/scoop `claude.cmd`) are replaced
+  by the `claude.exe` or `cli.js` they launch; symlinks (npm global, Homebrew)
+  are resolved with `realpath`. A shim whose target cannot be found is skipped.
 - Upstream's 69 MB `resources/claude-code` (CLI bundle + ripgrep) is **not** used.
 
 ## Layout

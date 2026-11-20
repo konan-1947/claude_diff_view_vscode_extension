@@ -146,13 +146,19 @@ function convertMessage(msg: SessionMessage): any | undefined {
         return undefined;
     }
 
+    // Epoch ms of the original message, so a reloaded turn shows its real
+    // duration and age instead of the moment it was loaded.
+    const parsed = Date.parse(msg.timestamp);
+    const timestamp = Number.isNaN(parsed) ? undefined : parsed;
+
     if (msg.type === "user") {
         return {
             type: "user",
             message: msg.message,
             session_id: msg.uuid,
             parent_tool_use_id: null,
-            toolUseResult: msg.toolUseResult
+            toolUseResult: msg.toolUseResult,
+            timestamp
         };
     }
 
@@ -162,7 +168,8 @@ function convertMessage(msg: SessionMessage): any | undefined {
             message: msg.message,
             session_id: msg.uuid,
             parent_tool_use_id: null,
-            uuid: msg.message?.id
+            uuid: msg.message?.id,
+            timestamp
         };
     }
 

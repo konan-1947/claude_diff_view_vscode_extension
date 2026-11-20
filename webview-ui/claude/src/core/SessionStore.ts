@@ -5,6 +5,16 @@ import { Session, type SessionContext, type SessionOptions } from './Session';
 import type { PermissionRequest } from './PermissionRequest';
 import type { SessionSummary } from './types';
 
+const LIST_SESSIONS_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export interface PermissionEvent {
   session: Session;
   permissionRequest: PermissionRequest;
@@ -31,7 +41,7 @@ export class SessionStore {
     this.effectCleanups.push(
       effect(() => {
         if (this.connectionManager.connection()) {
-          void this.listSessions();
+          this.listSessions().catch((e) => console.warn('[SessionStore] session list failed', e));
         }
       })
     );
@@ -133,7 +143,13 @@ export class SessionStore {
     this.currentConnectionPromise = (async () => {
       try {
         const connection = await this.getConnection();
-        const response = await connection.listSessions();
+        // An unanswered request must not keep the history page (and every later
+        // call, which reuses this promise) on "Loading…" forever.
+        const response = await withTimeout(
+          connection.listSessions(),
+          LIST_SESSIONS_TIMEOUT_MS,
+          'Timed out loading chat history'
+        );
 
         const existing = new Map(
           this.sessions()

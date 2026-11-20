@@ -303,17 +303,24 @@ export class ClaudeAgentService implements IClaudeAgentService {
             for await (const message of this.fromClientStream) {
                 switch (message.type) {
                     case "launch_claude":
-                        await this.launchClaude(
-                            message.channelId,
-                            message.resume || null,
-                            message.cwd || this.getCwd(),
-                            message.model || null,
-                            // No mode chosen in the UI yet: the CLI applies the user's
-                            // `permissions.defaultMode` and reports it in system/init.
-                            message.permissionMode || undefined,
-                            message.thinkingLevel || null,
-                            message.effortLevel ?? null
-                        );
+                        // A failed launch has already closed its channel with the error
+                        // (the tab shows it). It must not escape: this loop serves every
+                        // Claude UI tab, and leaving it would leave all later requests unanswered.
+                        try {
+                            await this.launchClaude(
+                                message.channelId,
+                                message.resume || null,
+                                message.cwd || this.getCwd(),
+                                message.model || null,
+                                // No mode chosen in the UI yet: the CLI applies the user's
+                                // `permissions.defaultMode` and reports it in system/init.
+                                message.permissionMode || undefined,
+                                message.thinkingLevel || null,
+                                message.effortLevel ?? null
+                            );
+                        } catch (error) {
+                            this.logService.error(`[ClaudeAgentService] launch_claude failed for ${message.channelId}: ${error}`);
+                        }
                         break;
 
                     case "close_channel":
@@ -321,7 +328,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         break;
 
                     case "interrupt_claude":
-                        await this.interruptClaude(message.channelId);
+                        try {
+                            await this.interruptClaude(message.channelId);
+                        } catch (error) {
+                            this.logService.error(`[ClaudeAgentService] interrupt_claude failed for ${message.channelId}: ${error}`);
+                        }
                         break;
 
                     case "io_message":
