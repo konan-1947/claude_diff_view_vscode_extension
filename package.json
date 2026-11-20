@@ -23,7 +23,7 @@
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.cjs",
   "contributes": {
     "configuration": {
       "title": "AI CLI Diff View",
@@ -140,6 +140,11 @@
           "type": "boolean",
           "default": true,
           "description": "Keep focus in the terminal after Alt+Tab: sets VS Code's window.customMenuBarAltFocus to false, so releasing Alt no longer moves focus to the menu bar. Turning this off restores that setting if this extension changed it."
+        },
+        "ai-cli-diff-view.claudeCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Full path to the `claude` executable used by the Claude UI tabs. Leave empty to use the `claude` found on PATH, a well-known install location, or the SDK's bundled binary."
         }
       }
     },
@@ -259,19 +264,37 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "vscode:prepublish": "npm run typecheck && npm run build",
+    "compile": "node esbuild.cjs",
+    "build": "node esbuild.cjs --production",
+    "watch": "node esbuild.cjs --watch",
+    "typecheck": "tsc -p ./ --noEmit && vue-tsc -p webview-ui/claude/tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
+    "@gn8/alien-signals-vue": "^0.1.1",
+    "@mdi/font": "^7.4.47",
+    "@tailwindcss/vite": "^4.3.5",
     "@types/diff": "^7.0.2",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
+    "@vitejs/plugin-vue": "^6.0.11",
     "@vscode/vsce": "^3.7.1",
-    "typescript": "^5.4.0"
+    "@vueuse/core": "^14.4.0",
+    "alien-signals": "^3.2.1",
+    "esbuild": "^0.28.2",
+    "motion-v": "^1.10.3",
+    "path-browserify-esm": "^1.0.6",
+    "pinia": "^3.0.4",
+    "reka-ui": "^2.11.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.4.0",
+    "vite": "^8.3.8",
+    "vue": "^3.5.45",
+    "vue-tsc": "^3.3.14"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.327",
     "@vscode/codicons": "^0.0.45",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",
@@ -279,9 +302,9 @@
     "@xterm/xterm": "^6.0.0",
     "diff": "^9.0.0",
     "dompurify": "^3.4.17",
+    "fuse.js": "^7.5.0",
     "ignore": "^7.0.12",
     "marked": "^18.1.1",
-    "material-icon-theme": "^5.32.0",
     "mermaid": "^12.2.0",
     "monaco-editor": "^0.49.0",
     "node-pty": "^1.2.0-beta.13"

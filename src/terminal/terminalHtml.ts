@@ -69,6 +69,12 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const addonFitJs = `${xtermBase}/addon-fit.js`;
   const monacoBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs'));
   const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
+  const claudeFrameJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'claudeFrame.js'));
+  const claudeUiDir = vscode.Uri.joinPath(extensionUri, 'dist', 'claude-ui');
+  const claudeUi = {
+    js: webview.asWebviewUri(vscode.Uri.joinPath(claudeUiDir, 'main.js')).toString(),
+    css: webview.asWebviewUri(vscode.Uri.joinPath(claudeUiDir, 'style.css')).toString(),
+  };
   const previewDir = vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'preview');
   const previewCss = webview.asWebviewUri(vscode.Uri.joinPath(previewDir, 'preview.css'));
   const previewScripts = ['libs', 'code', 'zoom', 'mermaid', 'markdown', 'image', 'csv', 'index']
@@ -96,8 +102,10 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     `default-src 'none'`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
     `script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval'`,
-    `font-src ${webview.cspSource}`,
-    `img-src ${webview.cspSource} data:`,
+    `font-src ${webview.cspSource} data:`,
+    `img-src ${webview.cspSource} data: blob:`,
+    // Claude UI tabs fetch their bundle once and inline it into an iframe (claudeFrame.js).
+    `connect-src ${webview.cspSource}`,
     `worker-src blob:`,
     `child-src blob:`,
   ].join('; ');
@@ -374,6 +382,16 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     display: none;
   }
   .term-pane.active { display: block; }
+  /* Claude UI tab: an iframe running the uic chat app (res/webview/claudeFrame.js). */
+  .term-pane.claude { background: var(--vscode-sideBar-background); }
+  .claude-frame-host { position: absolute; inset: 0; }
+  .claude-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
+  .claude-frame-notice {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: 16px; text-align: center; color: var(--vscode-descriptionForeground);
+    background: var(--vscode-sideBar-background);
+  }
+  .tab.done .tab-title::after { content: ' \u25CF'; color: #3fb950; }
   /* xterm.css paints .xterm-viewport black and stretches it over the padding box, which showed
      as a hard black frame (top/left/bottom, not right). Paint the whole terminal with the theme
      colour instead, so the padding blends into it on every side. */
@@ -1560,6 +1578,10 @@ ${FONT_OPTIONS.map((f) => {
   <script nonce="${nonce}" src="${aggregateDiffJs}"></script>
 ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>`).join('\n')}
   <script nonce="${nonce}">
+    window.__AI_CLI_CLAUDE_UI__ = ${JSON.stringify({ ...claudeUi, nonce })};
+  </script>
+  <script nonce="${nonce}" src="${claudeFrameJs}"></script>
+  <script nonce="${nonce}">
     (function () {
       const vscode = window.__AI_CLI_VSCODE_API__ || (
         window.__AI_CLI_VSCODE_API__ = acquireVsCodeApi()
@@ -1608,7 +1630,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const sessions = new Map();
       let activeId = null;
 
-      function safeFitSession(sess) { try { sess.fit.fit(); } catch (_) { /* ignore */ } }
+      function safeFitSession(sess) { try { if (sess.term) sess.fit.fit(); } catch (_) { /* ignore */ } }
 
       function pickVar(name, fallback) {
         const v = getComputedStyle(document.body).getPropertyValue(name).trim();
@@ -1665,6 +1687,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const wrap = document.getElementById('term-wrap');
         if (wrap) wrap.style.background = theme.background;
         for (const sess of sessions.values()) {
+          if (!sess.term) continue;
           sess.term.options.fontFamily = s.fontFamily;
           sess.term.options.fontSize = s.fontSize;
           sess.term.options.cursorStyle = s.cursorStyle;
@@ -1729,7 +1752,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         titleEl.textContent = title;
         const closeEl = document.createElement('span');
         closeEl.className = 'tab-close';
-        closeEl.title = 'Close terminal';
+        closeEl.title = 'Close tab';
         closeEl.textContent = '×';
         tab.appendChild(titleEl);
         tab.appendChild(closeEl);
@@ -1777,12 +1800,14 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const next = sessions.get(id);
         next.host.classList.add('active');
         next.tab.classList.add('active');
+        next.tab.classList.remove('done');
         activeId = id;
         vscode.postMessage({ type: 'activeSession', id });
         // scroll the tab into view
         try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
         reportPanelTitle();
         requestAnimationFrame(() => {
+          if (next.claude) { next.claude.focus(); return; }
           safeFitSession(next);
           vscode.postMessage({ type: 'resize', id, cols: next.term.cols, rows: next.term.rows });
           try { next.term.focus(); } catch (_) {}
@@ -1791,7 +1816,37 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       let focusOnSessionCreated = false;
 
-      function onSessionCreated(id, title, restoring) {
+      function onSessionCreated(id, title, restoring, kind, resume) {
+        if (kind === 'claude') {
+          const host = document.createElement('div');
+          host.className = 'term-pane claude';
+          host.dataset.id = id;
+          termHost.appendChild(host);
+          // The uic chat app runs in its own iframe; its protocol messages are relayed
+          // to the extension as { type: 'claudeUi' } (see claudeFrame.js).
+          const claude = window.ClaudeFrame.create({
+            id,
+            resume,
+            onMessage: (message) => vscode.postMessage({ type: 'claudeUi', id, message }),
+          });
+          host.appendChild(claude.el);
+          const label = title || 'Claude Code';
+          const tab = buildTabDom(id, label);
+          tabsEl.appendChild(tab);
+          sessions.set(id, {
+            id, kind: 'claude', claude, host, tab, exited: false,
+            defaultTitle: label, shownTitle: label, rawTitle: '',
+          });
+          // A restored tab is activated by onRestoreSessions with the rest.
+          if (restoring) return;
+          activateTab(id);
+          if (focusOnSessionCreated) {
+            focusOnSessionCreated = false;
+            requestAnimationFrame(() => claude.focus());
+          }
+          return;
+        }
+
         const host = document.createElement('div');
         host.className = 'term-pane';
         host.dataset.id = id;
@@ -1824,7 +1879,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         tabsEl.appendChild(tab);
 
         const sess = {
-          id, term: t, fit: f, host, tab, dataDisp: null, exited: false,
+          id, kind: 'terminal', term: t, fit: f, host, tab, dataDisp: null, exited: false,
           defaultTitle: title, shownTitle: title, rawTitle: '', titleTimer: 0, titleDisp: null,
         };
         sess.titleDisp = t.onTitleChange((next) => {
@@ -1853,7 +1908,11 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         try { sess.dataDisp && sess.dataDisp.dispose(); } catch (_) {}
         try { sess.titleDisp && sess.titleDisp.dispose(); } catch (_) {}
         clearTimeout(sess.titleTimer);
-        try { sess.term.dispose(); } catch (_) {}
+        if (sess.claude) {
+          try { sess.claude.dispose(); } catch (_) {}
+        } else {
+          try { sess.term.dispose(); } catch (_) {}
+        }
         sess.host.remove();
         sess.tab.remove();
         sessions.delete(id);
@@ -1900,6 +1959,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       });
 
       function markExited(s, id, code) {
+        if (!s.term) return;
         s.exited = true;
         s.term.writeln('\\r\\n\\x1b[2m[shell exited: ' + code + '] press any key to restart\\x1b[0m');
         const once = s.term.onData(() => {
@@ -1914,8 +1974,17 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const written = [];
         for (const snap of list) {
           if (sessions.has(snap.id)) continue;
-          onSessionCreated(snap.id, snap.title, true);
+          onSessionCreated(snap.id, snap.title, true, snap.kind, snap.resume);
           const s = sessions.get(snap.id);
+          if (s.claude) {
+            // The rebuilt iframe reopens the conversation from ~/.claude (snap.resume).
+            if (snap.title) {
+              s.defaultTitle = snap.title;
+              s.rawTitle = snap.title;
+              applySessionTitle(s);
+            }
+            continue;
+          }
           // Replay at the size it was serialized at; activateTab fits and reflows
           // only once the replay is parsed, otherwise lines wrap at the wrong width.
           try { s.term.resize(snap.cols, snap.rows); } catch (_) {}
@@ -1938,7 +2007,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       const ro = new ResizeObserver(() => {
         const sess = sessions.get(activeId);
-        if (!sess) return;
+        if (!sess || !sess.term) return;
         safeFitSession(sess);
         vscode.postMessage({ type: 'resize', id: activeId, cols: sess.term.cols, rows: sess.term.rows });
       });
@@ -1949,6 +2018,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const agentMenu = document.getElementById('agent-menu');
       let agentList = [];
 
+      const ICON_CLAUDE = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6h5M5.5 8.2h3"/></svg>';
       const ICON_TERMINAL = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5l3.5 3.5L3 11.5"/><path d="M8.5 12h4.5"/></svg>';
       const AGENT_COLORS = { claude: '#d97757', opencode: '#8b8b8b', copilot: '#6e56cf', codex: '#10a37f', pi: '#c9a227' };
       function agentIconHtml(id, label) {
@@ -1960,9 +2030,17 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       function startSession(agent) {
         const sess = sessions.get(activeId);
-        const cols = sess ? sess.term.cols : 80;
-        const rows = sess ? sess.term.rows : 24;
-        vscode.postMessage({ type: 'createSession', cols, rows, agent });
+        const cols = sess && sess.term ? sess.term.cols : 80;
+        const rows = sess && sess.term ? sess.term.rows : 24;
+        vscode.postMessage({ type: 'createSession', kind: 'terminal', cols, rows, agent });
+      }
+
+      function startClaudeUI() {
+        const sess = sessions.get(activeId);
+        const cols = sess && sess.term ? sess.term.cols : 80;
+        const rows = sess && sess.term ? sess.term.rows : 24;
+        focusOnSessionCreated = true;
+        vscode.postMessage({ type: 'createSession', kind: 'claude', cols, rows });
       }
 
       function closeAgentMenu(refocus) {
@@ -2001,6 +2079,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       function renderAgentMenu() {
         agentMenu.textContent = '';
         addMenuItem(agentMenu, ICON_TERMINAL, 'Terminal', '', false, () => startSession());
+        addMenuItem(agentMenu, ICON_CLAUDE, 'Claude UI', '', false, () => startClaudeUI());
         if (agentList.length === 0) return;
         const sep = document.createElement('div');
         sep.className = 'agent-menu-sep';
@@ -2145,10 +2224,16 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       })();
 
       window.addEventListener('message', (e) => {
+        // Upward message from a Claude UI iframe: { __claudeUi: tabId, message }.
+        if (e.data && typeof e.data.__claudeUi === 'string') {
+          const s = sessions.get(e.data.__claudeUi);
+          if (s && s.claude && s.claude.owns(e.source)) s.claude.receive(e.data.message);
+          return;
+        }
         const msg = e.data;
         if (!msg) return;
         if (msg.type === 'sessionCreated') {
-          onSessionCreated(msg.id, msg.title);
+          onSessionCreated(msg.id, msg.title, false, msg.kind);
         } else if (msg.type === 'agentAvailability') {
           agentList = msg.agents || [];
           // The menu may already be open (it opens first, availability arrives async).
@@ -2169,7 +2254,18 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           onSessionClosed(msg.id);
         } else if (msg.type === 'data') {
           const s = sessions.get(msg.id);
-          if (s) s.term.write(msg.data);
+          if (s && s.term) s.term.write(msg.data);
+        } else if (msg.type === 'claudeUi') {
+          // Protocol message for one Claude UI tab, or for all of them when id is unset.
+          sessions.forEach((s) => {
+            if (s.claude && (!msg.id || msg.id === s.id)) s.claude.post(msg.payload);
+          });
+        } else if (msg.type === 'sessionTitleChanged') {
+          const s = sessions.get(msg.id);
+          if (!s) return;
+          s.rawTitle = msg.title || '';
+          if (msg.title) s.defaultTitle = msg.title;
+          applySessionTitle(s);
         } else if (msg.type === 'exit') {
           const s = sessions.get(msg.id);
           if (s) markExited(s, msg.id, msg.code);
@@ -2218,7 +2314,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           }
           const sess = sessions.get(activeId);
           if (sess) {
-            requestAnimationFrame(() => { try { sess.term.focus(); } catch (_) {} });
+            requestAnimationFrame(() => {
+              if (sess.claude) { sess.claude.focus(); return; }
+              try { sess.term.focus(); } catch (_) {}
+            });
           } else {
             // First session is still being spawned; focus it once it exists.
             focusOnSessionCreated = true;
@@ -2311,7 +2410,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         vscode.postMessage({ type: 'pendingOverlay', open });
         if (!open) {
           const sess = sessions.get(activeId);
-          if (sess) requestAnimationFrame(() => { try { sess.term.focus(); } catch (_) {} });
+          if (sess) requestAnimationFrame(() => {
+            if (sess.claude) { sess.claude.focus(); return; }
+            try { sess.term.focus(); } catch (_) {}
+          });
         }
       }
       btnTogglePage.addEventListener('click', () => setPendingOverlay(pendingOverlay.hidden));

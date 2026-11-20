@@ -54,6 +54,15 @@ Open any file and preview it in place while the terminal keeps focus — Markdow
 - Start a Claude session directly with `Ctrl+Shift+A`.
 - Optional sound when Claude finishes a turn or needs your input (Windows only).
 
+### Claude UI
+
+A chat tab for Claude, opened from the `+` button next to the tabs (**Claude UI**). The interface is the one from Claudix (uic); it talks to the Claude Agent SDK directly — no terminal, no screen scraping.
+
+- Needs the `claude` CLI installed and signed in once on the machine; the extension finds it on `PATH`, or use `ai-cli-diff-view.claudeCliPath`.
+- Streaming answers, thinking, tool cards per tool, permission prompts, `@file` mentions, slash commands, image attachments, model and permission mode (Shift+Tab) from the composer.
+- Sessions page to reopen earlier conversations and a Settings page for Claude settings.
+- Files Claude edits still appear as reviewable diffs; several Claude UI tabs can run side by side.
+
 ### Choose what gets tracked
 
 Everything is editable from the Settings popover in the terminal panel — no need to open `settings.json`.
@@ -72,7 +81,7 @@ An agent can rewrite hundreds of files without freezing VS Code: at most `maxAut
 ## Usage
 
 1. Open the `AI CLI` panel in the Secondary Side Bar.
-2. Run an AI CLI agent — Claude, Codex, Qwen, or anything else — in the integrated terminal or an external one. Edits are picked up automatically.
+2. Run an AI CLI agent — Claude, Codex, Qwen, or anything else — in the integrated terminal or an external one. Edits are picked up automatically. For Claude, `+` → **Claude UI** opens a chat tab backed by the Agent SDK instead of a shell.
 3. Review each diff and accept or reject per block, per file, or all pending changes at once.
 4. Optional: click **Agent mode** for a full-screen agent workspace.
 
@@ -109,6 +118,7 @@ An agent can rewrite hundreds of files without freezing VS Code: at most `maxAut
 | `ai-cli-diff-view.maxFileLines` | `5000` | Ignore files longer than this (`0` disables) |
 | `ai-cli-diff-view.maxAutoOpenDiffs` | `50` | Most diff tabs opened automatically (`0` disables) |
 | `ai-cli-diff-view.soundNotificationsEnabled` | `false` | Sound when Claude finishes or needs input (Windows) |
+| `ai-cli-diff-view.claudeCliPath` | `""` | Claude CLI to run Claude UI tabs (empty = auto-detect) |
 
 Advanced: `baselineScanConcurrency` and the `burstDetection*` settings tune the initial workspace scan and how git checkouts are told apart from AI edits.
 
@@ -116,10 +126,13 @@ Advanced: `baselineScanConcurrency` and the `burstDetection*` settings tune the 
 
 ```bash
 npm install
-npm run compile
+npm run compile   # esbuild bundle -> dist/extension.cjs, Vite -> dist/claude-ui
+npm run typecheck # tsc (host) + vue-tsc (Claude UI)
 ```
 
 Press `F5` in VS Code to launch the Extension Development Host.
+
+The host is bundled with esbuild; `dist/extension.cjs` is the only entry point. The Claude Agent SDK is not bundled — only its `sdk.mjs` loader ships inside the VSIX, and the native binary comes from the `claude` CLI on the machine.
 
 Package the extension:
 

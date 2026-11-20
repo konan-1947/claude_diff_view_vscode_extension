@@ -1,5 +1,6 @@
 node_modules/
 out/
+dist/
 *.vsix
 .vscode-test/
 .vscode/*
@@ -20,3 +21,6 @@ npm-debug.log*
 Thumbs.db
 
 .claude/
+
+# Reference copy of the upstream Claudix extension (Claude UI was ported from it into webview-ui/claude and src/claude).
+uic/

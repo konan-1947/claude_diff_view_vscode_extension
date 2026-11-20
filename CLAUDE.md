@@ -11,17 +11,18 @@ Best supported review workflows: Claude, Codex, and Qwen — all detected unifor
 
 ```bash
 npm install
-npm run compile      # tsc -p ./  → out/  (main build / correctness check)
-npm run watch        # tsc -watch -p ./  (normal dev loop)
+npm run compile      # esbuild → dist/extension.cjs, then Vite → dist/claude-ui (main build)
+npm run typecheck    # tsc --noEmit (host) + vue-tsc (Claude UI webview)
+npm run watch        # esbuild watch + Vite watch (normal dev loop)
 npx @vscode/vsce package
 ```
 
 - Press `F5` to launch the Extension Development Host (`.vscode/launch.json`), and reload the host after each recompile.
-- There is no lint, formatter, or test runner configured. `npm run compile` is the minimum correctness gate. Manually validate diff rendering, accept/revert, and navigation against the sample files in `code_to_test/`.
+- There is no lint, formatter, or test runner configured. `npm run typecheck` + `npm run compile` are the minimum correctness gate. Manually validate diff rendering, accept/revert, and navigation against the sample files in `code_to_test/`.
 - `node-pty` is a **native module**. If the integrated terminal fails to load (ABI mismatch against VS Code's Electron), rebuild it with the `@electron/rebuild` devDependency. There is no postinstall script wiring this up.
 - Monaco and xterm assets are consumed directly from `node_modules/` at runtime (loaded into webviews via `localResourceRoots`); there is no separate asset bundling step.
-- Many code comments and most `docs/` files are written in Vietnamese; match the language of the surrounding comments when editing. `AGENTS.md` and `QWEN.md` are sibling context files for other CLIs; `QWEN.md` is stale (it still describes the removed Claude hook installation), so when they disagree this file is authoritative. Never edit `out/` by hand.
-- Strict TypeScript (`tsconfig.json`: `strict: true`, CommonJS, ES2020 target). 2-space indentation, semicolons, single quotes; `PascalCase` for classes/providers, `camelCase` for functions/variables, `kebab-case` for asset filenames.
+- Many code comments and most `docs/` files are written in Vietnamese; match the language of the surrounding comments when editing. `AGENTS.md` and `QWEN.md` are sibling context files for other CLIs; `QWEN.md` is stale (it still describes the removed Claude hook installation), so when they disagree this file is authoritative. Never edit `dist/` (or the stale `out/`) by hand.
+- Strict TypeScript (`tsconfig.json`: `strict: true`, CommonJS, ES2020 target, `experimentalDecorators` for the uic DI in `src/claude/di`). 2-space indentation, semicolons, single quotes; `PascalCase` for classes/providers, `camelCase` for functions/variables, `kebab-case` for asset filenames.
 
 ## Architecture
 
@@ -77,6 +78,10 @@ There used to be a third, hook-based pipeline (`PreToolUse`/`PostToolUse` hooks 
 
 `src/terminal/` is an embedded PTY terminal (xterm.js webview + `node-pty`), shown by default in the Secondary Side Bar (extension.ts moves it there once via a one-time globalState flag). `src/terminal/terminalPanel.ts` (`TerminalPanelProvider`, view id `ai-cli-diff-view.terminal`) manages PTY sessions; its ☰ header button opens a Pending Files overlay drawn over the terminal inside the same webview (tree HTML from `src/views/pendingTree.ts`, shared with `agentChangesPanel`) — never hide the terminal view with a `when` clause for this, since that disposes the webview. PTY sessions live in one `TerminalSessionStore` (`terminalSessions.ts`, created in extension.ts) shared by the side bar provider and the Agent mode panel provider, so shells survive Agent mode toggles (the side bar view is removed by its `when` clause in Agent mode, which disposes its webview); each session mirrors its screen in an `@xterm/headless` terminal, and a newly attached webview's `ready` is answered with `restoreSessions` (serialized via `@xterm/addon-serialize`) instead of spawning a new shell. `ptySession.ts` wraps node-pty, and on Windows each spawned shell gets its environment rebuilt from the registry by `freshEnv.ts` (since `process.env` is a startup snapshot); `fontInstaller.ts` handles terminal fonts; `terminalHtml.ts` / `terminalTypes.ts` hold the webview shell and settings types.
 
+### Claude UI tabs
+
+`+` → **Claude UI** in the terminal tab strip opens a `kind: 'claude'` tab: an `<iframe>` running the **uic** Vue chat app (a copy of Claudix, AGPL-3.0; source in `webview-ui/claude/`, built by Vite into `dist/claude-ui/`). `res/webview/claudeFrame.js` inlines that bundle into the iframe's `srcdoc` (blob: URL fallback), copies the VS Code theme into it and forwards workbench shortcuts out. Messages travel as `{ type: 'claudeUi', id, message }` through `terminalPanel.ts` to `src/claude/services/webViewService.ts`, which routes them to uic's `ClaudeAgentService` (Agent SDK `query()` against the user's `claude` CLI, found by `cliLocator.ts`) and back to the owning tab. The agent services start lazily on the first message. `TerminalSessionStore` keeps only `{ title, sessionId }` per Claude tab, so a rebuilt webview resumes the conversation. The SDK `PreToolUse` hook calls `DiffManager.snapshotBefore()`. Keep uic code as close to upstream as possible; deliberate differences (notably: `~/.claude/settings.json` is never seeded on startup) are listed in `docs/CLAUDE_UI.md`.
+
 ### UI composition
 
 - `src/terminal/terminalPanel.ts` — terminal + built-in runner status + pending files (Secondary Side Bar).
@@ -124,6 +129,7 @@ Pending-file navigation logic lives in `src/diff/navigationManager.ts`, reachabl
 | `ai-cli-diff-view.burstDetectionWindowMs` | Advanced: sliding window (ms) used to count file changes for burst detection (default 300) |
 | `ai-cli-diff-view.burstDetectionThreshold` | Advanced: number of distinct files changed within the window that counts as a burst (default 8) |
 | `ai-cli-diff-view.burstDetectionHoldMs` | Advanced: how long (ms) to hold burst-threshold-exceeding files before opening their diff if no git branch change is confirmed (default 2000) |
+| `ai-cli-diff-view.claudeCliPath` | Full path of the `claude` executable for Claude UI tabs; empty = `PATH`, then well-known install locations (`src/claude/cliLocator.ts`) |
 | `ai-cli-diff-view.soundNotificationsEnabled` | Play a sound when Claude finishes a turn or needs input (Windows only, default off) — unrelated to diff detection |
 | `ai-cli-diff-view.preventAltMenuFocus` | Default on: `applyAltMenuFocus` (`src/commands/altMenuFocus.ts`) sets VS Code's Global `window.customMenuBarAltFocus` to `false`, because the Alt release after Alt+Tab otherwise moves focus to the menu bar right after the terminal's focus was restored. Turning it off resets that value only if the extension set it (globalState flag) |
 

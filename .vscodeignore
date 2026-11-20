@@ -1,14 +1,18 @@
 src/**
 code_to_test/**
+uic/**
+webview-ui/**
 .claude/**
 .vscode/**
 .idea/**
 docs/**
 scripts/**
+test/**
 ts_error.txt
 *.vsix
 .gitignore
 tsconfig.json
+esbuild.cjs
 plan.md
 AGENTS.md
 CLAUDE.md
@@ -21,18 +25,33 @@ meo_ngu.png
 media/empty-diff-background.png
 media/accept-hunk.svg
 media/revert-hunk.svg
+
+# Build output: only the bundled extension host is shipped.
+out/**
+dist/**
+!dist/extension.cjs
+!dist/claude-ui/**
+
+# Runtime node_modules.
+#
+# The extension host itself is bundled into dist/extension.cjs, so only modules
+# that are loaded from disk at runtime stay here:
+#   - node-pty                     native module (esbuild external)
+#   - @anthropic-ai/claude-agent-sdk/sdk.mjs  ESM SDK imported dynamically
+#   - monaco-editor/min            webview diff editor assets
+#   - marked, dompurify, mermaid   webview preview libs
+#
+# Everything else is bundled, so node_modules/** is excluded and re-included by
+# explicit path. The Agent SDK's native CLI binaries (~356 MB per platform) are
+# never shipped: the extension runs the user's installed `claude` instead.
 node_modules/**
 !node_modules/node-pty/**
-!node_modules/@xterm/headless/**
-!node_modules/@xterm/addon-serialize/**
-!node_modules/diff/**
-!node_modules/ignore/**
+!node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
+!node_modules/@anthropic-ai/claude-agent-sdk/package.json
 !node_modules/monaco-editor/min/**
-**/*.ts
-!node_modules/node-pty/**/*.d.ts
-**/*.map
-!out/**
-out/**/*.map
 !node_modules/marked/lib/marked.umd.js
 !node_modules/dompurify/dist/purify.min.js
 !node_modules/mermaid/dist/mermaid.min.js
+
+**/*.ts
+**/*.map

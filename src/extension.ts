@@ -14,6 +14,7 @@ import { NavBarPanel } from './views/navBarPanel';
 import { AgentChangesPanel } from './views/agentChangesPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
 import { TerminalSessionStore } from './terminal/terminalSessions';
+import { createClaudeUiBackend } from './claude/claudeUi';
 import { forgetOpenedBeside, hasOpenedBeside, isOpenedBeside, onDidChangeOpenedBeside } from './preview/openBeside';
 import { coalesce } from './util/coalesce';
 
@@ -224,7 +225,23 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   // Shells outlive the webviews showing them: the side bar view is disposed when
   // hidden by its `when` clause, and Agent mode swaps in a panel of its own.
   const terminalSessions = new TerminalSessionStore();
-  const terminalPanel = new TerminalPanelProvider(context, diffManager, terminalSessions);
+  // Claude UI tabs (uic chat app): one backend shared by the side bar view and the
+  // Agent mode panel. Give every file Claude is about to write a baseline, so the
+  // diff that opens afterwards compares against the state before the edit.
+  const claudeUi = createClaudeUiBackend(context, (filePath) => diffManager.snapshotBefore(filePath));
+  context.subscriptions.push(
+    claudeUi,
+    claudeUi.webViews.onTabRequest((request) => {
+      if (request.kind === 'rename' && request.title !== undefined) {
+        terminalSessions.setClaudeTitle(request.tabId, request.title);
+      } else if (request.kind === 'new') {
+        terminalSessions.createClaude(80, 24);
+      }
+    }),
+    claudeUi.webViews.onTabSession(({ tabId, sessionId }) => terminalSessions.setClaudeSession(tabId, sessionId)),
+    terminalSessions.onClosed((id) => claudeUi.webViews.releaseTab(id)),
+  );
+  const terminalPanel = new TerminalPanelProvider(context, diffManager, terminalSessions, claudeUi);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       TerminalPanelProvider.viewType,
@@ -302,7 +319,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       return;
     }
 
-    const terminal = new TerminalPanelProvider(context, diffManager, terminalSessions);
+    const terminal = new TerminalPanelProvider(context, diffManager, terminalSessions, claudeUi);
     const panel = terminal.openWebviewPanel();
     agentModeTerminal = terminal;
     agentModePanel = panel;

@@ -1,0 +1,29 @@
+import { createApp } from 'vue';
+import { createPinia } from 'pinia';
+import App from './App.vue';
+import '@vscode/codicons/dist/codicon.css';
+import '@mdi/font/css/materialdesignicons.min.css';
+
+declare global {
+  interface Window {
+    acquireVsCodeApi?: <T = unknown>() => {
+      postMessage(data: T): void;
+      getState(): any;
+      setState(data: any): void;
+    };
+    UIC_BOOTSTRAP?: {
+      host?: 'sidebar' | 'editor' | 'panel';
+      page?: string;
+      /** Claude UI tab id in the terminal panel; tags every message to the host. */
+      id?: string;
+      /** Claude session id to reopen when the tab is rebuilt (webview reload, Agent mode toggle). */
+      resume?: string;
+    };
+  }
+}
+
+const pinia = createPinia();
+const app = createApp(App);
+
+app.use(pinia);
+app.mount('#app');

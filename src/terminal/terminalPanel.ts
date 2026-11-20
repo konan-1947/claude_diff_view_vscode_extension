@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { TerminalSessionStore } from './terminalSessions';
+import { TerminalSessionStore, sessionCwd } from './terminalSessions';
 import { renderPendingTree } from '../views/pendingTree';
 import { findInstallableForPrimary, installFont } from './fontInstaller';
 import { DiffManager } from '../diff/diffManager';
@@ -8,6 +8,8 @@ import { sortLikePendingTree } from '../diff/treeOrder';
 import { buildTerminalHtml } from './terminalHtml';
 import { detectAgents, findAgent } from './agentLauncher';
 import { coalesce } from '../util/coalesce';
+import { notify } from '../util/notify';
+import type { ClaudeUiBackend } from '../claude/claudeUi';
 import { openBeside } from '../preview/openBeside';
 import { getPreviewKind, isBinaryImage } from '../preview/previewKind';
 import { applySoundNotifications } from '../commands/soundNotifications';
@@ -49,6 +51,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   private sessionSubs: vscode.Disposable[] = [];
   /** Session output held back while a newly attached webview waits for its snapshot. */
   private restoreQueue: unknown[] | undefined;
+  private claudeUiSink?: vscode.Disposable;
 
   private diffDisposable?: vscode.Disposable;
   private workspaceDiffDisposable?: vscode.Disposable;
@@ -77,14 +80,16 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly diffManager: DiffManager,
-    private readonly sessions: TerminalSessionStore
+    private readonly sessions: TerminalSessionStore,
+    private readonly claudeUi?: ClaudeUiBackend
   ) {
     this.sessionSubs = [
-      sessions.onCreated(({ id, title }) => this.postSession({ type: 'sessionCreated', id, title })),
+      sessions.onCreated(({ id, title, kind }) => this.postSession({ type: 'sessionCreated', id, title, kind })),
       sessions.onClosed((id) => this.postSession({ type: 'sessionClosed', id })),
       sessions.onData(({ id, data }) => this.postSession({ type: 'data', id, data })),
       sessions.onExit(({ id, code }) => this.postSession({ type: 'exit', id, code })),
       sessions.onError(({ id, message }) => this.postSession({ type: 'error', id, message })),
+      sessions.onTitle(({ id, title }) => this.postSession({ type: 'sessionTitleChanged', id, title })),
     ];
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
       if (this.diffPreviewOpen) {
@@ -527,6 +532,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private detachWebview(): void {
+    this.releaseClaudeUi();
     this.webviewMessageDisposable?.dispose();
     this.webviewMessageDisposable = undefined;
     this.webviewDisposeDisposable?.dispose();
@@ -547,6 +553,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
     const monacoDir = vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'monaco-editor', 'min');
     const webviewDir = vscode.Uri.joinPath(this.context.extensionUri, 'res', 'webview');
+    const claudeUiDir = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'claude-ui');
     const previewLibDirs = ['marked', 'dompurify', 'mermaid'].map((name) => (
       vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', name)
     ));
@@ -555,8 +562,9 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
     webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir, iconsDir, appIconsDir, introDir, monacoDir, webviewDir, ...previewLibDirs, ...workspaceDirs],
+      localResourceRoots: [xtermDir, iconsDir, appIconsDir, introDir, monacoDir, webviewDir, claudeUiDir, ...previewLibDirs, ...workspaceDirs],
     };
+    this.attachClaudeUi(webview);
 
     this.webviewMessageDisposable?.dispose();
     this.webviewMessageDisposable = webview.onDidReceiveMessage((msg: IncomingMessage) => {
@@ -599,12 +607,24 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           }
           return;
         case 'createSession': {
+          if (msg.kind === 'claude') {
+            this.sessions.createClaude(msg.cols, msg.rows);
+            return;
+          }
           const id = this.sessions.create(msg.cols, msg.rows);
           const agent = findAgent(msg.agent);
           // The PTY buffers input until the shell is ready, so the command runs once it starts.
           if (agent) { this.sessions.write(id, agent.command + '\r'); }
           return;
         }
+        case 'claudeUi':
+          if (typeof msg.id === 'string' && this.sessions.isClaude(msg.id)) {
+            this.claudeUi?.webViews.receive(msg.id, msg.message);
+          }
+          return;
+        case 'turnDone':
+          notify(msg.kind === 'claude' ? 'Claude finished' : 'Agent finished');
+          return;
         case 'requestAgents':
           void detectAgents().then((agents) => {
             void this.webview?.postMessage({ type: 'agentAvailability', agents });
@@ -924,7 +944,31 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     return relative || path.basename(filePath);
   }
 
+  /** Lets the Claude UI backend reach the iframes of this webview. */
+  private attachClaudeUi(webview: vscode.Webview): void {
+    this.claudeUiSink?.dispose();
+    this.claudeUiSink = this.claudeUi?.webViews.registerSink({
+      webview,
+      post: (tabId, payload) => {
+        void webview.postMessage({ type: 'claudeUi', id: tabId, payload });
+      },
+    });
+  }
+
+  /**
+   * The webview is gone, and with it every Claude UI iframe it drew: close
+   * their channels. The tabs stay in the store and resume when redrawn.
+   */
+  private releaseClaudeUi(): void {
+    this.claudeUiSink?.dispose();
+    this.claudeUiSink = undefined;
+    for (const id of this.sessions.claudeIds()) {
+      this.claudeUi?.webViews.releaseTab(id);
+    }
+  }
+
   dispose(): void {
+    this.releaseClaudeUi();
     // Sessions belong to the shared store and outlive this webview.
     for (const d of this.sessionSubs) {
       d.dispose();

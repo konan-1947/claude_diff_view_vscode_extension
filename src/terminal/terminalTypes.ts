@@ -83,17 +83,22 @@ export const DEFAULT_EXCLUSION_SETTINGS: ExclusionSettings = {
 export const MAX_FILE_LINES_CEILING = 200000;
 export const MAX_AUTO_OPEN_DIFFS_CEILING = 1000;
 
+export type SessionKind = 'terminal' | 'claude';
+
 export type IncomingMessage =
   | { type: 'ready' }
   | { type: 'toggleAgentMode' }
   | { type: 'pendingOverlay'; open: boolean }
   | { type: 'openPendingFile'; path: string }
-  | { type: 'createSession'; cols: number; rows: number; agent?: string }
+  | { type: 'createSession'; cols: number; rows: number; agent?: string; kind?: SessionKind }
+  | { type: 'turnDone'; id: string; kind: SessionKind }
   | { type: 'requestAgents' }
   | { type: 'closeSession'; id: string }
   | { type: 'input'; id: string; data: string }
   | { type: 'resize'; id: string; cols: number; rows: number }
   | { type: 'restart'; id: string }
+  /** A uic protocol message from the Claude UI iframe of tab `id`. */
+  | { type: 'claudeUi'; id: string; message: unknown }
   | { type: 'getSettings' }
   | { type: 'updateSettings'; settings: TerminalSettingsPayload }
   | { type: 'installFont'; primary: string }
@@ -124,11 +129,14 @@ export interface SessionSnapshot {
   id: string;
   title: string;
   rawTitle: string;
+  kind: SessionKind;
   serialized: string;
   cols: number;
   rows: number;
   exited: boolean;
   exitCode: number;
+  /** Claude UI tab: Claude session id to reopen in the rebuilt iframe. */
+  resume?: string;
 }
 
 export const DEFAULT_SETTINGS: TerminalSettings = {

@@ -14,30 +14,45 @@ session launcher is Claude-specific.
 - `src/diff/` — diff state, snapshots, hunk calculation, navigation, and the
   Monaco custom-editor webview.
 - `src/runner/` — AI runner interface and the built-in Claude runner.
+- `src/claude/` — Claude UI backend: the uic (Claudix) host services
+  (`di/`, `services/`, `shared/messages.ts`), `claudeUi.ts`, `cliLocator.ts`,
+  `sdkLoader.ts`.
+- `webview-ui/claude/` — the uic Vue chat app, built by Vite into `dist/claude-ui/`.
 - `src/terminal/` — embedded xterm/node-pty terminal and pending-file UI.
 - `src/views/` — auxiliary webview panels such as the pending-diff nav bar.
 - `src/watcher/` — workspace writes, baseline scanning, file rules, size
   limits, burst detection, and Git branch-operation detection.
-- `res/webview/` — Monaco diff JavaScript and CSS loaded by the custom editor.
+- `res/webview/` — Monaco diff JavaScript/CSS, plus `claudeFrame.js`, the
+  iframe host for Claude UI tabs.
 - `media/` — icons, screenshots, and webview assets.
 - `code_to_test/` — manual smoke-test fixtures.
 - `docs/` — architecture notes and regression-test reports.
-- `out/` — generated TypeScript output; never edit by hand.
+- `dist/` — esbuild bundle (`extension.cjs`) and the Vite build of Claude UI
+  (`claude-ui/`); generated, never edit by hand.
+- `out/` — generated TypeScript output from earlier `tsc` builds; never edit by hand.
 
 ## Build and Test
 
 ```bash
 npm install
-npm run compile
-npm run watch
+npm run compile    # esbuild -> dist/extension.cjs, then Vite -> dist/claude-ui
+npm run watch      # esbuild watch + Vite watch
+npm run typecheck  # tsc (host) + vue-tsc (Claude UI webview), no output
 npx @vscode/vsce package
 ```
 
+The host is bundled with esbuild; there is no `tsc` emit step. The Claude Agent
+SDK is external in the bundle and is loaded with a `new Function` dynamic
+import, so `dist/` must stay next to `node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs`.
+`.vscodeignore` allowlists only `sdk.mjs` and `package.json` from that package;
+never ship its native binary or `core-*.mjs`.
+
 There is no configured linter, formatter, or automated test runner. Run
-`npm run compile` after code changes, then press `F5` to launch the Extension
-Development Host for manual checks. Use files in `code_to_test/` to verify
-external edits, inline diff rendering, hunk accept/revert, pending-file
-navigation, branch changes, and terminal behavior.
+`npm run typecheck` and `npm run compile` after code changes, then press `F5` to
+launch the Extension Development Host for manual checks. Use files in
+`code_to_test/` to verify external edits, inline diff rendering, hunk
+accept/revert, pending-file navigation, branch changes, terminal behavior, and
+the Claude UI checklist in `docs/CLAUDE_UI.md`.
 
 `node-pty` is a native dependency. If the terminal fails because of an Electron
 ABI mismatch, rebuild it with the installed `@electron/rebuild` dependency.
@@ -122,26 +137,26 @@ Claude sound notifications are unrelated to diff detection. When enabled on
 Windows, `soundNotifications.ts` updates only the `Notification` and `Stop`
 entries in `~/.claude/settings.json` and preserves other settings.
 
-## Configuration
+### Claude UI sessions
 
-Contributed settings are defined in `package.json`:
+A terminal tab is either `kind: 'terminal'` (xterm + node-pty) or
+`kind: 'claude'` (Claude UI). A Claude UI tab is an `<iframe>` running the uic
+Vue app (`webview-ui/claude`); `res/webview/claudeFrame.js` inlines the
+`dist/claude-ui` bundle into it, copies the VS Code theme in and forwards
+workbench shortcuts out. The iframe's protocol messages travel as
+`{ type: 'claudeUi', id, message }` through `terminalPanel.ts` to
+`src/claude/services/webViewService.ts`, which routes them to the uic
+`ClaudeAgentService` and back to the owning tab (by `webviewId`, then by
+`channelId`).
 
-- `supportedFileDetectionMode`, `supportedFileExtensions`,
-  `supportedFilenames`, and `supportedFilenamePatterns` control reviewable
-  text files.
-- `maxFileLines` skips files that are too large for safe diffing; `0` disables
-  the limit.
-- `excludedPaths` adds `.gitignore`-syntax rules (via the `ignore` package) on
-  top of the built-in list in `pathExclusions.ts`. Both the built-in list and
-  these rules are matched on the path relative to its workspace folder, so
-  folders above the repo never count. Changing the setting rescans only files
-  that have no baseline yet (`rebuildBaselineAfterRuleChange()`), not a full
-  `notifyExternalBatch()`.
-- `baselineScanConcurrency` controls initial scan concurrency.
-- `burstDetectionEnabled`, `burstDetectionWindowMs`,
-  `burstDetectionThreshold`, and `burstDetectionHoldMs` control Git/batch-write
-  protection.
-- `soundNotificationsEnabled` controls the optional Windows Claude sounds.
+`TerminalSessionStore` keeps only `{ title, sessionId }` per Claude tab; a
+rebuilt webview recreates the iframe with `resume = sessionId`. The SDK
+`PreToolUse` hook calls `DiffManager.snapshotBefore()` so pending diffs have the
+right before-image. Keep upstream uic code unchanged where possible; the list
+of deliberate differences is in `docs/CLAUDE_UI.md`.
+
+- `claudeCliPath` selects the Claude CLI; model and permission mode are chosen
+  in the chat (uic stores its own config in `~/.claude/ai-cli-diff-view-ui.json`).
 
 When changing a setting, update its configuration listener and any terminal
 settings UI that exposes it. Keep defaults and descriptions synchronized with
