@@ -44,12 +44,12 @@ const renderedMarkdown = computed(() => {
 <style scoped>
 .text-block {
   margin: 0;
-  padding: 0px 2px;
+  padding: 0 16px;
 }
 
 .markdown-content {
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 22px;
   color: var(--vscode-editor-foreground);
   word-wrap: break-word;
   user-select: text;
@@ -61,9 +61,14 @@ const renderedMarkdown = computed(() => {
 }
 
 /* Markdown base styles - Claudex style */
+/* Cursor: blocks are spaced 16px apart (space-y-4), none above the first */
 .markdown-content :deep(p) {
-  margin: 8px 0;
-  line-height: 1.6;
+  margin: 0;
+  line-height: 22px;
+}
+
+.markdown-content > :deep(* + *) {
+  margin-top: 16px;
 }
 
 .markdown-content :deep(code) {
@@ -73,12 +78,14 @@ const renderedMarkdown = computed(() => {
 }
 
 .markdown-content :deep(pre) {
-  background-color: color-mix(in srgb, var(--vscode-editor-background) 50%, transparent);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  padding: 12px;
-  margin: 8px 0;
+  background-color: var(--cs-fg-8);
+  border: 1px solid var(--cs-fg-12);
+  border-radius: var(--cs-radius-lg);
+  padding: 8px 10px;
+  margin: 0;
   overflow-x: auto;
+  font-size: 12px;
+  line-height: 20px;
 }
 
 .markdown-content :deep(pre code) {
@@ -88,11 +95,11 @@ const renderedMarkdown = computed(() => {
 }
 
 .markdown-content :deep(:not(pre) > code) {
-  background-color: color-mix(in srgb, var(--vscode-editor-background) 50%, transparent);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 3px;
-  padding: 2px 4px;
-  font-size: 0.9em;
+  background-color: var(--cs-fg-8);
+  border: none;
+  border-radius: 5px;
+  padding: 1.5px 2px;
+  font-size: 12.6px;
 }
 
 .markdown-content :deep(a) {
@@ -118,10 +125,11 @@ const renderedMarkdown = computed(() => {
 }
 
 .markdown-content :deep(blockquote) {
-  border-left: 4px solid var(--vscode-textBlockQuote-border);
-  background-color: var(--vscode-textBlockQuote-background);
-  margin: 8px 0;
-  padding: 8px 16px;
+  border-left: 2px solid var(--cs-fg-20);
+  background: none;
+  margin: 0;
+  padding: 0 12px;
+  color: var(--cs-fg-66);
 }
 
 .markdown-content :deep(h1),
@@ -132,8 +140,8 @@ const renderedMarkdown = computed(() => {
 .markdown-content :deep(h6) {
   color: var(--vscode-foreground);
   font-weight: 600;
-  margin: 16px 0 8px 0;
-  line-height: 1.3;
+  margin: 0;
+  line-height: 1.4;
 }
 
 .markdown-content :deep(h1) {
@@ -150,14 +158,14 @@ const renderedMarkdown = computed(() => {
 
 .markdown-content :deep(table) {
   border-collapse: collapse;
-  margin: 16px 0;
+  margin: 0;
   width: 100%;
 }
 
 .markdown-content :deep(th),
 .markdown-content :deep(td) {
-  border: 1px solid var(--vscode-panel-border);
-  padding: 8px 12px;
+  border: 1px solid var(--cs-fg-12);
+  padding: 6px 10px;
   text-align: left;
 }
 

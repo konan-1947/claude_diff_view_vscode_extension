@@ -27,7 +27,7 @@ defineProps<Props>()
 
 <style scoped>
 .thinking-block {
-  margin: 4px 0;
+  margin: 2px 16px;
 }
 
 .thinking-header {
@@ -50,11 +50,11 @@ defineProps<Props>()
 }
 
 .thinking-label {
-  font-size: 14px;
+  font-size: 12px;
   font-style: italic;
   color: var(--vscode-descriptionForeground);
-  opacity: 0.7;
-  transition: opacity 0.2s ease;
+  opacity: 0.5;
+  transition: opacity 100ms ease;
 }
 
 .thinking-header:hover .thinking-label {
@@ -62,10 +62,12 @@ defineProps<Props>()
 }
 
 .thinking-content {
-  margin-left: 16px;
-  padding: 4px 0;
-  margin-top: 4px;
-  font-size: 13px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 12px;
   line-height: 1.6;
   color: var(--app-secondary-foreground);
   white-space: pre-wrap;

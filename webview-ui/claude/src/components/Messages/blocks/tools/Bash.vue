@@ -5,9 +5,13 @@
     :default-expanded="shouldExpand"
   >
     <template #main>
-      <span class="tool-label">Bash</span>
-      <span v-if="description" class="tool-description">{{ description }}</span>
+      <span class="tool-label">{{ description || command }}</span>
+      <span v-if="commandName && description" class="tool-description">{{ commandName }}</span>
       <span v-if="runInBackground" class="bg-badge">background</span>
+    </template>
+
+    <template v-if="previewLine && !toolResult?.is_error" #preview>
+      <div class="output-preview">{{ previewLine }}</div>
     </template>
 
     <template #expandable>
@@ -49,6 +53,8 @@ const description = computed(() => {
   return props.toolUse?.input?.description || '';
 });
 
+const commandName = computed(() => command.value.trim().split(/\s+/)[0] || '');
+
 const runInBackground = computed(() => {
   return props.toolUse?.input?.run_in_background || false;
 });
@@ -61,13 +67,19 @@ const outputContent = computed(() => {
   return '';
 });
 
+// First non-empty line of output, shown under the header while collapsed
+const previewLine = computed(() => {
+  const first = outputContent.value.split('\n').find((l: string) => l.trim() !== '');
+  return first ? first.trim() : '';
+});
+
 const hasOutput = computed(() => {
   return outputContent.value && !props.toolResult?.is_error;
 });
 
-// Expanded by default when there is output or an error
+// Output never opens the card by itself (the first line is previewed instead)
 const shouldExpand = computed(() => {
-  return hasOutput.value || !!props.toolResult?.is_error;
+  return !!props.toolResult?.is_error;
 });
 </script>
 
@@ -91,6 +103,12 @@ const shouldExpand = computed(() => {
   border-radius: 3px;
   font-size: 0.75em;
   font-weight: 500;
+}
+
+.output-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .bash-command {

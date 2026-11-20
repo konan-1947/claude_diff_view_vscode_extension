@@ -6,6 +6,7 @@
         <!-- Mode Select -->
         <ModeSelect
           :permission-mode="permissionMode"
+          :modes="modes"
           @mode-select="(mode) => emit('modeSelect', mode)"
         />
 
@@ -13,6 +14,14 @@
         <ModelSelect
           :selected-model="selectedModel"
           @model-select="(modelId) => emit('modelSelect', modelId)"
+        />
+
+        <!-- Effort: only for models the CLI reports as supporting it -->
+        <EffortSelect
+          v-if="effortLevels.length > 0"
+          :effort-level="effortLevel"
+          :levels="effortLevels"
+          @effort-select="(level) => emit('effortSelect', level)"
         />
       </div>
 
@@ -25,24 +34,14 @@
           :context-tooltip="contextTooltip"
         />
 
-        <!-- Thinking Toggle Button -->
-        <Tooltip :content="isThinkingOn ? 'Thinking on' : 'Thinking off'">
+        <!-- Thinking Toggle Button: hidden on models that cannot turn thinking off -->
+        <Tooltip v-if="showThinkingToggle" :content="isThinkingOn ? 'Thinking on' : 'Thinking off'">
           <button
             class="action-button think-button"
             :class="{ 'thinking-active': isThinkingOn }"
             @click="handleThinkingToggle"
           >
             <span class="codicon codicon-brain text-[16px]!" />
-          </button>
-        </Tooltip>
-
-        <!-- Sparkle Button -->
-        <Tooltip content="Sparkle">
-          <button
-            class="action-button"
-            @click="handleSparkleClick"
-          >
-            <span class="codicon codicon-wand text-[16px]!" />
           </button>
         </Tooltip>
 
@@ -93,6 +92,8 @@ import Tooltip from './Common/Tooltip.vue'
 import TokenIndicator from './TokenIndicator.vue'
 import ModeSelect from './ModeSelect.vue'
 import ModelSelect from './ModelSelect.vue'
+import EffortSelect from './EffortSelect.vue'
+import type { ModeOption } from '../utils/permissionModes'
 
 interface Props {
   disabled?: boolean
@@ -105,6 +106,10 @@ interface Props {
   contextTooltip?: string
   thinkingLevel?: string
   permissionMode?: PermissionMode
+  modes?: ModeOption[]
+  showThinkingToggle?: boolean
+  effortLevel?: string
+  effortLevels?: string[]
 }
 
 interface Emits {
@@ -114,7 +119,7 @@ interface Emits {
   (e: 'addAttachment', files: FileList): void
   (e: 'mention', filePath?: string): void
   (e: 'thinkingToggle'): void
-  (e: 'sparkle'): void
+  (e: 'effortSelect', level: string): void
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', modelId: string): void
 }
@@ -129,7 +134,11 @@ const props = withDefaults(defineProps<Props>(), {
   progressPercentage: 48.7,
   contextTooltip: '',
   thinkingLevel: 'default_on',
-  permissionMode: 'default'
+  permissionMode: 'default',
+  modes: () => [],
+  showThinkingToggle: true,
+  effortLevel: 'auto',
+  effortLevels: () => []
 })
 
 const emit = defineEmits<Emits>()
@@ -166,10 +175,6 @@ function handleThinkingToggle() {
   emit('thinkingToggle')
 }
 
-function handleSparkleClick() {
-  emit('sparkle')
-}
-
 function handleAttachClick() {
   fileInputRef.value?.click()
 }
@@ -201,7 +206,7 @@ function handleFileUpload(event: Event) {
 
 .button-row {
   display: grid;
-  grid-template-columns: 4fr 1fr;
+  grid-template-columns: 1fr auto;
   align-items: center;
   height: 28px;
   padding-right: 2px;
@@ -236,8 +241,8 @@ function handleFileUpload(event: Event) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
   border: none;
   background: transparent;
   border-radius: 50%;
@@ -273,30 +278,26 @@ function handleFileUpload(event: Event) {
 }
 
 .submit-button {
-  scale: 1.1;
+  opacity: 1;
 }
 
 .submit-button[data-variant="enabled"] {
-  background-color: color-mix(in srgb, var(--vscode-editor-foreground) 80%, transparent);
+  background-color: var(--cs-fg-66);
   color: var(--vscode-editor-background);
   opacity: 1;
-  outline: 1.5px solid color-mix(in srgb, var(--vscode-editor-foreground) 60%, transparent);
-  outline-offset: 1px;
 }
 
 .submit-button[data-variant="disabled"] {
-  background-color: color-mix(in srgb, var(--vscode-editor-foreground) 80%, transparent);
+  background-color: var(--cs-fg-66);
   color: var(--vscode-editor-background);
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .submit-button[data-variant="stop"] {
-  background-color: color-mix(in srgb, var(--vscode-editor-foreground) 80%, transparent);
+  background-color: var(--cs-fg-66);
   color: var(--vscode-editor-background);
   opacity: 1;
-  outline: 1.5px solid color-mix(in srgb, var(--vscode-editor-foreground) 60%, transparent);
-  outline-offset: 1px;
 }
 
 

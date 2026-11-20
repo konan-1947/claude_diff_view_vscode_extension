@@ -126,9 +126,9 @@ const hasOutput = computed(() => {
   return !!outputContent.value && !props.toolResult?.is_error;
 });
 
-// Expanded by default when there is output or an error
+// Output never opens the card by itself
 const shouldExpand = computed(() => {
-  return hasOutput.value || !!props.toolResult?.is_error;
+  return !!props.toolResult?.is_error;
 });
 </script>
 

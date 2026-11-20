@@ -38,6 +38,7 @@ import type {
     ExtensionRequest,
     ToolPermissionRequest,
     ToolPermissionResponse,
+    GetContextUsageResponse,
 } from '../../shared/messages';
 
 // SDK type imports
@@ -49,7 +50,18 @@ import type {
     PermissionUpdate,
     CanUseTool,
     PermissionMode,
+    ThinkingConfig,
+    EffortLevel,
 } from '@anthropic-ai/claude-agent-sdk';
+
+/**
+ * Effort level from the UI. Any level is passed through unchecked (the UI only
+ * offers what the CLI lists in ModelInfo.supportedEffortLevels, so a level added
+ * by a newer CLI works without a change here); empty or "auto" = model default.
+ */
+function toEffort(level: string | null | undefined): EffortLevel | undefined {
+    return level && level !== 'auto' ? (level as EffortLevel) : undefined;
+}
 
 // Handler imports
 import {
@@ -137,8 +149,9 @@ export interface IClaudeAgentService {
         resume: string | null,
         cwd: string,
         model: string | null,
-        permissionMode: string,
-        thinkingLevel: string | null
+        permissionMode: string | undefined,
+        thinkingLevel: string | null,
+        effortLevel?: string | null
     ): Promise<void>;
 
     /**
@@ -175,6 +188,11 @@ export interface IClaudeAgentService {
      * Set the Thinking Level
      */
     setThinkingLevel(channelId: string, level: string): Promise<void>;
+
+    /**
+     * Set the effort level (null/"auto" = the model's default)
+     */
+    setEffortLevel(channelId: string, level: string | null): Promise<void>;
 
     /**
      * Set the model
@@ -290,8 +308,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
                             message.resume || null,
                             message.cwd || this.getCwd(),
                             message.model || null,
-                            message.permissionMode || "default",
-                            message.thinkingLevel || null
+                            // No mode chosen in the UI yet: the CLI applies the user's
+                            // `permissions.defaultMode` and reports it in system/init.
+                            message.permissionMode || undefined,
+                            message.thinkingLevel || null,
+                            message.effortLevel ?? null
                         );
                         break;
 
@@ -340,16 +361,17 @@ export class ClaudeAgentService implements IClaudeAgentService {
         resume: string | null,
         cwd: string,
         model: string | null,
-        permissionMode: string,
-        thinkingLevel: string | null
+        permissionMode: string | undefined,
+        thinkingLevel: string | null,
+        effortLevel: string | null = null
     ): Promise<void> {
         // Save thinkingLevel
         if (thinkingLevel) {
             this.thinkingLevel = thinkingLevel;
         }
 
-        // Compute maxThinkingTokens
-        const maxThinkingTokens = this.getMaxThinkingTokens(this.thinkingLevel);
+        const thinking = this.getThinkingConfig(this.thinkingLevel);
+        const effort = toEffort(effortLevel);
 
         this.logService.info('');
         this.logService.info('╔════════════════════════════════════════╗');
@@ -359,9 +381,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
         this.logService.info(`  Resume: ${resume || 'null'}`);
         this.logService.info(`  CWD: ${cwd}`);
         this.logService.info(`  Model: ${model || 'null'}`);
-        this.logService.info(`  Permission: ${permissionMode}`);
+        this.logService.info(`  Permission: ${permissionMode ?? 'CLI default'}`);
         this.logService.info(`  Thinking Level: ${this.thinkingLevel}`);
-        this.logService.info(`  Max Thinking Tokens: ${maxThinkingTokens}`);
+        this.logService.info(`  Effort: ${effort ?? 'model default'}`);
         this.logService.info('');
 
         // Check whether it already exists
@@ -400,7 +422,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 model,
                 cwd,
                 permissionMode,
-                maxThinkingTokens,
+                thinking,
+                effort,
                 // onStderrError: push fatal SDK stderr errors to the frontend in real time
                 (error) => {
                     const now = Date.now();
@@ -538,7 +561,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * @param model model name
      * @param cwd working directory
      * @param permissionMode permission mode
-     * @param maxThinkingTokens maximum thinking tokens
+     * @param thinking thinking config (undefined = CLI default)
+     * @param effort effort level (undefined = model default)
      * @returns SDK Query object
      */
     protected async spawnClaude(
@@ -547,8 +571,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
         canUseTool: CanUseTool,
         model: string | null,
         cwd: string,
-        permissionMode: string,
-        maxThinkingTokens: number,
+        permissionMode: string | undefined,
+        thinking: ThinkingConfig | undefined,
+        effort: EffortLevel | undefined,
         onStderrError?: SdkQueryParams['onStderrError']
     ): Promise<Query> {
         return this.sdkService.query({
@@ -558,7 +583,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             model,
             cwd,
             permissionMode,
-            maxThinkingTokens,
+            thinking,
+            effort,
             onStderrError
         });
     }
@@ -668,6 +694,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "get_mcp_servers":
                 return handleGetMcpServers(request, this.handlerContext, channelId);
 
+            case "get_context_usage":
+                return this.getContextUsage(channelId);
+
             case "get_asset_uris":
                 return handleGetAssetUris(request, this.handlerContext);
 
@@ -734,6 +763,16 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 await this.setThinkingLevel(channelId, thinkReq.thinkingLevel);
                 return {
                     type: "set_thinking_level_response"
+                };
+            }
+
+            case "set_effort_level": {
+                if (!channelId) {
+                    throw new Error('channelId is required for set_effort_level');
+                }
+                await this.setEffortLevel(channelId, (request as any).effortLevel ?? null);
+                return {
+                    type: "set_effort_level_response"
                 };
             }
 
@@ -909,10 +948,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
     }
 
     /**
-     * Get maxThinkingTokens (based on the thinking level)
+     * Thinking config for a level. "On" leaves the choice to the CLI (adaptive
+     * thinking on models that support it, otherwise the user's settings) rather
+     * than forcing a fixed budget; models that cannot turn thinking off
+     * (ModelInfo.supportsThinkingOff === false) ignore "off" and the UI hides the toggle.
      */
-    private getMaxThinkingTokens(level: string): number {
-        return level === 'off' ? 0 : 31999;
+    private getThinkingConfig(level: string): ThinkingConfig | undefined {
+        return level === 'off' ? { type: 'disabled' } : undefined;
     }
 
     /**
@@ -921,13 +963,29 @@ export class ClaudeAgentService implements IClaudeAgentService {
     async setThinkingLevel(channelId: string, level: string): Promise<void> {
         this.thinkingLevel = level;
 
-        // Update running channels
+        // Update running channels. setMaxThinkingTokens is the only live control:
+        // 0 disables thinking, null clears the limit (back to the CLI default).
         const channel = this.channels.get(channelId);
         if (channel?.query) {
-            const maxTokens = this.getMaxThinkingTokens(level);
+            const maxTokens = level === 'off' ? 0 : null;
             await channel.query.setMaxThinkingTokens(maxTokens);
-            this.logService.info(`[setThinkingLevel] Updated channel ${channelId} to ${level} (${maxTokens} tokens)`);
+            this.logService.info(`[setThinkingLevel] Updated channel ${channelId} to ${level}`);
         }
+    }
+
+    /**
+     * Set the effort level on a running channel (applies from the next turn).
+     * The value is passed through as the CLI lists it; null goes back to the
+     * model's default.
+     */
+    async setEffortLevel(channelId: string, level: string | null): Promise<void> {
+        const channel = this.channels.get(channelId);
+        if (!channel?.query) {
+            return;
+        }
+        const effort = toEffort(level) ?? null;
+        await channel.query.applyFlagSettings({ effortLevel: effort });
+        this.logService.info(`[setEffortLevel] Set channel ${channelId} to effort: ${effort ?? 'model default'}`);
     }
 
     /**
@@ -942,6 +1000,35 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         await channel.query.setPermissionMode(mode);
         this.logService.info(`[setPermissionMode] Set channel ${channelId} to mode: ${mode}`);
+    }
+
+    /**
+     * Context usage straight from the CLI (same numbers as `/context`): the
+     * window is the model's real one (200K / 1M ...) and the total covers the
+     * main conversation only. 'summary' answers from the last response's usage
+     * without extra token-count API calls, so it is cheap enough per turn.
+     */
+    async getContextUsage(channelId?: string): Promise<GetContextUsageResponse> {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        if (!channel?.query) {
+            return { type: "get_context_usage_response", usage: null };
+        }
+        try {
+            const r = await channel.query.getContextUsage({ detail: 'summary' });
+            return {
+                type: "get_context_usage_response",
+                usage: {
+                    totalTokens: r.totalTokens,
+                    maxTokens: r.maxTokens,
+                    rawMaxTokens: r.rawMaxTokens,
+                    percentage: r.percentage,
+                    model: r.model
+                }
+            };
+        } catch (error) {
+            this.logService.warn(`[getContextUsage] ${error instanceof Error ? error.message : String(error)}`);
+            return { type: "get_context_usage_response", usage: null };
+        }
     }
 
     /**

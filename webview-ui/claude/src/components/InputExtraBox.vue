@@ -1,5 +1,5 @@
 <template>
-  <div v-if="shouldShow" style="padding: 0px 8px;">
+  <div v-if="shouldShow" style="padding: 0px 9px;">
     <div class="toolbar-section">
       <TodoList
         :todos="todos"

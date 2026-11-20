@@ -1,5 +1,8 @@
 <template>
-  <div class="tool-message-wrapper">
+  <div
+    class="tool-message-wrapper"
+    :class="{ 'is-card': !isCustomLayout, 'is-open': isExpanded && hasExpandableContent }"
+  >
     <!-- Custom layout mode -->
     <template v-if="isCustomLayout">
       <slot name="custom"></slot>
@@ -12,26 +15,12 @@
         class="main-line"
         :class="{ 'is-expandable': hasExpandableContent }"
         @click="toggleExpand"
-        @mouseenter="isHovered = true"
-        @mouseleave="isHovered = false"
       >
         <!-- Tool icon -->
         <Tooltip :content="toolName">
-          <button class="tool-icon-btn">
-            <span
-              v-if="!isHovered || !hasExpandableContent"
-              class="codicon"
-              :class="toolIcon"
-            ></span>
-            <span
-              v-else-if="isExpanded"
-              class="codicon codicon-fold"
-            ></span>
-            <span
-              v-else
-              class="codicon codicon-chevron-up-down"
-            ></span>
-          </button>
+          <span class="tool-icon-btn">
+            <slot name="icon"><span class="codicon" :class="toolIcon"></span></slot>
+          </span>
         </Tooltip>
 
         <!-- Main content -->
@@ -45,11 +34,23 @@
           :state="indicatorState"
           class="status-indicator-trailing"
         />
+
+        <!-- Expand chevron -->
+        <span
+          v-if="hasExpandableContent"
+          class="codicon codicon-chevron-right expand-chevron"
+          :class="{ expanded: isExpanded }"
+        ></span>
       </div>
 
       <!-- Expanded content -->
       <div v-if="hasExpandableContent && isExpanded" class="expandable-content">
         <slot name="expandable"></slot>
+      </div>
+
+      <!-- Collapsed preview (e.g. the first line of command output) -->
+      <div v-else-if="$slots.preview" class="preview-content" @click="toggleExpand">
+        <slot name="preview"></slot>
       </div>
     </template>
 
@@ -108,7 +109,7 @@ const isExpanded = computed({
     if (userToggled.value) {
       return userToggledState.value;
     }
-    // Otherwise decide from defaultExpanded or the error state
+    // Tools decide via defaultExpanded (permission previews, diffs); errors always open
     return props.defaultExpanded || !!props.toolResult?.is_error;
   },
   set: (value) => {
@@ -117,13 +118,11 @@ const isExpanded = computed({
   },
 });
 
-const isHovered = ref(false);
-
 // State computation
 const indicatorState = computed<'success' | 'error' | 'pending' | null>(() => {
   if (props.toolResult?.is_error) return 'error';
   if (props.permissionState === 'pending') return 'pending';
-  if (props.toolResult) return 'success';
+  // Cursor shows no marker for a finished tool; only pending and failed ones get a dot
   return null;
 });
 
@@ -139,15 +138,45 @@ function toggleExpand() {
 .tool-message-wrapper {
   display: flex;
   flex-direction: column;
-  padding: 0px 8px;
+  padding: 2px 12px;
+}
+
+/* Card: one compact rounded row; expands in place */
+.tool-message-wrapper.is-card {
+  margin: 0;
+  padding: 0;
+  /* Cursor tokens: --cursor-stroke-secondary (fg 12%), --cursor-radius-xl (12px) */
+  border: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent);
+  border-radius: 12px;
+  background: var(--vscode-editor-background);
+  overflow: hidden;
+  contain: paint;
 }
 
 .main-line {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 0;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 22px;
   user-select: none;
+}
+
+.preview-content {
+  padding: 6px 10px;
+  border-top: 1px solid var(--cs-fg-12);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--cs-fg-36);
+  cursor: pointer;
+}
+
+/* Open card: divider under the header, like composer-tool-call-simple-layout-header */
+.tool-message-wrapper.is-open .main-line {
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent);
 }
 
 .main-line.is-expandable {
@@ -155,24 +184,21 @@ function toggleExpand() {
 }
 
 .main-line.is-expandable:hover {
-  background-color: color-mix(in srgb, var(--vscode-list-hoverBackground) 30%, transparent);
+  background-color: color-mix(in srgb, var(--vscode-editor-foreground) 4%, transparent);
 }
 
 .tool-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: none;
-  border: none;
-  padding: 2px;
-  color: var(--vscode-foreground);
-  width: 20px;
-  height: 20px;
+  color: color-mix(in srgb, var(--vscode-editor-foreground) 60%, transparent);
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
 }
 
 .tool-icon-btn .codicon {
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .main-content {
@@ -181,16 +207,42 @@ function toggleExpand() {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Long labels/paths truncate instead of wrapping the card */
+.main-content > :slotted(*) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status-indicator-trailing {
   margin-left: auto;
 }
 
+.expand-chevron {
+  font-size: 14px;
+  color: color-mix(in srgb, var(--vscode-editor-foreground) 60%, transparent);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: transform 100ms ease, opacity 100ms ease;
+}
+
+.expand-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+/* Cursor cards carry no permanent chevron; it shows while the header is hovered */
+.main-line:hover .expand-chevron {
+  opacity: 1;
+}
+
 .expandable-content {
-  padding: 4px 0 0px 16px;
-  margin-left: 10px;
-  border-left: 1px solid var(--vscode-panel-border);
+  padding: 4px 8px;
+  max-height: 480px;
+  overflow-y: auto;
 }
 
 /* Permission approval buttons */
@@ -199,7 +251,7 @@ function toggleExpand() {
   justify-content: flex-end;
   gap: 8px;
   padding: 8px 0 4px;
-  margin-left: 26px;
+  padding: 8px 10px 10px;
 }
 
 .btn-reject,

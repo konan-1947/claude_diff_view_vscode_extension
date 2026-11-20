@@ -31,12 +31,14 @@ interface SessionMessage {
     sessionId: string;
     parentUuid?: string;
     timestamp: string;
-    type: "user" | "assistant" | "attachment" | "system" | "summary";
+    type: "user" | "assistant" | "attachment" | "system" | "summary" | "ai-title" | "custom-title";
     message?: any;
     isMeta?: boolean;
     isSidechain?: boolean;
     leafUuid?: string;
     summary?: string;
+    aiTitle?: string;
+    customTitle?: string;
     toolUseResult?: any;
     gitBranch?: string;
     cwd?: string;
@@ -172,38 +174,52 @@ function convertMessage(msg: SessionMessage): any | undefined {
 }
 
 /**
- * Generate a session summary
+ * Text injected by the CLI rather than typed by the user (slash-command echo,
+ * local command output, caveats, system reminders). Never usable as a title.
  */
-function generateSummary(messages: SessionMessage[]): string {
-    let firstUserMessage: SessionMessage | undefined;
+const SYNTHETIC_PROMPT_REGEX =
+    /^\s*(<command-name>|<command-message>|<command-args>|<local-command-|<system-reminder>|<ide_|Caveat: The messages below were generated)/;
 
-    for (const msg of messages) {
-        if (msg.type === "user" && !msg.isMeta) {
-            firstUserMessage = msg;
-        } else if (firstUserMessage) {
-            break;
-        }
-    }
-
-    if (!firstUserMessage || firstUserMessage.type !== "user") {
-        return "No prompt";
-    }
-
-    const content = firstUserMessage.message?.content;
+/**
+ * Extract the user-typed text of a message, or "" when there is none
+ */
+function extractUserText(msg: SessionMessage): string {
+    const content = msg.message?.content;
     let text = "";
 
     if (typeof content === "string") {
         text = content;
     } else if (Array.isArray(content)) {
-        // Search backwards for the last item of type text
-        const textItems = content.filter((item: any) => item.type === "text");
-        text = textItems.length > 0 ? textItems[textItems.length - 1]?.text || "No prompt" : "No prompt";
-    } else {
-        text = "No prompt";
+        // Last text item (earlier ones are usually injected context)
+        const textItems = content.filter((item: any) => item.type === "text" && item.text);
+        text = textItems.length > 0 ? textItems[textItems.length - 1].text : "";
+    }
+
+    return SYNTHETIC_PROMPT_REGEX.test(text) ? "" : text.trim();
+}
+
+/**
+ * Generate a session summary from the first real user prompt
+ */
+function generateSummary(messages: SessionMessage[]): string {
+    let text = "";
+
+    for (const msg of messages) {
+        if (msg.type !== "user" || msg.isMeta) {
+            continue;
+        }
+        text = extractUserText(msg);
+        if (text) {
+            break;
+        }
+    }
+
+    if (!text) {
+        return "No prompt";
     }
 
     // Strip newlines and truncate
-    text = text.replace(/\n/g, " ").trim();
+    text = text.replace(/\s*\n\s*/g, " ");
     if (text.length > 45) {
         text = text.slice(0, 45) + "...";
     }
@@ -223,6 +239,8 @@ interface SessionData {
     sessionMessages: Map<string, Set<string>>;
     messages: Map<string, SessionMessage>;
     summaries: Map<string, string>;
+    /** Session name written by the CLI (`custom-title` from /rename wins over `ai-title`), keyed by session id */
+    titles: Map<string, string>;
 }
 
 /**
@@ -238,7 +256,8 @@ async function loadProjectData(cwd: string): Promise<SessionData> {
         return {
             sessionMessages: new Map(),
             messages: new Map(),
-            summaries: new Map()
+            summaries: new Map(),
+            titles: new Map()
         };
     }
 
@@ -262,12 +281,15 @@ async function loadProjectData(cwd: string): Promise<SessionData> {
                 return {
                     sessionId,
                     sessionMessages: new Map<string, SessionMessage>(),
-                    summaries: new Map<string, string>()
+                    summaries: new Map<string, string>(),
+                    titles: new Map<string, string>()
                 };
             }
 
             const messages = new Map<string, SessionMessage>();
             const summaries = new Map<string, string>();
+            let aiTitle: string | undefined;
+            let customTitle: string | undefined;
 
             try {
                 for (const msg of await readJSONL(file.name)) {
@@ -280,12 +302,22 @@ async function loadProjectData(cwd: string): Promise<SessionData> {
                         messages.set(msg.uuid, msg);
                     } else if (msg.type === "summary" && msg.leafUuid) {
                         summaries.set(msg.leafUuid, msg.summary!);
+                    } else if (msg.type === "ai-title" && msg.aiTitle) {
+                        aiTitle = msg.aiTitle;
+                    } else if (msg.type === "custom-title" && msg.customTitle) {
+                        customTitle = msg.customTitle;
                     }
                 }
             } catch {
             }
 
-            return { sessionId, sessionMessages: messages, summaries };
+            const titles = new Map<string, string>();
+            const title = customTitle || aiTitle;
+            if (title) {
+                titles.set(sessionId, title);
+            }
+
+            return { sessionId, sessionMessages: messages, summaries, titles };
         })
     );
 
@@ -293,7 +325,9 @@ async function loadProjectData(cwd: string): Promise<SessionData> {
     const allMessages = new Map<string, SessionMessage>();
     const allSummaries = new Map<string, string>();
 
-    for (const { sessionId, sessionMessages: messages, summaries } of loadedData) {
+    const allTitles = new Map<string, string>();
+
+    for (const { sessionId, sessionMessages: messages, summaries, titles } of loadedData) {
         if (!sessionId) continue;
 
         sessionMessages.set(sessionId, new Set(messages.keys()));
@@ -305,12 +339,17 @@ async function loadProjectData(cwd: string): Promise<SessionData> {
         for (const [uuid, summary] of summaries.entries()) {
             allSummaries.set(uuid, summary);
         }
+
+        for (const [id, title] of titles.entries()) {
+            allTitles.set(id, title);
+        }
     }
 
     return {
         sessionMessages,
         messages: allMessages,
-        summaries: allSummaries
+        summaries: allSummaries,
+        titles: allTitles
     };
 }
 
@@ -384,7 +423,7 @@ export class ClaudeSessionService implements IClaudeSessionService {
                     messageCount: transcript.length,
                     isSidechain: firstMessage.isSidechain,
                     id: lastMessage.sessionId,
-                    summary: data.summaries.get(lastMessage.uuid) || summary,
+                    summary: data.titles.get(lastMessage.sessionId) || data.summaries.get(lastMessage.uuid) || summary,
                     isCurrentWorkspace: true
                 };
             });

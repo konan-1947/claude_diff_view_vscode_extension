@@ -6,8 +6,11 @@
     :default-expanded="shouldExpand"
     :class="{ 'has-diff-view': hasDiffView }"
   >
+    <template #icon>
+      <FileIcon v-if="filePath" :file-name="filePath" :size="16" />
+    </template>
+
     <template #main>
-      <span class="tool-label">Edit</span>
       <ToolFilePath v-if="filePath" :file-path="filePath" :context="context" />
       <span v-if="diffStats" class="diff-stats">
         <span v-if="diffStats.added > 0" class="stat-add">+{{ diffStats.added }}</span>
@@ -78,6 +81,7 @@ import type { ToolContext } from '@/types/tool';
 import ToolMessageWrapper from './common/ToolMessageWrapper.vue';
 import ToolError from './common/ToolError.vue';
 import ToolFilePath from './common/ToolFilePath.vue';
+import { generateLinePatch } from '@/utils/linePatch';
 import FileIcon from '@/components/FileIcon.vue';
 
 interface Props {
@@ -122,7 +126,7 @@ watch(
     }
     // If there is input, build a temporary diff (permission request phase, or kept after a live run finishes)
     else if (props.toolUse?.input?.old_string && props.toolUse?.input?.new_string) {
-      structuredPatch.value = generatePatchFromInput(
+      structuredPatch.value = generateLinePatch(
         props.toolUse.input.old_string,
         props.toolUse.input.new_string
       );
@@ -145,8 +149,7 @@ const isPermissionRequest = computed(() => {
 
 // Expanded by default only during the permission request phase, collapsed once done
 const shouldExpand = computed(() => {
-  const result = hasDiffView.value && isPermissionRequest.value;
-  return result;
+  return hasDiffView.value;
 });
 
 // DOM refs
@@ -158,32 +161,6 @@ function handleContentScroll() {
   if (lineNumbersRef.value && contentRef.value) {
     lineNumbersRef.value.scrollTop = contentRef.value.scrollTop;
   }
-}
-
-// Build a simple patch from old_string and new_string
-function generatePatchFromInput(oldStr: string, newStr: string): any[] {
-  const oldLines = oldStr.split('\n');
-  const newLines = newStr.split('\n');
-
-  const lines: string[] = [];
-
-  // Add the removed lines
-  oldLines.forEach(line => {
-    lines.push('-' + line);
-  });
-
-  // Add the added lines
-  newLines.forEach(line => {
-    lines.push('+' + line);
-  });
-
-  return [{
-    oldStart: 1,
-    oldLines: oldLines.length,
-    newStart: 1,
-    newLines: newLines.length,
-    lines
-  }];
 }
 
 // Compute diff stats

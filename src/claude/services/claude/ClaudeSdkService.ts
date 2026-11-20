@@ -31,7 +31,19 @@ import type {
     PermissionMode,
     SDKUserMessage,
     HookCallbackMatcher,
+    ThinkingConfig,
+    EffortLevel,
 } from '@anthropic-ai/claude-agent-sdk';
+
+/**
+ * `ai-cli-diff-view.claudeAllowBypassPermissions`: offer "Bypass permissions"
+ * in Claude UI tabs (passed to the CLI as allowDangerouslySkipPermissions).
+ */
+export function allowBypassPermissions(): boolean {
+    return vscode.workspace
+        .getConfiguration('ai-cli-diff-view')
+        .get<boolean>('claudeAllowBypassPermissions', false);
+}
 
 export const IClaudeSdkService = createDecorator<IClaudeSdkService>('claudeSdkService');
 
@@ -54,8 +66,12 @@ export interface SdkQueryParams {
     canUseTool: CanUseTool;
     model: string | null;  // ← accepts null, converted internally
     cwd: string;
-    permissionMode: PermissionMode | string;  // ← accepts a string
-    maxThinkingTokens?: number;  // ← upper limit for thinking tokens
+    /** undefined = let the CLI pick (settings `permissions.defaultMode`) */
+    permissionMode?: PermissionMode | string;
+    /** undefined = the CLI's default (adaptive where the model supports it) */
+    thinking?: ThinkingConfig;
+    /** undefined = the model's default effort */
+    effort?: EffortLevel;
     /** Callback invoked when stderr shows a fatal error (streaming request fallback failed) */
     onStderrError?: (error: LLMRequestError) => void;
 }
@@ -147,7 +163,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
      * Query Claude through the SDK
      */
     async query(params: SdkQueryParams): Promise<Query> {
-        const { inputStream, resume, canUseTool, model, cwd, permissionMode, maxThinkingTokens, onStderrError } = params;
+        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, effort, onStderrError } = params;
 
         this.logService.info('========================================');
         this.logService.info('ClaudeSdkService.query() called');
@@ -157,11 +173,12 @@ export class ClaudeSdkService implements IClaudeSdkService {
         this.logService.info(`  - cwd: ${cwd}`);
         this.logService.info(`  - permissionMode: ${permissionMode}`);
         this.logService.info(`  - resume: ${resume}`);
-        this.logService.info(`  - maxThinkingTokens: ${maxThinkingTokens ?? 'undefined'}`);
+        this.logService.info(`  - thinking: ${thinking ? JSON.stringify(thinking) : 'CLI default'}`);
+        this.logService.info(`  - effort: ${effort ?? 'model default'}`);
 
         // Parameter conversion
         const modelParam = model === null ? "default" : model;
-        const permissionModeParam = permissionMode as PermissionMode;
+        const permissionModeParam = permissionMode as PermissionMode | undefined;
         const cwdParam = cwd;
 
         this.logService.info(`🔄 Converted parameters:`);
@@ -207,7 +224,10 @@ export class ClaudeSdkService implements IClaudeSdkService {
             resume: resume || undefined,
             model: modelParam,
             permissionMode: permissionModeParam,
-            maxThinkingTokens: maxThinkingTokens,
+            // Without this the CLI refuses a later switch to bypassPermissions.
+            allowDangerouslySkipPermissions: allowBypassPermissions(),
+            thinking,
+            effort,
 
             // CanUseTool callback
             canUseTool,
@@ -439,12 +459,16 @@ export class ClaudeSdkService implements IClaudeSdkService {
 
         const cliPath = await this.getClaudeExecutablePath();
 
+        // Same environment and setting sources as a real session: the model
+        // list (and each model's effort/thinking/auto-mode capabilities) depends
+        // on the provider, ANTHROPIC_* variables and settings such as
+        // `availableModels`, so a bare probe could describe different models.
+        const env = await this.getMergedEnvironmentVariables();
+
         const options: Options = {
             // Minimal config
             cwd,
-            model: 'default',
-            permissionMode: 'default' as PermissionMode,
-            maxThinkingTokens: 0,
+            env,
 
             // Permission callback (always deny)
             canUseTool: async () => ({
@@ -452,8 +476,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
                 message: 'SDK probe only'
             }),
 
-            // Load no setting sources
-            settingSources: [],
+            settingSources: ['user', 'project', 'local'],
 
             // No stderr output
             stderr: () => {},
@@ -461,8 +484,8 @@ export class ClaudeSdkService implements IClaudeSdkService {
             // CLI path
             pathToClaudeCodeExecutable: cliPath,
 
-            // Minimal extra arguments (debug flag removed)
-            extraArgs: {},
+            // Profile overlay, as for a real session (no debug flags)
+            extraArgs: { 'settings': FLAG_SETTINGS_PATH } as Record<string, string | null>,
 
             // No partial messages
             includePartialMessages: false,

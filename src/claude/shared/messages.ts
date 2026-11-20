@@ -41,6 +41,7 @@ export interface LaunchClaudeMessage extends BaseMessage {
     model?: string | null;         // model name
     permissionMode?: PermissionMode; // permission mode
     thinkingLevel?: string | null; // Thinking level (off | default_on)
+    effortLevel?: string | null;   // Effort level reported by the CLI for the model; null/"auto" = CLI default
 }
 
 /**
@@ -146,6 +147,7 @@ export interface InitResponse {
         modelSetting: string;
         platform: string;
         thinkingLevel?: string;        // Thinking level (off | default_on)
+        allowBypassPermissions?: boolean; // ai-cli-diff-view.claudeAllowBypassPermissions
     };
 }
 
@@ -241,6 +243,20 @@ export interface SetThinkingLevelResponse {
 }
 
 /**
+ * Set the effort level (any level the CLI lists in ModelInfo.supportedEffortLevels;
+ * null or "auto" goes back to the model's default)
+ */
+export interface SetEffortLevelRequest {
+    type: "set_effort_level";
+    channelId: string;
+    effortLevel: string | null;
+}
+
+export interface SetEffortLevelResponse {
+    type: "set_effort_level_response";
+}
+
+/**
  * Get the Claude state
  */
 export interface GetClaudeStateRequest {
@@ -284,6 +300,27 @@ export interface GetMcpServersRequest {
 export interface GetMcpServersResponse {
     type: "get_mcp_servers_response";
     mcpServers: Array<{ name: string; status: string }>;
+}
+
+/**
+ * Context window usage as the CLI itself reports it (`/context`).
+ * `usage` is null when the channel has no live query yet.
+ */
+export interface GetContextUsageRequest {
+    type: "get_context_usage";
+}
+
+export interface GetContextUsageResponse {
+    type: "get_context_usage_response";
+    usage: {
+        totalTokens: number;
+        /** Effective window (what percentage is measured against) */
+        maxTokens: number;
+        /** Raw model window before the CLI's reserved buffers */
+        rawMaxTokens: number;
+        percentage: number;
+        model: string;
+    } | null;
 }
 
 /**
@@ -788,6 +825,7 @@ export type WebViewRequest =
     | SetPermissionModeRequest
     | SetModelRequest
     | SetThinkingLevelRequest
+    | SetEffortLevelRequest
     | GetCurrentSelectionRequest
     | ShowNotificationRequest
     | NewConversationTabRequest
@@ -795,6 +833,7 @@ export type WebViewRequest =
     | GetClaudeStateRequest
     | SdkProbeRequest
     | GetMcpServersRequest
+    | GetContextUsageRequest
     | GetAssetUrisRequest
     | ListSessionsRequest
     | GetSessionRequest
@@ -828,6 +867,7 @@ export type WebViewRequestResponse =
     | SetPermissionModeResponse
     | SetModelResponse
     | SetThinkingLevelResponse
+    | SetEffortLevelResponse
     | GetCurrentSelectionResponse
     | ShowNotificationResponse
     | NewConversationTabResponse
@@ -835,6 +875,7 @@ export type WebViewRequestResponse =
     | GetClaudeStateResponse
     | SdkProbeResponse
     | GetMcpServersResponse
+    | GetContextUsageResponse
     | GetAssetUrisResponse
     | ListSessionsResponse
     | GetSessionResponse

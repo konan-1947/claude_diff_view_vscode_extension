@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { allowBypassPermissions } from '../ClaudeSdkService';
 import type {
     InitRequest,
     InitResponse,
@@ -111,7 +112,8 @@ export async function handleInit(
             // authStatus,
             modelSetting,
             platform: process.platform,
-            thinkingLevel
+            thinkingLevel,
+            allowBypassPermissions: allowBypassPermissions()
         }
     };
 }

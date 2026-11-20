@@ -172,9 +172,6 @@ const shouldExpand = computed(() => {
   // Expand when there is an error
   if (props.toolResult?.is_error) return true;
 
-  // Expand when there is output
-  if (hasOutput.value) return true;
-
   return false;
 });
 </script>

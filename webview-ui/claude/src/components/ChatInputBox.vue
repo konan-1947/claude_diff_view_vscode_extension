@@ -30,7 +30,7 @@
       contenteditable="true"
       class="aislash-editor-input custom-scroll-container"
       :data-placeholder="placeholder"
-      style="min-height: 34px; max-height: 240px; resize: none; overflow-y: hidden; word-wrap: break-word; white-space: pre-wrap; width: 100%; height: 34px;"
+      :style="{ minHeight: INPUT_MIN_HEIGHT + 'px', height: INPUT_MIN_HEIGHT + 'px' }"
       @input="handleInput"
       @keydown="handleKeydown"
       @paste="handlePaste"
@@ -50,11 +50,16 @@
       :context-tooltip="contextTooltip"
       :thinking-level="thinkingLevel"
       :permission-mode="permissionMode"
+      :modes="modes"
+      :show-thinking-toggle="showThinkingToggle"
+      :effort-level="effortLevel"
+      :effort-levels="effortLevels"
       @submit="handleSubmit"
       @stop="handleStop"
       @add-attachment="handleAddFiles"
       @mention="handleMention"
       @thinking-toggle="() => emit('thinkingToggle')"
+      @effort-select="(level) => emit('effortSelect', level)"
       @mode-select="(mode) => emit('modeSelect', mode)"
       @model-select="(modelId) => emit('modelSelect', modelId)"
     />
@@ -142,6 +147,7 @@ import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import FileIcon from './FileIcon.vue'
 import ButtonArea from './ButtonArea.vue'
 import type { AttachmentItem } from '../types/attachment'
+import type { ModeOption } from '../utils/permissionModes'
 import { Dropdown, DropdownItem } from './Dropdown'
 import { RuntimeKey } from '../composables/runtimeContext'
 import { useCompletionDropdown } from '../composables/useCompletionDropdown'
@@ -160,6 +166,10 @@ interface Props {
   attachments?: AttachmentItem[]
   thinkingLevel?: string
   permissionMode?: PermissionMode
+  modes?: ModeOption[]
+  showThinkingToggle?: boolean
+  effortLevel?: string
+  effortLevels?: string[]
 }
 
 interface Emits {
@@ -171,6 +181,7 @@ interface Emits {
   (e: 'addAttachment', files: FileList): void
   (e: 'removeAttachment', id: string): void
   (e: 'thinkingToggle'): void
+  (e: 'effortSelect', level: string): void
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', modelId: string): void
 }
@@ -186,12 +197,20 @@ const props = withDefaults(defineProps<Props>(), {
   conversationWorking: false,
   attachments: () => [],
   thinkingLevel: 'default_on',
-  permissionMode: 'default'
+  permissionMode: 'default',
+  modes: () => [],
+  showThinkingToggle: true,
+  effortLevel: 'auto',
+  effortLevels: () => []
 })
 
 const emit = defineEmits<Emits>()
 
 const runtime = inject(RuntimeKey)
+
+// Empty input is three 22px lines tall (Cursor-like), grows up to the max
+const INPUT_MIN_HEIGHT = 66
+const INPUT_MAX_HEIGHT = 240
 
 const content = ref('')
 const isLoading = ref(false)
@@ -382,12 +401,12 @@ function autoResizeTextarea() {
     const divElement = textareaRef.value!
 
     // Reset the height to get an accurate scrollHeight
-    divElement.style.height = '20px'
+    divElement.style.height = INPUT_MIN_HEIGHT + 'px'
 
     // Compute the required height
     const scrollHeight = divElement.scrollHeight
-    const minHeight = 20
-    const maxHeight = 240
+    const minHeight = INPUT_MIN_HEIGHT
+    const maxHeight = INPUT_MAX_HEIGHT
 
     if (scrollHeight <= maxHeight) {
       // Content fits within the max height: adjust height and hide the scrollbar
@@ -753,7 +772,13 @@ defineExpose({
 <style scoped>
 /* Base input styles - fixed line height for stable caret positioning */
 .aislash-editor-input {
-  line-height: 18px;
+  line-height: 22px;
+  max-height: 240px;
+  resize: none;
+  overflow-y: hidden;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  width: 100%;
 }
 
 /* Remove the border when the input is focused */
@@ -762,9 +787,9 @@ defineExpose({
   border: none !important;
 }
 
-/* Remove the border when the parent container is focused */
+/* Cursor keeps the same border while focused */
 .full-input-box:focus-within {
-  border-color: var(--vscode-input-border) !important;
+  border-color: var(--cs-fg-20) !important;
   outline: none !important;
 }
 

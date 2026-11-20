@@ -2,7 +2,7 @@
   "name": "ai-cli-diff-view",
   "displayName": "AI CLI diff view",
   "description": "Cursor-like inline diff review for any AI CLI agent's file edits, right inside VS Code",
-  "version": "5.1.0",
+  "version": "6.0.0",
   "publisher": "konan1947",
   "license": "AGPL-3.0-only",
   "repository": {
@@ -145,6 +145,11 @@
           "type": "string",
           "default": "",
           "description": "Full path to the `claude` executable used by the Claude UI tabs. Leave empty to use the `claude` found on PATH, a well-known install location, or the SDK's bundled binary."
+        },
+        "ai-cli-diff-view.claudeAllowBypassPermissions": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Offer **Bypass permissions** in the mode picker of Claude UI tabs (Claude runs every tool without asking). Only use it in isolated environments. Takes effect for conversations started after the change."
         }
       }
     },

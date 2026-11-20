@@ -203,8 +203,7 @@ onUnmounted(() => {
 .user-message {
   display: block;
   outline: none;
-  padding: 1px 12px 8px;
-  background-color: var(--vscode-sideBar-background);
+  padding: 0 var(--cs-edge);
   opacity: 1;
 }
 
@@ -212,28 +211,21 @@ onUnmounted(() => {
   background-color: transparent;
 }
 
-/* Message content container - handles background and rounded corners */
+/* The frame is the bubble itself (see .message-text); the outer box stays invisible */
 .message-content {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  background-color: color-mix(
-    in srgb,
-    var(--vscode-sideBar-background) 60%,
-    transparent
-  );
+  background-color: transparent;
   outline: none;
-  border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
+  border: none;
+  border-radius: 12px;
   position: relative;
-  transition: all 0.2s ease;
 }
 
 .message-content.editing {
   z-index: 200;
-  border: none;
-  background-color: transparent;
 }
 
 /* Normal display mode */
@@ -243,20 +235,16 @@ onUnmounted(() => {
   align-items: flex-end;
   width: 100%;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
 .message-view .message-text {
   cursor: pointer;
-  background-color: color-mix(
-    in srgb,
-    var(--vscode-input-background) 60%,
-    transparent
-  );
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--cs-fg-20);
   outline: none;
-  border-radius: 6px;
+  border-radius: 12px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 8px 10px;
   box-sizing: border-box;
   min-width: 0;
   flex: 1;
@@ -264,25 +252,23 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .message-view .message-text:hover {
-  background-color: color-mix(
-    in srgb,
-    var(--vscode-input-background) 70%,
-    transparent
-  );
+  background-color: var(--vscode-editor-background);
+  border-color: var(--cs-fg-36);
 }
 
 .message-text > div:first-child {
   min-width: 0;
   height: min-content;
-  max-height: 72px;
+  max-height: 120px;
   overflow: hidden;
-  line-height: 1.5;
+  line-height: 22px;
   font-family: inherit;
-  font-size: 13px;
-  color: var(--vscode-input-foreground);
+  font-size: 14px;
+  color: var(--vscode-foreground);
   background-color: transparent;
   outline: none;
   border: none;
@@ -304,13 +290,20 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   line-height: 17px;
-  padding: 0 6px;
-  height: 26px;
+  padding: 0 2px;
+  align-self: flex-end;
+  height: 20px;
   box-sizing: border-box;
   flex-shrink: 0;
   cursor: pointer;
-  border-radius: 3px;
-  transition: background-color 0.1s ease;
+  border-radius: 4px;
+  opacity: 0;
+  transition: background-color 0.1s ease, opacity 0.15s ease;
+}
+
+.message-text:hover .restore-button,
+.restore-button:focus-visible {
+  opacity: 1;
 }
 
 .restore-button:hover {

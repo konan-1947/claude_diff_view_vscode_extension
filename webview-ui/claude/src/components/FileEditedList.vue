@@ -3,14 +3,14 @@
     <Collapsible :default-open="initialExpanded">
       <template #trigger="{ open }">
         <!-- Files Edited header -->
-        <div style="display: flex; justify-content: space-between; align-items: center; height: 24px; cursor: pointer;">
-          <div style="display: flex; align-items: center; gap: 4px; flex-grow: 1; padding-left: 4px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; height: 26px; cursor: pointer;">
+          <div style="display: flex; align-items: center; gap: 4px; flex-grow: 1; padding: 4px 8px;">
             <span
               class="codicon"
               :class="open ? 'codicon-chevron-down' : 'codicon-chevron-right'"
-              style="color: var(--vscode-foreground); opacity: 0.6; font-size: 12px;"
+              style="color: var(--cs-fg-66); font-size: 14px;"
             />
-            <div style="font-size: 12px; color: var(--vscode-input-placeholderForeground); opacity: 0.8;">
+            <div style="font-size: 12px; color: var(--cs-fg-66);">
               <span>{{ filesEdited.length }} Files Edited</span>
               <span style="margin-left: 8px;">
                 <span style="color: var(--vscode-gitDecoration-addedResourceForeground);">+{{ totalAdditions }}</span>

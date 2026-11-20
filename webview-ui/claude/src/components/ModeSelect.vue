@@ -4,52 +4,31 @@
     :close-on-click-outside="true"
   >
     <template #trigger>
-      <div class="mode-dropdown">
+      <div class="mode-dropdown" :title="selectedMode.description">
         <div class="dropdown-content">
-          <div :class="['codicon', selectedModeIcon, 'dropdown-icon', 'text-[14px]!']" />
+          <div :class="['codicon', selectedMode.icon, 'dropdown-icon', 'text-[14px]!']" />
           <div class="dropdown-text">
-            <span class="dropdown-label">{{ selectedModeLabel }}</span>
+            <span class="dropdown-label">{{ selectedMode.label }}</span>
           </div>
         </div>
-        <div class="codicon codicon-chevron-up chevron-icon text-[12px]!" />
+        <div class="codicon codicon-chevron-down chevron-icon text-[14px]!" />
       </div>
     </template>
 
     <template #content="{ close }">
       <DropdownItem
+        v-for="(mode, idx) in modes"
+        :key="mode.id"
         :item="{
-          id: 'default',
-          label: 'Default',
-          icon: 'codicon-chat text-[14px]!',
-          checked: permissionMode === 'default',
-          type: 'default-mode'
+          id: mode.id,
+          label: mode.label,
+          detail: mode.description,
+          icon: `${mode.icon} text-[14px]!`,
+          checked: permissionMode === mode.id,
+          type: 'permission-mode'
         }"
-        :is-selected="permissionMode === 'default'"
-        :index="0"
-        @click="(item) => handleModeSelect(item, close)"
-      />
-      <DropdownItem
-        :item="{
-          id: 'acceptEdits',
-          label: 'Agent',
-          icon: 'codicon-infinity text-[14px]!',
-          checked: permissionMode === 'acceptEdits',
-          type: 'agent-mode'
-        }"
-        :is-selected="permissionMode === 'acceptEdits'"
-        :index="1"
-        @click="(item) => handleModeSelect(item, close)"
-      />
-      <DropdownItem
-        :item="{
-          id: 'plan',
-          label: 'Plan',
-          icon: 'codicon-todos text-[14px]!',
-          checked: permissionMode === 'plan',
-          type: 'plan-mode'
-        }"
-        :is-selected="permissionMode === 'plan'"
-        :index="2"
+        :is-selected="permissionMode === mode.id"
+        :index="idx"
         @click="(item) => handleModeSelect(item, close)"
       />
     </template>
@@ -60,9 +39,12 @@
 import { computed } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { DropdownTrigger, DropdownItem, type DropdownItemData } from './Dropdown'
+import { describeMode, type ModeOption } from '../utils/permissionModes'
 
 interface Props {
   permissionMode?: PermissionMode
+  /** Modes to offer, from availableModes() (driven by the CLI's model capabilities) */
+  modes?: ModeOption[]
 }
 
 interface Emits {
@@ -70,44 +52,16 @@ interface Emits {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  permissionMode: 'default'
+  permissionMode: 'default',
+  modes: () => []
 })
 
 const emit = defineEmits<Emits>()
 
-// Compute the displayed mode name
-const selectedModeLabel = computed(() => {
-  switch (props.permissionMode) {
-    case 'acceptEdits':
-      return 'Agent'
-    case 'plan':
-      return 'Plan'
-    case 'default':
-      return 'Default'
-    default:
-      return 'Default'
-  }
-})
-
-// Compute the displayed icon
-const selectedModeIcon = computed(() => {
-  switch (props.permissionMode) {
-    case 'acceptEdits':
-      return 'codicon-infinity'
-    case 'plan':
-      return 'codicon-todos'
-    case 'default':
-      return 'codicon-chat'
-    default:
-      return 'codicon-chat'
-  }
-})
+const selectedMode = computed(() => describeMode(props.permissionMode))
 
 function handleModeSelect(item: DropdownItemData, close: () => void) {
-  console.log('Selected mode:', item)
   close()
-
-  // Emit the mode change event
   emit('modeSelect', item.id as PermissionMode)
 }
 </script>
@@ -119,15 +73,15 @@ function handleModeSelect(item: DropdownItemData, close: () => void) {
   gap: 4px;
   font-size: 12px;
   align-items: center;
-  line-height: 24px;
+  line-height: 16.8px;
   min-width: 0;
   max-width: 100%;
-  padding: 2px 4px 2px 6px;
-  border-radius: 24px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 9999px;
   flex-shrink: 0;
   cursor: pointer;
   border: none;
-  background: color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+  background: var(--cs-fg-14);
   transition: background-color 0.2s ease;
   opacity: .8;
   user-select: none;
@@ -147,10 +101,10 @@ function handleModeSelect(item: DropdownItemData, close: () => void) {
 }
 
 .dropdown-icon {
-  font-size: 14px;
+  font-size: 16px !important;
   flex-shrink: 0;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   display: flex !important;
   align-items: center;
   justify-content: center;

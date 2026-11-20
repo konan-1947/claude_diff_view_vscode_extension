@@ -1,94 +1,66 @@
 <template>
   <div class="sessions-page">
-    <div class="page-header">
-      <div class="header-left">
-        <button class="back-btn" @click="$emit('switchToChat')">
+    <!-- Same 35px strip as the chat page -->
+    <div class="chat-header">
+      <div class="chat-tab">
+        <button class="back-btn" title="Back to chat" @click="$emit('switchToChat')">
           <span class="codicon codicon-arrow-left"></span>
         </button>
-        <h2 class="page-title">Sessions</h2>
-      </div>
-      <div class="header-center">
+        <span class="chat-title">Chat history</span>
       </div>
       <div class="header-right">
-        <button class="icon-btn" @click="toggleSearch" :class="{ active: showSearch }">
-          <span class="codicon codicon-search"></span>
-        </button>
-        <button class="icon-btn" @click="createNewSession">
+        <button class="header-btn" title="New conversation" @click="createNewSession">
           <span class="codicon codicon-add"></span>
         </button>
       </div>
     </div>
 
-    <!-- Search bar - shown only when needed -->
-    <Motion
-      v-if="showSearch"
-      class="search-bar"
-      :initial="{ opacity: 0, y: -20 }"
-      :animate="{ opacity: 1, y: 0 }"
-      :exit="{ opacity: 0, y: -20 }"
-      :transition="{ duration: 0.2, ease: 'easeOut' }"
-    >
+    <!-- Search row (Cursor: icon + "Search Agents…") -->
+    <div class="search-row">
+      <span class="codicon codicon-search"></span>
       <input
-        ref="searchInput"
         v-model="searchQuery"
         type="text"
-        placeholder="Search Agent/Chat Threads"
         class="search-input"
-        @keydown.escape="hideSearch"
+        placeholder="Search chats…"
+        @keydown.escape="searchQuery = ''"
       >
-    </Motion>
+    </div>
 
-    <div class="page-content custom-scroll-container">
-      <!-- Loading state -->
-      <div v-if="loading" class="loading-state">
-        <div class="spinner"></div>
-        <p>Loading session history...</p>
+    <div class="list custom-scroll-container">
+      <div v-if="loading" class="note">Loading…</div>
+
+      <div v-else-if="error" class="note">
+        <div class="error-message">{{ error }}</div>
+        <button class="link-btn" @click="refreshSessions">Retry</button>
       </div>
 
-      <!-- Error state -->
-      <div v-else-if="error" class="error-state">
-        <p class="error-message">{{ error }}</p>
-        <button class="btn-primary" @click="refreshSessions">Retry</button>
+      <div v-else-if="sessionList.length === 0" class="note">
+        No chats yet.
+        <button class="link-btn" @click="startNewChat">Start one</button>
       </div>
 
-      <!-- Empty state -->
-      <div v-else-if="sessionList.length === 0" class="empty-state">
-        <div class="empty-icon">
-          <Icon icon="comment-discussion" :size="48" />
+      <template v-else>
+        <div v-for="group in groups" :key="group.label" class="group">
+          <div class="group-label">{{ group.label }}</div>
+          <button
+            v-for="(session, index) in group.items"
+            :key="session.sessionId.value || `temp-${group.label}-${index}`"
+            class="item"
+            @click="openSession(session)"
+          >
+            <span class="codicon codicon-comment item-icon"></span>
+            <span class="item-title">{{ session.summary.value || 'New Conversation' }}</span>
+            <span class="item-time">{{ formatRelativeTime(session.lastModifiedTime.value) }}</span>
+          </button>
         </div>
-        <h3>No session history yet</h3>
-        <p class="empty-hint">Your session history will appear here once you start chatting with Claude</p>
-        <button class="btn-primary" @click="startNewChat">Start a new conversation</button>
-      </div>
-
-      <!-- Session list -->
-      <div v-else class="sessions-container">
-        <div
-          v-for="(session, index) in filteredSessions"
-          :key="session.sessionId.value || `temp-${index}`"
-          class="session-card"
-          @click="openSession(session)"
-        >
-            <div class="session-card-header">
-              <h3 class="session-title">{{ session.summary.value || 'New Conversation' }}</h3>
-              <div class="session-date">{{ formatRelativeTime(session.lastModifiedTime.value) }}</div>
-            </div>
-
-            <div class="session-meta">
-              <span class="session-messages">{{ session.messageCount.value }} message(s)</span>
-              <span v-if="session.sessionId.value" class="session-id">{{ session.sessionId.value }}</span>
-            </div>
-
-        </div>
-      </div>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, inject } from 'vue';
-import { Motion } from 'motion-v';
-import Icon from '../components/Icon.vue';
+import { ref, computed, onMounted, inject } from 'vue';
 import { RuntimeKey } from '../composables/runtimeContext';
 import { useSessionStore } from '../composables/useSessionStore';
 import { useSession } from '../composables/useSession';
@@ -118,8 +90,6 @@ const emit = defineEmits<{
 const loading = ref(true);
 const error = ref('');
 const searchQuery = ref('');
-const showSearch = ref(false);
-const searchInput = ref<HTMLInputElement | null>(null);
 
 
 // Computed: filter and sort the session list
@@ -173,25 +143,32 @@ const createNewSession = async () => {
   emit('switchToChat', rawSession.sessionId());
 };
 
+
 const startNewChat = () => {
   emit('switchToChat');
 };
 
-// Search
-const toggleSearch = async () => {
-  showSearch.value = !showSearch.value;
-  if (showSearch.value) {
-    await nextTick();
-    searchInput.value?.focus();
-  } else {
-    searchQuery.value = '';
+// Date groups like Cursor's agent history: Today / Yesterday / Last 7 days / Older
+const groups = computed(() => {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const day = 86_400_000;
+  const buckets: { label: string; items: typeof filteredSessions.value }[] = [
+    { label: 'Today', items: [] },
+    { label: 'Yesterday', items: [] },
+    { label: 'Last 7 days', items: [] },
+    { label: 'Older', items: [] },
+  ];
+  for (const s of filteredSessions.value) {
+    const t = Number(s.lastModifiedTime.value) || 0;
+    const age = startOfToday.getTime() - t;
+    if (t >= startOfToday.getTime()) buckets[0].items.push(s);
+    else if (age <= day) buckets[1].items.push(s);
+    else if (age <= 6 * day) buckets[2].items.push(s);
+    else buckets[3].items.push(s);
   }
-};
-
-const hideSearch = () => {
-  showSearch.value = false;
-  searchQuery.value = '';
-};
+  return buckets.filter((g) => g.items.length > 0);
+});
 
 // Format relative time
 function formatRelativeTime(input?: number | string | Date): string {
@@ -219,276 +196,166 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  /* background: var(--vscode-editor-background); */
-  color: var(--vscode-editor-foreground);
+  color: var(--vscode-foreground);
 }
 
-.page-header {
+/* Strip: identical geometry to ChatPage's header */
+.chat-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  min-height: 32px;
-  padding: 0 12px;
+  align-items: stretch;
+  height: 35px;
+  flex-shrink: 0;
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+  border-bottom: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--cs-fg-12));
 }
-
-.header-left {
+.chat-tab {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  padding: 0 10px 0 6px;
+  font-size: 13px;
+  background: var(--vscode-editor-background);
+  margin-bottom: -1px;
+  border-right: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--cs-fg-12));
 }
-
-.header-center {
+.chat-title {
+  font-size: 13px;
+  font-weight: 400;
+}
+.back-btn,
+.header-btn {
   display: flex;
   align-items: center;
-  flex: 1;
   justify-content: center;
-}
-
-.back-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: none;
   background: transparent;
-  color: var(--vscode-titleBar-activeForeground);
-  border-radius: 3px;
+  border-radius: 5px;
+  color: var(--cs-fg-66);
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color var(--cs-duration) ease;
 }
-
-.back-btn .codicon {
-  font-size: 12px;
+.back-btn:hover,
+.header-btn:hover {
+  background: var(--cs-fg-8);
 }
-
-.back-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+.back-btn .codicon,
+.header-btn .codicon {
+  font-size: 16px;
 }
-
-.page-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vscode-titleBar-activeForeground);
-}
-
 .header-right {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
 }
 
-.icon-btn {
+/* Search row: 30px, 14px side padding, hairline below */
+.search-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--vscode-titleBar-activeForeground);
-  border-radius: 3px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  opacity: 0.7;
+  gap: 9px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--cs-fg-8);
+  color: var(--cs-fg-66);
+  flex-shrink: 0;
 }
-
-.icon-btn .codicon {
-  font-size: 12px;
-}
-
-.icon-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  opacity: 1;
-}
-
-.icon-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  opacity: 1;
-}
-
-.search-bar {
-  border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-sideBar-background);
-}
-
-.search-bar .search-input {
-  width: 100%;
-  padding: 2px 8px;
-  border: 1px solid var(--vscode-input-border);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border-radius: 4px;
+.search-row .codicon {
   font-size: 14px;
+}
+.search-input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
   outline: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--vscode-foreground);
+}
+.search-input::placeholder {
+  color: var(--cs-fg-36);
 }
 
-.search-bar .search-input:focus {
-  border-color: var(--vscode-focusBorder);
-}
-
-.btn-primary, .btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: baseline;
-  padding: 6px 12px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: background-color 0.2s;
-}
-
-.btn-primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-
-.btn-primary:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.btn-secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-}
-
-.btn-secondary:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.page-content {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.loading-state, .error-state, .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px;
-  text-align: center;
-  flex: 1;
-}
-
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--vscode-progressBar-background);
-  border-top: 2px solid var(--vscode-progressBar-activeForeground);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 16px;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.error-message {
-  color: var(--vscode-errorForeground);
-  margin-bottom: 16px;
-}
-
-.empty-state {
-  gap: 16px;
-}
-
-.empty-icon {
-  font-size: 48px;
-  opacity: 0.6;
-}
-
-.empty-icon .codicon {
-  font-size: 48px;
-}
-
-.empty-state h3 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-}
-
-.empty-hint {
-  color: var(--vscode-descriptionForeground);
-  font-size: 14px;
-  margin: 0;
-}
-
-.sessions-container {
+.list {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 6px 0;
+}
+
+.group + .group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--cs-fg-8);
+}
+.group-label {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.session-card {
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  padding: 6px 12px;
-  background: var(--vscode-editor-background);
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  height: 80px;
-  gap: 8px;
-}
-
-.session-card:hover {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-list-hoverBackground);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.session-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.session-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 500;
-  flex: 1;
-  /* Limit title length to avoid overflow */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-date {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  white-space: nowrap;
-}
-
-.session-meta {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  height: 28px;
+  padding: 0 14px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--cs-fg-60);
 }
 
-.session-id {
-  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-  font-size: 10px;
-  opacity: 0.7;
+.item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.item:hover {
+  background: var(--cs-fg-8);
+}
+.item-icon {
+  font-size: 14px;
+  color: var(--cs-fg-66);
+  flex-shrink: 0;
+}
+.item-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.item-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--cs-fg-52);
+}
 
+.note {
+  padding: 14px;
+  font-size: 13px;
+  color: var(--cs-fg-60);
+}
+.error-message {
+  color: var(--vscode-errorForeground);
+  margin-bottom: 6px;
+}
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+.link-btn:hover {
+  text-decoration: underline;
+}
 </style>

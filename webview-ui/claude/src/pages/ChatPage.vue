@@ -1,48 +1,45 @@
 <template>
   <div class="chat-page">
-    <!-- Top title bar -->
+    <!-- Top bar: one chat tab on the left, session actions on the right (Cursor's tab strip) -->
     <div class="chat-header">
-      <div class="header-left">
-        <button class="menu-btn" @click="$emit('switchToSessions')">
-          <span class="codicon codicon-menu"></span>
-        </button>
-        <h2 class="chat-title">{{ title }}</h2>
+      <div class="chat-tab" :title="title">
+        <span class="codicon codicon-comment chat-tab-icon"></span>
+        <span class="chat-title">{{ title }}</span>
       </div>
       <div class="header-right">
-        <button class="new-chat-btn" title="New conversation" @click="createNew">
-          <span class="codicon codicon-plus"></span>
+        <button class="header-btn" title="New conversation" @click="createNew">
+          <span class="codicon codicon-add"></span>
+        </button>
+        <button class="header-btn" title="Show chat history" @click="$emit('switchToSessions')">
+          <span class="codicon codicon-history"></span>
         </button>
       </div>
     </div>
 
     <!-- Body: message container -->
-    <div class="main">
+    <div class="main" :class="{ 'is-empty': messages.length === 0 }">
       <!-- <div class="chatContainer"> -->
         <div
           ref="containerEl"
           :class="['messagesContainer', 'custom-scroll-container', { dimmed: permissionRequestsLen > 0 }]"
         >
-          <template v-if="messages.length === 0">
-            <div v-if="isBusy" class="emptyState">
-              <div class="emptyWordmark">
-                <ClaudeWordmark class="emptyWordmarkSvg" />
-              </div>
-            </div>
-            <div v-else class="emptyState">
-              <div class="emptyWordmark">
-                <ClaudeWordmark class="emptyWordmarkSvg" />
-              </div>
-              <RandomTip :platform="platform" />
-            </div>
-          </template>
+          <template v-if="messages.length === 0" />
           <template v-else>
             <!-- <div class="msg-list"> -->
-              <MessageRenderer
-                v-for="(m, i) in messages"
-                :key="m?.id ?? i"
-                :message="m"
-                :context="toolContext"
-              />
+              <template v-for="item in chatItems" :key="item.key">
+                <TurnView
+                  v-if="item.kind === 'turn'"
+                  :turn="item"
+                  :context="toolContext"
+                  :default-open="item.key === liveTurnKey"
+                  :running="isBusy && item.key === lastTurnKey"
+                />
+                <MessageRenderer
+                  v-else
+                  :message="item.message"
+                  :context="toolContext"
+                />
+              </template>
             <!-- </div> -->
             <div v-if="isBusy" class="spinnerRow">
               <Spinner :size="16" :permission-mode="permissionMode" />
@@ -68,11 +65,16 @@
             :thinking-level="session?.thinkingLevel.value"
             :permission-mode="session?.permissionMode.value"
             :selected-model="session?.modelSelection.value"
+            :modes="modes"
+            :show-thinking-toggle="showThinkingToggle"
+            :effort-level="session?.effortLevel.value"
+            :effort-levels="effortLevels"
             @submit="handleSubmit"
             @stop="handleStop"
             @add-attachment="handleAddAttachment"
             @remove-attachment="handleRemoveAttachment"
             @thinking-toggle="handleToggleThinking"
+            @effort-select="handleEffortSelect"
             @mode-select="handleModeSelect"
             @model-select="handleModelSelect"
           />
@@ -94,12 +96,14 @@
   import ChatInputBox from '../components/ChatInputBox.vue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import Spinner from '../components/Messages/WaitingIndicator.vue';
-  import ClaudeWordmark from '../components/ClaudeWordmark.vue';
-  import RandomTip from '../components/RandomTip.vue';
   import MessageRenderer from '../components/Messages/MessageRenderer.vue';
+  import TurnView from '../components/Messages/TurnView.vue';
+  import { buildChatItems } from '../utils/turns';
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+  import { useModelCatalog } from '../composables/useModelCatalog';
+  import { availableModes, nextMode } from '../utils/permissionModes';
 
   const runtime = inject(RuntimeKey);
   if (!runtime) throw new Error('[ChatPage] runtime not provided');
@@ -134,6 +138,21 @@
   const title = computed(() => session.value?.summary.value || 'New Conversation');
   const messages = computed<any[]>(() => session.value?.messages.value ?? []);
   const isBusy = computed(() => session.value?.busy.value ?? false);
+
+  // Turns shown the way Cursor does: one user message + everything the assistant did
+  const chatItems = computed(() => buildChatItems(messages.value));
+  const lastTurnKey = computed(() => {
+    for (let i = chatItems.value.length - 1; i >= 0; i--) {
+      if (chatItems.value[i].kind === 'turn') return chatItems.value[i].key;
+    }
+    return -1;
+  });
+  // The turn worked on while this page was open keeps its steps unfolded (Cursor
+  // does the same); turns loaded from history start folded under "Worked for Ns".
+  const liveTurnKey = ref(-1);
+  watch(isBusy, (busy) => {
+    if (busy) liveTurnKey.value = lastTurnKey.value;
+  });
   const permissionMode = computed(
     () => session.value?.permissionMode.value ?? 'default'
   );
@@ -142,6 +161,26 @@
   );
   const permissionRequestsLen = computed(() => permissionRequests.value.length);
   const pendingPermission = computed(() => permissionRequests.value[0] as any);
+
+  // Capabilities of the selected model, as the CLI reports them. Everything
+  // below follows these flags, so a CLI update needs no change here.
+  const { findModelInfo } = useModelCatalog();
+  const modelInfo = computed(() => findModelInfo(session.value?.modelSelection.value));
+  const effortLevels = computed<string[]>(() => {
+    const info = modelInfo.value;
+    if (!info || info.supportsEffort === false) return [];
+    return Array.isArray(info.supportedEffortLevels) ? info.supportedEffortLevels : [];
+  });
+  // Unknown (custom model, older CLI): keep the toggle; hide it only when the
+  // CLI says thinking cannot be turned off.
+  const showThinkingToggle = computed(() => modelInfo.value?.supportsThinkingOff !== false);
+  const modes = computed(() =>
+    availableModes({
+      supportsAutoMode: modelInfo.value?.supportsAutoMode === true,
+      allowBypassPermissions: session.value?.config.value?.allowBypassPermissions === true,
+      current: permissionMode.value,
+    })
+  );
   const platform = computed(() => runtime.appContext.platform);
 
   // Register the command permissionMode.toggle (registered after the function is defined below)
@@ -284,6 +323,13 @@
     await s.setThinkingLevel(newLevel);
   }
 
+  async function handleEffortSelect(level: string) {
+    const s = session.value;
+    if (!s) return;
+
+    await s.setEffortLevel(level);
+  }
+
   async function handleModeSelect(mode: PermissionMode) {
     const s = session.value;
     if (!s) return;
@@ -291,15 +337,12 @@
     await s.setPermissionMode(mode);
   }
 
-  // permissionMode.toggle: cycle in a fixed order
+  // permissionMode.toggle: cycle through the modes on offer, in the CLI's order
   const togglePermissionMode = () => {
     const s = session.value;
     if (!s) return;
-    const order: PermissionMode[] = ['default', 'acceptEdits', 'plan'];
-    const cur = (s.permissionMode.value as PermissionMode) ?? 'default';
-    const idx = Math.max(0, order.indexOf(cur));
-    const next = order[(idx + 1) % order.length];
-    void s.setPermissionMode(next);
+    const cur = (s.permissionMode.value as string) ?? 'default';
+    void s.setPermissionMode(nextMode(modes.value, cur) as PermissionMode);
   };
 
   // Register the command now (toggle is defined)
@@ -307,7 +350,7 @@
     {
       id: 'permissionMode.toggle',
       label: 'Toggle Permission Mode',
-      description: 'Cycle permission mode in fixed order'
+      description: 'Cycle through the available permission modes'
     },
     'App Shortcuts',
     () => {
@@ -321,6 +364,19 @@
     handler: togglePermissionMode,
     allowInEditable: true,
     priority: 100,
+  });
+
+  // Esc stops the running turn, as in Claude Code. Not while a permission
+  // prompt or a dropdown (completion, pickers) is open: Esc closes those.
+  useKeybinding({
+    keys: 'escape',
+    handler: handleStop,
+    allowInEditable: true,
+    priority: 50,
+    when: () =>
+      isBusy.value &&
+      !pendingPermission.value &&
+      !document.querySelector('.dropdown-popover'),
   });
 
   async function handleModelSelect(modelId: string) {
@@ -381,52 +437,41 @@
     height: 100%;
   }
 
+  /* Cursor tab strip: 35px, active tab = editor background, hairline below */
   .chat-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid var(--vscode-panel-border);
-    min-height: 32px;
-    padding: 0 12px;
+    align-items: stretch;
+    height: 35px;
+    flex-shrink: 0;
+    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+    border-bottom: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--cs-fg-12));
   }
 
-  .header-left {
+  .chat-tab {
     display: flex;
     align-items: center;
-    gap: 8px;
-    overflow: hidden;
-    flex: 1;
+    gap: 6px;
+    min-width: 0;
+    max-width: 200px;
+    padding: 0 10px;
+    font-size: 13px;
+    background: var(--vscode-editor-background);
+    color: var(--vscode-foreground);
+    /* tab sits on top of the hairline */
+    margin-bottom: -1px;
+    border-right: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--cs-fg-12));
   }
 
-  .menu-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: transparent;
-    color: var(--vscode-titleBar-activeForeground);
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    opacity: 0.7;
-  }
-
-  .menu-btn .codicon {
-    font-size: 12px;
-  }
-
-  .menu-btn:hover {
-    background: var(--vscode-toolbar-hoverBackground);
-    opacity: 1;
+  .chat-tab-icon {
+    font-size: 16px;
+    flex-shrink: 0;
   }
 
   .chat-title {
     margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--vscode-titleBar-activeForeground);
+    font-size: 13px;
+    font-weight: 400;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -434,31 +479,32 @@
 
   .header-right {
     display: flex;
-    gap: 4px;
+    align-items: center;
+    gap: 2px;
+    padding: 0 8px;
   }
 
-  .new-chat-btn {
+  .header-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
     border: none;
     background: transparent;
-    color: var(--vscode-titleBar-activeForeground);
-    border-radius: 3px;
+    border-radius: 5px;
+    color: var(--cs-fg-66);
     cursor: pointer;
-    transition: background-color 0.2s;
-    opacity: 0.7;
+    transition: background-color var(--cs-duration) ease;
   }
 
-  .new-chat-btn .codicon {
-    font-size: 12px;
+  .header-btn .codicon {
+    font-size: 16px;
   }
 
-  .new-chat-btn:hover {
-    background: var(--vscode-toolbar-hoverBackground);
-    opacity: 1;
+  .header-btn:hover {
+    background: var(--cs-fg-8);
   }
 
   .main {
@@ -480,8 +526,14 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 8px 0 12px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--cs-row-gap);
+    padding: 10px 0 12px;
     position: relative;
+  }
+  .spinnerRow {
+    padding: 0 calc(var(--cs-edge) + var(--cs-row-inset));
   }
   .messagesContainer.dimmed {
     filter: blur(1px);
@@ -527,7 +579,13 @@
 
   /* Input area container */
   .inputContainer {
-    padding: 8px 12px 12px;
+    padding: 0 var(--cs-edge) 10px;
+  }
+
+  /* Empty chat: Cursor puts the input at the top of the pane and leaves the rest blank */
+  .main.is-empty > .inputContainer {
+    order: -1;
+    padding-top: 10px;
   }
 
   /* Pin the bottom dialog area to the bottom */

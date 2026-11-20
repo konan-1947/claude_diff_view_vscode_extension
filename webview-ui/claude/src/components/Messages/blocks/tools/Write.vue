@@ -6,8 +6,11 @@
     :default-expanded="shouldExpand"
     :class="{ 'has-content-view': hasContentView }"
   >
+    <template #icon>
+      <FileIcon v-if="filePath" :file-name="filePath" :size="16" />
+    </template>
+
     <template #main>
-      <span class="tool-label">Write</span>
       <ToolFilePath v-if="filePath" :file-path="filePath" :context="context" />
       <span v-if="contentStats" class="content-stats">
         <span class="stat-lines">{{ contentStats.lines }} Lines </span>
@@ -112,7 +115,7 @@ const isPermissionRequest = computed(() => {
 
 // Expand during the permission request phase
 const shouldExpand = computed(() => {
-  return hasContentView.value && isPermissionRequest.value;
+  return hasContentView.value;
 });
 
 // DOM refs

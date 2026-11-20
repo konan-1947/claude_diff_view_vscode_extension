@@ -89,6 +89,7 @@ export abstract class BaseTransport {
       modelSetting: initResponse.state.modelSetting,
       platform: initResponse.state.platform,
       thinkingLevel: initResponse.state.thinkingLevel,
+      allowBypassPermissions: initResponse.state.allowBypassPermissions ?? false,
     } as InitResponse["state"]);
 
     const claudeState = await this.sendRequest<GetClaudeStateResponse>({
@@ -104,7 +105,8 @@ export abstract class BaseTransport {
     cwd?: string,
     model?: string,
     permissionMode?: PermissionMode,
-    thinkingLevel?: string
+    thinkingLevel?: string,
+    effortLevel?: string
   ): AsyncQueue<any> {
     const queue = new AsyncQueue<any>();
     this.streams.set(channelId, queue);
@@ -116,6 +118,7 @@ export abstract class BaseTransport {
       model,
       permissionMode,
       thinkingLevel,
+      effortLevel,
     });
     return queue;
   }
@@ -136,6 +139,16 @@ export abstract class BaseTransport {
   }
   getMcpServers(channelId?: string): Promise<any> {
     return this.sendRequest({ type: "get_mcp_servers" }, channelId);
+  }
+  async getContextUsage(channelId: string): Promise<{
+    totalTokens: number;
+    maxTokens: number;
+    rawMaxTokens: number;
+    percentage: number;
+    model: string;
+  } | null> {
+    const response = await this.sendRequest({ type: "get_context_usage" }, channelId);
+    return (response as any)?.usage ?? null;
   }
   sdkProbe(capabilities: string[], timeoutMs?: number): Promise<SdkProbeResponse> {
     return this.sendRequest({ type: "sdk_probe", capabilities, timeoutMs });
@@ -190,6 +203,10 @@ export abstract class BaseTransport {
 
   async setThinkingLevel(channelId: string, thinkingLevel: string): Promise<void> {
     await this.sendRequest({ type: "set_thinking_level", channelId, thinkingLevel }, channelId);
+  }
+
+  async setEffortLevel(channelId: string, effortLevel: string | null): Promise<void> {
+    await this.sendRequest({ type: "set_effort_level", channelId, effortLevel }, channelId);
   }
 
   listSessions(): Promise<any> {

@@ -65,6 +65,9 @@ export class Session {
   private currentConnectionPromise?: Promise<BaseTransport>;
   private lastSentSelection?: SelectionRange;
   private effectCleanup?: () => void;
+  /** Set once the user picks a mode; until then the CLI's own default applies. */
+  private permissionModeExplicit = false;
+  private contextUsageSeq = 0;
 
   readonly connection = signal<BaseTransport | undefined>(undefined);
 
@@ -81,6 +84,8 @@ export class Session {
   readonly summary = signal<string | undefined>(undefined);
   readonly modelSelection = signal<string | undefined>(undefined);
   readonly thinkingLevel = signal<string>('default_on');
+  /** "auto" = the model's default effort (as the CLI decides) */
+  readonly effortLevel = signal<string>('auto');
   readonly todos = signal<any[]>([]);
   readonly worktree = signal<{ name: string; path: string } | undefined>(undefined);
   readonly selection = signal<SelectionRange | undefined>(undefined);
@@ -268,8 +273,11 @@ export class Session {
       this.sessionId() ?? undefined,
       this.cwd() ?? undefined,
       this.modelSelection() ?? undefined,
-      this.permissionMode(),
-      this.thinkingLevel()
+      // Until the user picks a mode, let the CLI apply `permissions.defaultMode`;
+      // the mode it settles on comes back in system/init (processIncomingMessage).
+      this.permissionModeExplicit ? this.permissionMode() : undefined,
+      this.thinkingLevel(),
+      this.effortLevel()
     );
 
     void this.readMessages(stream);
@@ -300,6 +308,7 @@ export class Session {
   async setPermissionMode(mode: PermissionMode, applyToConnection = true): Promise<boolean> {
     const previous = this.permissionMode();
     this.permissionMode(mode);
+    this.permissionModeExplicit = true;
 
     const channelId = this.claudeChannelId();
     if (!channelId || !applyToConnection) {
@@ -330,6 +339,10 @@ export class Session {
       return false;
     }
 
+    // The window can change with the model (200K <-> 1M)
+    const window = this.windowFromModel(model.value);
+    this.usageData({ ...this.usageData(), contextWindow: window ?? 200000 });
+    void this.refreshContextUsage();
     return true;
   }
 
@@ -343,6 +356,18 @@ export class Session {
 
     const connection = await this.getConnection();
     await connection.setThinkingLevel(channelId, level);
+  }
+
+  async setEffortLevel(level: string): Promise<void> {
+    this.effortLevel(level);
+
+    const channelId = this.claudeChannelId();
+    if (!channelId) {
+      return;
+    }
+
+    const connection = await this.getConnection();
+    await connection.setEffortLevel(channelId, level === 'auto' ? null : level);
   }
 
   async getMcpServers(): Promise<any> {
@@ -439,11 +464,26 @@ export class Session {
     // 6. Update other state
     if (event?.type === 'system') {
       this.sessionId(event.session_id);
+      // system/init and system/status carry the mode the CLI is actually in
+      // (its settings default, or a switch it made itself, e.g. leaving plan mode).
+      if (typeof event.permissionMode === 'string' && event.permissionMode) {
+        this.permissionMode(event.permissionMode as PermissionMode);
+      }
       if (event.subtype === 'init') {
         this.busy(true);
+        const window = this.windowFromModel(event.model ?? this.modelSelection());
+        if (window) {
+          this.usageData({ ...this.usageData(), contextWindow: window });
+        }
+        void this.refreshContextUsage();
+      } else if (event.subtype === 'compact_boundary') {
+        // Compaction shrinks the context; the CLI knows the new size.
+        void this.refreshContextUsage();
       }
     } else if (event?.type === 'result') {
       this.busy(false);
+      this.updateCost(event);
+      void this.refreshContextUsage();
     }
   }
 
@@ -470,28 +510,74 @@ export class Session {
       }
 
       // Handle usage stats
-      if (event.message.usage) {
-        this.updateUsage(event.message.usage);
-      }
+      this.updateUsage(event);
     }
   }
 
   /**
-   * Update token usage stats
+   * Live estimate while a turn streams. The CLI computes context as the last
+   * main-chain response's prompt (input + cache creation + cache read) plus
+   * its output; subagent (sidechain) messages carry their own, unrelated
+   * context and must not overwrite it. The authoritative figure replaces this
+   * via refreshContextUsage() as soon as the turn ends.
    */
-  private updateUsage(usage: any): void {
+  private updateUsage(event: any): void {
+    if (event.parent_tool_use_id) {
+      return;
+    }
+    const usage = event.message?.usage;
+    if (!usage || typeof usage.input_tokens !== 'number') {
+      return;
+    }
     const totalTokens =
       usage.input_tokens +
       (usage.cache_creation_input_tokens ?? 0) +
       (usage.cache_read_input_tokens ?? 0) +
-      usage.output_tokens;
+      (usage.output_tokens ?? 0);
 
     const current = this.usageData();
-    this.usageData({
-      totalTokens,
-      totalCost: current.totalCost,
-      contextWindow: current.contextWindow
-    });
+    this.usageData({ ...current, totalTokens });
+  }
+
+  /** `result` carries the cumulative session cost (latest value, not a delta). */
+  private updateCost(event: any): void {
+    if (typeof event.total_cost_usd === 'number') {
+      this.usageData({ ...this.usageData(), totalCost: event.total_cost_usd });
+    }
+  }
+
+  /**
+   * Window size before the CLI has answered: `[1m]` model aliases are 1M,
+   * everything else keeps the last known window.
+   */
+  private windowFromModel(model: string | undefined): number | undefined {
+    return model && /\[1m\]/i.test(model) ? 1_000_000 : undefined;
+  }
+
+  /**
+   * Ask the CLI for its own context numbers (same source as `/context`):
+   * exact total and the model's real window. Out-of-order answers are dropped.
+   */
+  private async refreshContextUsage(): Promise<void> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) {
+      return;
+    }
+    const seq = ++this.contextUsageSeq;
+    try {
+      const connection = await this.getConnection();
+      const usage = await connection.getContextUsage(channelId);
+      if (!usage || seq !== this.contextUsageSeq || channelId !== this.claudeChannelId()) {
+        return;
+      }
+      this.usageData({
+        ...this.usageData(),
+        totalTokens: usage.totalTokens,
+        contextWindow: usage.maxTokens > 0 ? usage.maxTokens : this.usageData().contextWindow
+      });
+    } catch {
+      // keep the live estimate
+    }
   }
 
   private buildUserMessage(
