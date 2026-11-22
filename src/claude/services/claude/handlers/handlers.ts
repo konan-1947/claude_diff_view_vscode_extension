@@ -69,8 +69,17 @@ import type {
     UpdateExtensionConfigRequest,
     UpdateExtensionConfigResponse,
     SdkProbeRequest,
-    SdkProbeResponse
+    SdkProbeResponse,
+    GetMemoryFilesRequest,
+    GetMemoryFilesResponse,
+    OpenClaudeFileRequest,
+    OpenClaudeFileResponse,
+    GetHooksRequest,
+    GetHooksResponse,
+    ExportConversationRequest,
+    ExportConversationResponse
 } from '../../../shared/messages';
+import { ensureClaudeFile, memoryFiles, readHooks, resolveClaudeFile } from '../claudeFiles';
 import type { HandlerContext } from './types';
 import type { PermissionMode, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
@@ -820,6 +829,70 @@ export async function handleOpenConfigFile(
         const errorMsg = error instanceof Error ? error.message : String(error);
         throw new Error(`Failed to open config file: ${errorMsg}`);
     }
+}
+
+function workspaceCwd(context: HandlerContext): string {
+    return context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+}
+
+/** `/memory`: project, local and user CLAUDE.md */
+export async function handleGetMemoryFiles(
+    _request: GetMemoryFilesRequest,
+    context: HandlerContext
+): Promise<GetMemoryFilesResponse> {
+    return { type: "get_memory_files_response", files: memoryFiles(workspaceCwd(context)) };
+}
+
+/** Open a memory/settings file by kind; `create` makes a missing (memory) file first */
+export async function handleOpenClaudeFile(
+    request: OpenClaudeFileRequest,
+    context: HandlerContext
+): Promise<OpenClaudeFileResponse> {
+    try {
+        const file = resolveClaudeFile(request.kind, workspaceCwd(context));
+        if (request.create) {
+            ensureClaudeFile(file);
+        } else if (!fs.existsSync(file)) {
+            return { type: "open_claude_file_response", error: `${file} does not exist` };
+        }
+        await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false });
+        return { type: "open_claude_file_response" };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        context.logService.warn(`[openClaudeFile] ${request.kind}: ${message}`);
+        return { type: "open_claude_file_response", error: message };
+    }
+}
+
+/** `/hooks`: hooks of the user, project and local settings files (read-only) */
+export async function handleGetHooks(
+    _request: GetHooksRequest,
+    context: HandlerContext
+): Promise<GetHooksResponse> {
+    const { hooks, errors } = readHooks(workspaceCwd(context));
+    return { type: "get_hooks_response", hooks, errors };
+}
+
+/** `/export`: save the transcript through a save dialog, or copy it */
+export async function handleExportConversation(
+    request: ExportConversationRequest,
+    context: HandlerContext
+): Promise<ExportConversationResponse> {
+    if (request.target === 'clipboard') {
+        await vscode.env.clipboard.writeText(request.markdown);
+        return { type: "export_conversation_response" };
+    }
+    const safeName = (request.fileName || 'conversation.md').replace(/[\\/:*?"<>|]+/g, '-');
+    const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(workspaceCwd(context), safeName)),
+        filters: { Markdown: ['md'], Text: ['txt'] },
+        saveLabel: 'Export'
+    });
+    if (!target) {
+        return { type: "export_conversation_response", cancelled: true };
+    }
+    await vscode.workspace.fs.writeFile(target, Buffer.from(request.markdown, 'utf8'));
+    return { type: "export_conversation_response", path: target.fsPath };
 }
 
 /**

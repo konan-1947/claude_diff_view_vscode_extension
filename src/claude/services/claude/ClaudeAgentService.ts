@@ -29,6 +29,7 @@ import { AsyncStream, ITransport } from './transport';
 import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
 import { readConfigValues } from './configValues';
+import { memoryFiles, settingsFiles } from './claudeFiles';
 
 // Message type imports
 import type {
@@ -47,11 +48,13 @@ import type {
     GetOutputStylesResponse,
     GetConfigOptionsResponse,
     ConfigOption,
+    GetStatusResponse,
 } from '../../shared/messages';
 
 // SDK type imports
 import type {
     SDKMessage,
+    SDKSystemMessage,
     SDKUserMessage,
     Query,
     PermissionResult,
@@ -123,6 +126,10 @@ import {
     handleGetExtensionConfig,
     handleUpdateExtensionConfig,
     handleSdkProbe,
+    handleGetMemoryFiles,
+    handleOpenClaudeFile,
+    handleGetHooks,
+    handleExportConversation,
 } from './handlers/handlers';
 
 export const IClaudeAgentService = createDecorator<IClaudeAgentService>('claudeAgentService');
@@ -137,6 +144,9 @@ export const IClaudeAgentService = createDecorator<IClaudeAgentService>('claudeA
 export interface Channel {
     in: AsyncStream<SDKUserMessage>;  // Input stream: sends user messages to the SDK
     query: Query;                      // Query object: receives responses from the SDK
+    cwd: string;
+    /** Last system/init of the channel (version, model, cwd... for `/status`) */
+    init?: SDKSystemMessage;
 }
 
 /**
@@ -483,10 +493,12 @@ export class ClaudeAgentService implements IClaudeAgentService {
             // 3. Store in the channels Map
             this.logService.info('');
             this.logService.info('📝 Step 3: register Channel');
-            this.channels.set(channelId, {
+            const channel: Channel = {
                 in: inputStream,
-                query: query
-            });
+                query: query,
+                cwd
+            };
+            this.channels.set(channelId, channel);
             this.logService.info(`  ✓ Channel registered, ${this.channels.size} active session(s)`);
 
             // 4. Start the listener task: forward SDK output to the client
@@ -500,6 +512,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     for await (const message of query) {
                         messageCount++;
                         this.logService.info(`  ← Received message #${messageCount}: ${message.type}`);
+                        if (message.type === 'system' && message.subtype === 'init') {
+                            channel.init = message;
+                        }
 
                         this.transport!.send({
                             type: "io_message",
@@ -737,6 +752,21 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "get_output_styles":
                 return this.getOutputStyles(channelId);
+
+            case "get_status":
+                return this.getStatus(channelId);
+
+            case "get_memory_files":
+                return handleGetMemoryFiles(request, this.handlerContext);
+
+            case "open_claude_file":
+                return handleOpenClaudeFile(request, this.handlerContext);
+
+            case "get_hooks":
+                return handleGetHooks(request, this.handlerContext);
+
+            case "export_conversation":
+                return handleExportConversation(request, this.handlerContext);
 
             case "get_config_options":
                 return this.getConfigOptions(channelId);
@@ -1225,6 +1255,52 @@ export class ClaudeAgentService implements IClaudeAgentService {
         }
 
         return { type: "get_config_options_response", options, current };
+    }
+
+    /**
+     * `/status`. Version, model and cwd come from the channel's last
+     * system/init (sent once the CLI starts a turn); account and MCP are asked
+     * live. Each part that fails is just left out.
+     */
+    async getStatus(channelId?: string): Promise<GetStatusResponse> {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        const init = channel?.init;
+        const cwd = init?.cwd || channel?.cwd || this.getCwd();
+        const warn = (what: string, error: unknown) =>
+            this.logService.warn(`[getStatus] ${what}: ${error instanceof Error ? error.message : String(error)}`);
+
+        let account: GetStatusResponse['status']['account'];
+        let outputStyle = init?.output_style;
+        let mcpServers: GetStatusResponse['status']['mcpServers'] = [];
+        if (channel?.query) {
+            const [accountResult, initResult, mcpResult] = await Promise.allSettled([
+                channel.query.accountInfo(),
+                channel.query.initializationResult(),
+                this.getMcpServers(channelId)
+            ]);
+            if (accountResult.status === 'fulfilled') account = accountResult.value;
+            else warn('account', accountResult.reason);
+            if (initResult.status === 'fulfilled') outputStyle ??= initResult.value.output_style;
+            else warn('init', initResult.reason);
+            if (mcpResult.status === 'fulfilled') mcpServers = mcpResult.value.mcpServers;
+        }
+
+        return {
+            type: "get_status_response",
+            status: {
+                version: init?.claude_code_version,
+                cwd,
+                model: init?.model,
+                permissionMode: init?.permissionMode,
+                outputStyle,
+                apiKeySource: init?.apiKeySource,
+                account,
+                mcpServers,
+                plugins: (init?.plugins ?? []).map((p) => ({ name: p.name, version: p.version })),
+                settingsFiles: settingsFiles(cwd),
+                memoryFiles: memoryFiles(cwd).filter((f) => f.exists)
+            }
+        };
     }
 
     /** Output styles for the `/output-style` picker (`initializationResult()`). */

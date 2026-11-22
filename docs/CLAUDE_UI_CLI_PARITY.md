@@ -107,27 +107,47 @@ cho CLI (và đồng bộ trạng thái như mục 1).
 
 Các panel đều nằm trong `components/CommandPanel/` và dùng khung `CommandPanel.vue`:
 `ListPanel.vue` (chọn 1 mục: ↑/↓, j/k, số 1–9, Enter), `TextPanel.vue` (ô nhập một dòng),
-`McpPanel.vue`, `AutoModeSetupPanel.vue`. Bảng lệnh → panel là `PANEL_COMMANDS` trong
-`ChatInputBox.vue`.
+`McpPanel.vue`, `AutoModeSetupPanel.vue`, `StatusPanel.vue`, `HelpPanel.vue`. Bảng lệnh →
+panel là `PANEL_COMMANDS` (chỉ khi gõ trơn) và `UI_PANEL_COMMANDS` (lệnh mục 3, luôn do UI
+xử lý kể cả khi có tham số) trong `ChatInputBox.vue`.
 
 ## 3. Lệnh terminal không có qua SDK ("isn't available in this environment")
 
 Các lệnh này không nằm trong `supportedCommands()` nên không hiện trong gợi ý `/`; gõ
 tay thì CLI trả "isn't available in this environment". UI cần tự làm hoặc tự trả lời.
 
-- [ ] `/resume` → mở danh sách lịch sử (nút ⟲ đã có trên header) và load session.
+- [~] `/resume` → `ListPanel` (đã làm, chờ test tay): các hội thoại của workspace, mới nhất
+      trước, gõ để lọc, Enter chuyển sang hội thoại đó; nút "All chats" mở trang lịch sử.
+      `/resume <id hoặc tên>` chuyển thẳng nếu đúng một hội thoại khớp, không thì mở panel
+      đã lọc sẵn theo chữ đó.
 - [ ] `/permissions` → màn hình allow/deny rules (đọc/ghi `settings.json` của project
       và user).
-- [ ] `/help` → hiện danh sách lệnh + phím tắt của UI.
-- [ ] `/memory` → mở `CLAUDE.md` (project / user) trong editor VS Code.
-- [ ] `/status` → panel: version CLI, model, account, cwd, MCP, settings đang áp dụng.
+- [~] `/help` → `HelpPanel` (đã làm, chờ test tay): phím tắt của UI + mọi lệnh `/` (lệnh
+      do UI xử lý có nhãn "UI"), gõ để lọc; Enter mở panel của lệnh hoặc điền lệnh vào ô
+      nhập để gõ tiếp tham số.
+- [~] `/memory` → `ListPanel` (đã làm, chờ test tay): `./CLAUDE.md` (hoặc
+      `./.claude/CLAUDE.md` nếu chỉ có file đó), `./CLAUDE.local.md`, `~/.claude/CLAUDE.md`
+      (theo `CLAUDE_CONFIG_DIR`); Enter mở trong editor, file chưa có thì tạo rỗng.
+- [~] `/status` → `StatusPanel` (đã làm, chờ test tay): version / model / permission mode /
+      cwd lấy từ `system/init` cuối của channel (host giữ lại, `get_status`), account từ
+      `accountInfo()`, MCP từ `mcpServerStatus()`, kèm plugin, các file settings và
+      CLAUDE.md. Trước lượt đầu tiên CLI chưa gửi `system/init` nên version / model hiện
+      "shown after the first message".
 - [ ] `/add-dir` → chọn thư mục (VS Code folder picker) → `additionalDirectories` của SDK.
-- [ ] `/hooks` → xem hooks đang có (chỉ đọc là đủ).
+- [~] `/hooks` → `ListPanel` chỉ đọc (đã làm, chờ test tay): hooks trong settings user /
+      project / local (`claudeFiles.ts`), event + matcher + lệnh + nguồn; Enter mở file
+      settings chứa hook đó. File JSON hỏng thì báo dưới danh sách. Hook do plugin hay
+      managed settings khai báo chưa hiện.
 - [ ] `/plugin` → tối thiểu: liệt kê plugin; cài/gỡ có thể để sau.
 - [ ] `/release-notes` → mở changelog.
-- [ ] `/export` → lưu hội thoại ra file markdown (chưa thử qua SDK).
+- [~] `/export` → `ListPanel` "Save to file" / "Copy to clipboard" (đã làm, chờ test tay):
+      transcript markdown dựng ở webview (`utils/exportTranscript.ts`: text, thinking gập
+      lại, tool call một dòng + kết quả cắt 12 dòng), host ghi qua save dialog hoặc
+      `vscode.env.clipboard`. `/export <tên file>` mở thẳng save dialog với tên đó.
 - [ ] `/login`, `/logout` → hướng dẫn chạy trong terminal (chưa thử qua SDK).
-- [ ] Tự đưa các lệnh trên vào danh sách gợi ý `/` (đánh dấu là lệnh do UI xử lý).
+- [~] Tự đưa các lệnh trên vào danh sách gợi ý `/` (đánh dấu là lệnh do UI xử lý): đã làm
+      cho các lệnh đã có panel (`UI_SLASH_COMMANDS` trong `slashCommandProvider.ts`, icon
+      khác lệnh của CLI); thêm vào đó khi làm các lệnh còn lại.
 - [x] `/cost` chạy được (cùng output với `/usage`).
 - Bỏ qua (không có ý nghĩa trong UI): `/theme`, `/vim`, `/statusline`, `/terminal-setup`.
 

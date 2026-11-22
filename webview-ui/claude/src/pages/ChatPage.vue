@@ -69,6 +69,7 @@
             @command-panel-open="() => session?.refreshAppliedEffort()"
             @submit="handleSubmit"
             @run-commands="handleRunCommands"
+            @open-history="$emit('switchToSessions')"
             @stop="handleStop"
             @add-attachment="handleAddAttachment"
             @remove-attachment="handleRemoveAttachment"

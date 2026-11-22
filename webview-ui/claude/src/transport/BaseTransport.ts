@@ -17,6 +17,10 @@ import type {
   WebViewToExtensionMessage,
   WebViewRequest,
   ShowNotificationRequest,
+  ClaudeFileInfo,
+  ClaudeFileKind,
+  GetHooksResponse,
+  StatusInfo,
 } from "@shared/messages";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -155,6 +159,32 @@ export abstract class BaseTransport {
   async getConfigOptions(channelId: string): Promise<Omit<GetConfigOptionsResponse, "type">> {
     const response = (await this.sendRequest({ type: "get_config_options" }, channelId)) as GetConfigOptionsResponse;
     return { options: response?.options ?? [], current: response?.current ?? {}, error: response?.error };
+  }
+  async getStatus(channelId?: string): Promise<StatusInfo> {
+    const response = await this.sendRequest({ type: "get_status" }, channelId);
+    return (response as any).status;
+  }
+  async getMemoryFiles(): Promise<ClaudeFileInfo[]> {
+    const response = await this.sendRequest({ type: "get_memory_files" });
+    return (response as any)?.files ?? [];
+  }
+  /** Resolves to the error text, or undefined when the file opened */
+  async openClaudeFile(kind: ClaudeFileKind, create = false): Promise<string | undefined> {
+    const response = await this.sendRequest({ type: "open_claude_file", kind, create });
+    return (response as any)?.error;
+  }
+  async getHooks(): Promise<Omit<GetHooksResponse, "type">> {
+    const response = (await this.sendRequest({ type: "get_hooks" })) as GetHooksResponse;
+    return { hooks: response?.hooks ?? [], errors: response?.errors ?? [] };
+  }
+  /** Resolves to the written path (file), undefined for the clipboard or a cancelled dialog */
+  async exportConversation(
+    markdown: string,
+    target: "file" | "clipboard",
+    fileName: string
+  ): Promise<string | undefined> {
+    const response = await this.sendRequest({ type: "export_conversation", markdown, target, fileName });
+    return (response as any)?.path;
   }
   async getOutputStyles(channelId: string): Promise<{ current?: string; available: string[] }> {
     const response = await this.sendRequest({ type: "get_output_styles" }, channelId);

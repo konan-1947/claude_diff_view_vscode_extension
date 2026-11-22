@@ -6,6 +6,7 @@ import { SessionStore } from '../core/SessionStore';
 import type { SelectionRange } from '../core/Session';
 import { EventEmitter } from '../utils/events';
 import { transport, atMentionEvents, selectionEvents } from '../core/runtimeTransport';
+import { UI_SLASH_COMMANDS, uiCommandId } from '../providers/slashCommandProvider';
 
 export interface RuntimeInstance {
   connectionManager: ConnectionManager;
@@ -56,6 +57,17 @@ export function useRuntime(): RuntimeInstance {
   // "isn't available here yet", /fast "is not available in the Agent SDK".
   const HIDDEN_SLASH_COMMANDS = new Set(['color', 'agents', 'focus', 'fast']);
 
+  // Commands this UI answers with its own panel (ChatInputBox opens it on
+  // submit / pick). Should a CLI start listing one of them, the UI one wins.
+  const UI_COMMAND_NAMES = new Set(UI_SLASH_COMMANDS.map((cmd) => cmd.name));
+  const uiCommandDisposers = UI_SLASH_COMMANDS.map((cmd) =>
+    appContext.commandRegistry.registerAction(
+      { id: uiCommandId(cmd.name), label: `/${cmd.name}`, description: cmd.description },
+      'Slash Commands',
+      () => {}
+    )
+  );
+
   // Watch claudeConfig changes and register Slash Commands
   let slashCommandDisposers: Array<() => void> = [];
 
@@ -70,7 +82,7 @@ export function useRuntime(): RuntimeInstance {
     // Register new Slash Commands
     if (claudeConfig?.slashCommands && Array.isArray(claudeConfig.slashCommands)) {
       slashCommandDisposers = claudeConfig.slashCommands
-        .filter((cmd: any) => typeof cmd?.name === 'string' && cmd.name && !HIDDEN_SLASH_COMMANDS.has(cmd.name))
+        .filter((cmd: any) => typeof cmd?.name === 'string' && cmd.name && !HIDDEN_SLASH_COMMANDS.has(cmd.name) && !UI_COMMAND_NAMES.has(cmd.name))
         .map((cmd: any) => {
           return appContext.commandRegistry.registerAction(
             {
@@ -135,6 +147,7 @@ export function useRuntime(): RuntimeInstance {
 
       // Clean up command registrations
       slashCommandDisposers.forEach(dispose => dispose());
+      uiCommandDisposers.forEach(dispose => dispose());
       cleanupSlashCommands();
 
       connectionManager.close();

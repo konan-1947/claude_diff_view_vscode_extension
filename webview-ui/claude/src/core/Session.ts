@@ -1,7 +1,7 @@
 import { signal, computed, effect } from 'alien-signals';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { PermissionRequest } from './PermissionRequest';
-import type { GetConfigOptionsResponse, McpServerInfo, ModelOption } from '@shared/messages';
+import type { GetConfigOptionsResponse, McpServerInfo, ModelOption, StatusInfo } from '@shared/messages';
 import type { SessionSummary } from './types';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
@@ -446,6 +446,13 @@ export class Session {
     const channelId = await this.launchClaude();
     const styles = await connection.getOutputStyles(channelId);
     return { current: this.outputStyle() ?? styles.current, available: styles.available };
+  }
+
+  /** `/status`: the CLI's report on this session (launches it if needed) */
+  async getStatus(): Promise<StatusInfo> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    return connection.getStatus(channelId);
   }
 
   async openConfigFile(configType: string): Promise<void> {

@@ -374,6 +374,119 @@ export interface GetOutputStylesResponse {
 }
 
 /**
+ * Files the UI-side commands (`/memory`, `/hooks`) show and open. The webview
+ * names a file by kind; the host resolves the path, so a webview message can
+ * never open or create an arbitrary file.
+ */
+export type ClaudeFileKind =
+    | "user-memory"
+    | "project-memory"
+    | "local-memory"
+    | "user-settings"
+    | "project-settings"
+    | "local-settings";
+
+export interface ClaudeFileInfo {
+    kind: ClaudeFileKind;
+    path: string;
+    exists: boolean;
+}
+
+/**
+ * `/status`: what the CLI reports about the running session. Fields from the
+ * last system/init are missing until the CLI has started a turn.
+ */
+export interface GetStatusRequest {
+    type: "get_status";
+}
+
+export interface StatusInfo {
+    version?: string;
+    cwd: string;
+    model?: string;
+    permissionMode?: string;
+    outputStyle?: string;
+    apiKeySource?: string;
+    account?: {
+        email?: string;
+        organization?: string;
+        subscriptionType?: string;
+        tokenSource?: string;
+        apiKeySource?: string;
+        apiProvider?: string;
+    };
+    mcpServers: McpServerInfo[];
+    plugins: { name: string; version?: string }[];
+    /** Settings files the CLI reads, in order of precedence (lowest first) */
+    settingsFiles: ClaudeFileInfo[];
+    /** CLAUDE.md files that exist */
+    memoryFiles: ClaudeFileInfo[];
+}
+
+export interface GetStatusResponse {
+    type: "get_status_response";
+    status: StatusInfo;
+}
+
+/** `/memory`: the CLAUDE.md files of the CLI's memory, existing or not */
+export interface GetMemoryFilesRequest {
+    type: "get_memory_files";
+}
+
+export interface GetMemoryFilesResponse {
+    type: "get_memory_files_response";
+    files: ClaudeFileInfo[];
+}
+
+/** Open a memory or settings file in the editor; `create` makes a missing one */
+export interface OpenClaudeFileRequest {
+    type: "open_claude_file";
+    kind: ClaudeFileKind;
+    create?: boolean;
+}
+
+export interface OpenClaudeFileResponse {
+    type: "open_claude_file_response";
+    error?: string;
+}
+
+/** `/hooks`: one command (or prompt) hook from a settings file */
+export interface HookEntry {
+    event: string;
+    matcher?: string;
+    /** `command` text, or the prompt of a `prompt` hook */
+    command: string;
+    hookType: string;
+    source: ClaudeFileKind;
+}
+
+export interface GetHooksRequest {
+    type: "get_hooks";
+}
+
+export interface GetHooksResponse {
+    type: "get_hooks_response";
+    hooks: HookEntry[];
+    /** Settings files that could not be parsed */
+    errors: { source: ClaudeFileKind; error: string }[];
+}
+
+/** `/export`: the transcript as markdown, to a file (save dialog) or the clipboard */
+export interface ExportConversationRequest {
+    type: "export_conversation";
+    markdown: string;
+    target: "file" | "clipboard";
+    fileName: string;
+}
+
+export interface ExportConversationResponse {
+    type: "export_conversation_response";
+    /** Where the file was written; absent for the clipboard or a cancelled dialog */
+    path?: string;
+    cancelled?: boolean;
+}
+
+/**
  * Context window usage as the CLI itself reports it (`/context`).
  * `usage` is null when the channel has no live query yet.
  */
@@ -921,6 +1034,11 @@ export type WebViewRequest =
     | GetMcpServersRequest
     | McpServerActionRequest
     | GetOutputStylesRequest
+    | GetStatusRequest
+    | GetMemoryFilesRequest
+    | OpenClaudeFileRequest
+    | GetHooksRequest
+    | ExportConversationRequest
     | GetConfigOptionsRequest
     | GetContextUsageRequest
     | GetAppliedEffortRequest

@@ -57,6 +57,49 @@
       @run="runCommand"
       @close="closePanel"
     />
+    <ListPanel
+      v-else-if="activePanel === 'resume'"
+      title="Resume conversation"
+      :items="resumeItems"
+      :loading="resumeLoading"
+      :initial-query="panelArg"
+      filterable
+      empty-text="No earlier conversations in this workspace"
+      :actions="[{ label: 'All chats', run: openHistory }]"
+      @select="resumeSession"
+      @close="closePanel"
+    />
+    <ListPanel
+      v-else-if="activePanel === 'memory'"
+      title="Memory"
+      :items="memoryItems"
+      :loading="memoryLoading"
+      note="Opens the file in the editor (a missing one is created)."
+      @select="openMemoryFile"
+      @close="closePanel"
+    />
+    <StatusPanel v-else-if="activePanel === 'status'" @close="closePanel" />
+    <ListPanel
+      v-else-if="activePanel === 'export'"
+      title="Export conversation"
+      :items="EXPORT_ITEMS"
+      @select="(target) => exportConversation(target as 'file' | 'clipboard')"
+      @close="closePanel"
+    />
+    <ListPanel
+      v-else-if="activePanel === 'hooks'"
+      title="Hooks"
+      :subtitle="hookItems.length ? `${hookItems.length} configured` : ''"
+      :items="hookItems"
+      :loading="hooksLoading"
+      :note="hooksNote"
+      filterable
+      empty-text="No hooks in the user, project or local settings"
+      :hint="['↑/↓ to select', 'type to filter', 'Enter to open its settings file', 'Esc to close']"
+      @select="openHookSource"
+      @close="closePanel"
+    />
+    <HelpPanel v-else-if="activePanel === 'help'" @pick="pickFromHelp" @close="closePanel" />
 
     <!-- Attachment list (if any) -->
     <div v-if="attachments && attachments.length > 0" v-show="!activePanel" class="attachments-list">
@@ -214,6 +257,10 @@ import TextPanel from './CommandPanel/TextPanel.vue'
 import McpPanel from './CommandPanel/McpPanel.vue'
 import ConfigPanel from './CommandPanel/ConfigPanel.vue'
 import AutoModeSetupPanel from './CommandPanel/AutoModeSetupPanel.vue'
+import StatusPanel from './CommandPanel/StatusPanel.vue'
+import HelpPanel from './CommandPanel/HelpPanel.vue'
+import type { ClaudeFileKind } from '@shared/messages'
+import { transcriptToMarkdown, exportFileName } from '../utils/exportTranscript'
 import type { AttachmentItem } from '../types/attachment'
 import type { ModeOption } from '../utils/permissionModes'
 import { Dropdown, DropdownItem } from './Dropdown'
@@ -259,6 +306,8 @@ interface Emits {
   (e: 'modelSelect', modelId: string): void
   /** A command panel opened: the page refreshes what it shows (e.g. applied effort) */
   (e: 'commandPanelOpen', panel: 'effort'): void
+  /** `/resume` → "All chats": show the chat history page */
+  (e: 'openHistory'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -309,6 +358,12 @@ type PanelName =
   | 'config'
   | 'mcp'
   | 'auto-mode-setup'
+  | 'resume'
+  | 'memory'
+  | 'status'
+  | 'export'
+  | 'hooks'
+  | 'help'
 
 const PANEL_COMMANDS: Record<string, PanelName> = {
   '/output-style': 'output-style',
@@ -322,7 +377,41 @@ const PANEL_COMMANDS: Record<string, PanelName> = {
   '/auto-mode-setup': 'auto-mode-setup',
 }
 
+// Commands the CLI cannot run through the SDK ("isn't available in this
+// environment"): always answered here, with or without an argument.
+const UI_PANEL_COMMANDS: Record<string, PanelName> = {
+  '/resume': 'resume',
+  '/memory': 'memory',
+  '/status': 'status',
+  '/export': 'export',
+  '/hooks': 'hooks',
+  '/help': 'help',
+}
+
+/** Argument typed after a UI command (`/resume <name>`, `/export <file>`) */
+const panelArg = ref('')
+
+function openUiPanel(command: string): boolean {
+  const match = /^(\/\S+)(?:\s+([\s\S]*))?$/.exec(command.trim())
+  const panel = match ? UI_PANEL_COMMANDS[match[1].toLowerCase()] : undefined
+  if (!panel) return false
+  const arg = (match?.[2] ?? '').trim()
+  clearInput()
+  panelArg.value = arg
+  if (panel === 'resume' && arg && resumeByArg(arg)) return true
+  if (panel === 'export' && arg) {
+    void exportConversation('file', arg)
+    return true
+  }
+  activePanel.value = panel
+  if (panel === 'resume') void loadSessions()
+  else if (panel === 'memory') void loadMemoryFiles()
+  else if (panel === 'hooks') void loadHooks()
+  return true
+}
+
 function openPickerFor(command: string): boolean {
+  if (openUiPanel(command)) return true
   const name = command.toLowerCase()
   if (name === '/model') {
     clearInput()
@@ -388,6 +477,208 @@ const AUTOCOMPACT_ITEMS: ListPanelItem[] = [
   { value: '400000', label: '400K tokens' },
   { value: '1000000', label: '1M tokens' },
 ]
+
+async function connection() {
+  return runtime?.connectionManager.get()
+}
+
+function notify(message: string, severity: 'info' | 'warning' | 'error' = 'info') {
+  void runtime?.appContext.showNotification(message, severity)
+}
+
+// `/resume`: conversations of this workspace, newest first
+const resumeItems = ref<ListPanelItem[]>([])
+const resumeLoading = ref(false)
+
+function relativeTime(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return ''
+  const minutes = Math.floor((Date.now() - ms) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return new Date(ms).toLocaleDateString()
+}
+
+function buildResumeItems() {
+  const store = runtime?.sessionStore
+  if (!store) return
+  const active = store.activeSession()
+  resumeItems.value = store
+    .sessionsByLastModified()
+    .filter((s) => !!s.sessionId())
+    .map((s) => {
+      const count = s.messageCount()
+      return {
+        value: s.sessionId()!,
+        label: s.summary() || 'New Conversation',
+        detail: [relativeTime(s.lastModifiedTime()), count ? `${count} messages` : '']
+          .filter(Boolean)
+          .join('   '),
+        current: s === active,
+      }
+    })
+}
+
+async function loadSessions() {
+  buildResumeItems()
+  resumeLoading.value = resumeItems.value.length === 0
+  try {
+    await runtime?.sessionStore.listSessions()
+  } catch (error) {
+    console.warn('[ChatInputBox] session list failed:', error)
+  } finally {
+    resumeLoading.value = false
+    buildResumeItems()
+  }
+}
+
+function resumeSession(sessionId: string) {
+  const store = runtime?.sessionStore
+  const target = store?.sessions().find((s) => s.sessionId() === sessionId)
+  if (store && target && target !== store.activeSession()) {
+    store.setActiveSession(target)
+  }
+}
+
+/** `/resume <id or name>`: switch straight away when exactly one matches */
+function resumeByArg(arg: string): boolean {
+  const store = runtime?.sessionStore
+  if (!store) return false
+  const q = arg.toLowerCase()
+  const sessions = store.sessions().filter((s) => !!s.sessionId())
+  const byId = sessions.filter((s) => s.sessionId()!.toLowerCase().startsWith(q))
+  const byName = sessions.filter((s) => (s.summary() ?? '').toLowerCase() === q)
+  const found = byId.length === 1 ? byId : byName.length === 1 ? byName : []
+  if (found.length !== 1) return false
+  resumeSession(found[0].sessionId()!)
+  return true
+}
+
+function openHistory() {
+  closePanel()
+  emit('openHistory')
+}
+
+// `/memory`: the CLI's CLAUDE.md files, opened (or created) in the editor
+const memoryItems = ref<ListPanelItem[]>([])
+const memoryLoading = ref(false)
+const MEMORY_LABELS: Partial<Record<ClaudeFileKind, string>> = {
+  'project-memory': 'Project memory',
+  'local-memory': 'Project memory (local)',
+  'user-memory': 'User memory',
+}
+const MEMORY_NOTES: Partial<Record<ClaudeFileKind, string>> = {
+  'project-memory': 'checked in',
+  'local-memory': 'not checked in',
+  'user-memory': 'all projects',
+}
+
+async function loadMemoryFiles() {
+  memoryLoading.value = true
+  memoryItems.value = []
+  try {
+    const files = (await (await connection())?.getMemoryFiles()) ?? []
+    memoryItems.value = files.map((f) => ({
+      value: f.kind,
+      label: MEMORY_LABELS[f.kind] ?? f.kind,
+      detail: f.path,
+      tag: f.exists ? MEMORY_NOTES[f.kind] : 'new file',
+    }))
+  } catch (error) {
+    console.warn('[ChatInputBox] memory files failed:', error)
+  } finally {
+    memoryLoading.value = false
+  }
+}
+
+async function openMemoryFile(kind: string) {
+  const error = await (await connection())?.openClaudeFile(kind as ClaudeFileKind, true)
+  if (error) notify(error, 'error')
+}
+
+// `/hooks`: read-only list; Enter opens the settings file the hook is in
+const hookItems = ref<ListPanelItem[]>([])
+const hooksLoading = ref(false)
+const hooksNote = ref('')
+const SOURCE_LABELS: Partial<Record<ClaudeFileKind, string>> = {
+  'user-settings': 'user',
+  'project-settings': 'project',
+  'local-settings': 'local',
+}
+
+async function loadHooks() {
+  hooksLoading.value = true
+  hookItems.value = []
+  hooksNote.value = ''
+  try {
+    const result = await (await connection())?.getHooks()
+    hookItems.value = (result?.hooks ?? []).map((hook, i) => ({
+      value: `${i}:${hook.source}`,
+      label: hook.matcher ? `${hook.event} (${hook.matcher})` : hook.event,
+      detail: hook.hookType === 'command' ? hook.command : `${hook.hookType}: ${hook.command}`,
+      tag: SOURCE_LABELS[hook.source],
+    }))
+    hooksNote.value = (result?.errors ?? [])
+      .map((e) => `${SOURCE_LABELS[e.source]} settings could not be read: ${e.error}`)
+      .join('\n')
+  } catch (error) {
+    hooksNote.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    hooksLoading.value = false
+  }
+}
+
+async function openHookSource(value: string) {
+  const kind = value.slice(value.indexOf(':') + 1) as ClaudeFileKind
+  const error = await (await connection())?.openClaudeFile(kind)
+  if (error) notify(error, 'error')
+}
+
+// `/export`: like the CLI's menu, to a file or the clipboard
+const EXPORT_ITEMS: ListPanelItem[] = [
+  { value: 'file', label: 'Save to file', detail: 'markdown, through a save dialog' },
+  { value: 'clipboard', label: 'Copy to clipboard' },
+]
+
+async function exportConversation(target: 'file' | 'clipboard', fileName?: string) {
+  const session = runtime?.sessionStore.activeSession()
+  const messages = session?.messages() ?? []
+  if (!session || messages.length === 0) {
+    notify('Nothing to export yet', 'warning')
+    return
+  }
+  const title = session.summary()
+  const markdown = transcriptToMarkdown(messages, title)
+  const name = fileName
+    ? (/\.(md|txt)$/i.test(fileName) ? fileName : `${fileName}.md`)
+    : exportFileName(title)
+  try {
+    const path = await (await connection())?.exportConversation(markdown, target, name)
+    if (target === 'clipboard') notify('Conversation copied to clipboard')
+    else if (path) notify(`Conversation exported to ${path}`)
+  } catch (error) {
+    notify(`Export failed: ${error instanceof Error ? error.message : String(error)}`, 'error')
+  }
+}
+
+// `/help` → a command: open its panel, or put it in the input to add arguments
+function pickFromHelp(command: string) {
+  activePanel.value = null
+  if (openPickerFor(command)) return
+  content.value = `${command} `
+  nextTick(() => {
+    if (textareaRef.value) {
+      textareaRef.value.textContent = content.value
+      textareaRef.value.focus()
+      placeCaretAtEnd(textareaRef.value)
+    }
+    emit('input', content.value)
+    autoResizeTextarea()
+  })
+}
 
 function openSettingsFile() {
   void runtime?.sessionStore.activeSession()?.openConfigFile('settings')

@@ -8,6 +8,30 @@ import type { DropdownItemType } from '../types/dropdown'
  * Gets slash commands from CommandRegistry and filters them
  */
 
+/**
+ * Commands the CLI has no answer for through the SDK ("isn't available in this
+ * environment"): this UI handles them itself with a panel, so they are listed
+ * in the `/` suggestions next to the CLI's own (marked with another icon).
+ */
+export const UI_SLASH_COMMANDS: { name: string; description: string }[] = [
+  { name: 'resume', description: 'Resume a previous conversation' },
+  { name: 'help', description: 'Show shortcuts and all commands' },
+  { name: 'memory', description: 'Open a CLAUDE.md memory file in the editor' },
+  { name: 'status', description: 'Show version, model, account, MCP servers and settings files' },
+  { name: 'export', description: 'Export the conversation to a markdown file or the clipboard' },
+  { name: 'hooks', description: 'Show the hooks in your settings files' },
+]
+
+const UI_COMMAND_PREFIX = 'ui-command-'
+
+export function uiCommandId(name: string): string {
+  return `${UI_COMMAND_PREFIX}${name}`
+}
+
+export function isUiCommand(command: CommandAction): boolean {
+  return command.id.startsWith(UI_COMMAND_PREFIX)
+}
+
 // Command with section info
 export interface CommandWithSection extends CommandAction {
   section: string
@@ -104,7 +128,7 @@ export function commandToDropdownItem(command: CommandAction): DropdownItemType 
     id: command.id,
     label: command.label,
     detail: command.description,
-    icon: 'codicon-symbol-method',
+    icon: isUiCommand(command) ? 'codicon-window' : 'codicon-symbol-method',
     type: 'command',
     data: { commandId: command.id, command }
   }
