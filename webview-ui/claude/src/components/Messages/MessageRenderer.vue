@@ -17,6 +17,7 @@ import AssistantMessage from './AssistantMessage.vue';
 import SystemMessage from './SystemMessage.vue';
 import TipMessage from './TipMessage.vue';
 import SlashCommandResultMessage from './SlashCommandResultMessage.vue';
+import BashMessage from './BashMessage.vue';
 
 interface Props {
   message: Message;
@@ -36,6 +37,8 @@ const messageComponent = computed(() => {
       return TipMessage;
     case 'slash_command_result':
       return SlashCommandResultMessage;
+    case 'bash':
+      return BashMessage;
     case 'system':
       return SystemMessage;
     default:

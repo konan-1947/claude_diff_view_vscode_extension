@@ -33,6 +33,9 @@ import type {
   MarketplaceEntry,
   PluginActionRequest,
   PluginActionResponse,
+  PromptHistoryEntry,
+  RunShellCommandResponse,
+  RewindFilesResponse,
 } from "@shared/messages";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -125,7 +128,8 @@ export abstract class BaseTransport {
     permissionMode?: PermissionMode,
     thinkingLevel?: string,
     effortLevel?: string,
-    additionalDirectories?: string[]
+    additionalDirectories?: string[],
+    resumeSessionAt?: string
   ): AsyncQueue<any> {
     const queue = new AsyncQueue<any>();
     this.streams.set(channelId, queue);
@@ -139,6 +143,7 @@ export abstract class BaseTransport {
       thinkingLevel,
       effortLevel,
       additionalDirectories: additionalDirectories?.length ? additionalDirectories : undefined,
+      resumeSessionAt,
     });
     return queue;
   }
@@ -383,6 +388,38 @@ export abstract class BaseTransport {
   }
   openURL(url: string): void {
     void this.sendRequest({ type: "open_url", url });
+  }
+  /** Prompts typed in this project (CLI and UI), newest first */
+  async getPromptHistory(cwd?: string): Promise<PromptHistoryEntry[]> {
+    const response = await this.sendRequest({ type: "get_prompt_history", cwd });
+    return (response as any)?.entries ?? [];
+  }
+  addPromptHistory(display: string, cwd?: string, sessionId?: string): Promise<any> {
+    return this.sendRequest({ type: "add_prompt_history", display, cwd, sessionId });
+  }
+  /** `!command`; aborting the signal stops the command */
+  async runShellCommand(command: string, cwd?: string, signal?: AbortSignal): Promise<Omit<RunShellCommandResponse, "type">> {
+    const response = (await this.sendRequest({ type: "run_shell_command", command, cwd }, undefined, signal)) as RunShellCommandResponse;
+    return {
+      stdout: response?.stdout ?? "",
+      stderr: response?.stderr ?? "",
+      exitCode: response?.exitCode ?? null,
+      interrupted: response?.interrupted,
+    };
+  }
+  async rewindFiles(channelId: string, userMessageId: string, dryRun = false): Promise<Omit<RewindFilesResponse, "type">> {
+    const response = (await this.sendRequest({ type: "rewind_files", userMessageId, dryRun }, channelId)) as RewindFilesResponse;
+    return {
+      canRewind: !!response?.canRewind,
+      error: response?.error,
+      filesChanged: response?.filesChanged,
+      insertions: response?.insertions,
+      deletions: response?.deletions,
+    };
+  }
+  async getRewindPoint(sessionId: string, userMessageId: string, cwd?: string): Promise<{ found: boolean; parentUuid: string | null }> {
+    const response = await this.sendRequest({ type: "get_rewind_point", sessionId, userMessageId, cwd });
+    return { found: !!(response as any)?.found, parentUuid: (response as any)?.parentUuid ?? null };
   }
   exec(command: string, params: string[]): Promise<any> {
     return this.sendRequest({ type: "exec", command, params });

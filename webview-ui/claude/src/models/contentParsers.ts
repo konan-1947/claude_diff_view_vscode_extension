@@ -11,6 +11,7 @@ import type {
   DiagnosticsBlock,
   DiagnosticsEntry,
   SlashCommandResultBlock,
+  BashBlock,
   ToolResultBlock,
   ToolUseContentBlock,
   ToolUseBlock,
@@ -97,6 +98,11 @@ function parseTextBlock(text: string): ContentBlockType[] {
     if (result) {
       return [result];
     }
+  }
+
+  const bash = parseBash(text);
+  if (bash) {
+    return [bash];
   }
 
   if (text.includes('<post-tool-use-hook>')) {
@@ -243,6 +249,26 @@ function parseSlashCommandResult(text: string): SlashCommandResultBlock | undefi
   }
 
   return undefined;
+}
+
+function tagContent(text: string, tag: string): string | undefined {
+  const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+  return match ? match[1] : undefined;
+}
+
+/** `<bash-input>` (the command) or `<bash-stdout>`/`<bash-stderr>` (its output) */
+function parseBash(text: string): BashBlock | undefined {
+  if (!text.includes('<bash-')) return undefined;
+  const command = tagContent(text, 'bash-input');
+  const stdout = tagContent(text, 'bash-stdout');
+  const stderr = tagContent(text, 'bash-stderr');
+  if (command === undefined && stdout === undefined && stderr === undefined) return undefined;
+  return {
+    type: 'bash',
+    command: command?.trim(),
+    stdout: stdout?.replace(/\s+$/, ''),
+    stderr: stderr?.replace(/\s+$/, ''),
+  };
 }
 
 function parseDiagnostics(text: string): DiagnosticsBlock | undefined {

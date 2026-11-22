@@ -1,6 +1,6 @@
 <template>
   <!-- Input box - three-row layout -->
-  <div class="full-input-box" style="position: relative;">
+  <div :class="['full-input-box', { 'bash-mode': bashMode && !activePanel }]" style="position: relative;">
     <!-- Command panel (`/effort` …): takes the input's place inside the same frame while open -->
     <EffortPanel
       v-if="activePanel === 'effort'"
@@ -115,6 +115,24 @@
       @close="closePanel"
     />
     <PluginPanel v-else-if="activePanel === 'plugin'" @close="closePanel" />
+    <ListPanel
+      v-else-if="activePanel === 'history-search'"
+      title="Search prompts"
+      :items="historyItems"
+      :initial-query="panelArg"
+      filterable
+      empty-text="No prompts typed in this project yet"
+      :hint="['↑/↓ to select', 'type to search', 'Enter to use', 'Esc to cancel']"
+      @select="useHistoryEntry"
+      @close="closePanel"
+    />
+    <RewindPanel
+      v-else-if="activePanel === 'rewind'"
+      :targets="rewindTargets"
+      @restored="restoreRewoundText"
+      @notify="notify"
+      @close="closePanel"
+    />
     <AuthPanel
       v-else-if="activePanel === 'login' || activePanel === 'logout'"
       :key="activePanel"
@@ -269,7 +287,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, inject, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, nextTick, inject, onMounted, onUnmounted } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import FileIcon from './FileIcon.vue'
 import ButtonArea from './ButtonArea.vue'
@@ -284,7 +302,10 @@ import HelpPanel from './CommandPanel/HelpPanel.vue'
 import PermissionsPanel from './CommandPanel/PermissionsPanel.vue'
 import PluginPanel from './CommandPanel/PluginPanel.vue'
 import AuthPanel from './CommandPanel/AuthPanel.vue'
+import RewindPanel from './CommandPanel/RewindPanel.vue'
 import type { ClaudeFileKind } from '@shared/messages'
+import type { Message } from '../models/Message'
+import { usePromptHistory } from '../utils/promptHistory'
 import { transcriptToMarkdown, exportFileName } from '../utils/exportTranscript'
 import type { AttachmentItem } from '../types/attachment'
 import type { ModeOption } from '../utils/permissionModes'
@@ -333,13 +354,15 @@ interface Emits {
   (e: 'commandPanelOpen', panel: 'effort'): void
   /** `/resume` → "All chats": show the chat history page */
   (e: 'openHistory'): void
+  /** `!command` (bash mode): the command without the `!` */
+  (e: 'bash', command: string): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showProgress: true,
   progressPercentage: 48.7,
   contextTooltip: '',
-  placeholder: 'Plan, @ for context, / for commands...',
+  placeholder: 'Plan, @ for context, / for commands, ! for bash',
   readonly: false,
   showSearch: false,
   selectedModel: 'default',
@@ -394,6 +417,8 @@ type PanelName =
   | 'plugin'
   | 'login'
   | 'logout'
+  | 'history-search'
+  | 'rewind'
 
 const PANEL_COMMANDS: Record<string, PanelName> = {
   '/output-style': 'output-style',
@@ -428,6 +453,10 @@ const UI_PANEL_COMMANDS: Record<string, PanelName> = {
 // UI commands that do their job at once, without a panel
 const UI_ACTION_COMMANDS: Record<string, () => void> = {
   '/release-notes': () => void openReleaseNotes(),
+  // The CLI's checkpoint menu (also Esc Esc); /undo and /checkpoint are its aliases
+  '/rewind': () => openRewind(),
+  '/undo': () => openRewind(),
+  '/checkpoint': () => openRewind(),
 }
 
 /** Argument typed after a UI command (`/resume <name>`, `/export <file>`) */
@@ -821,6 +850,175 @@ function openSettingsFile() {
   closePanel()
 }
 
+// ---- Prompt history (↑/↓, Ctrl+R), shared with the CLI ----
+
+const promptHistory = usePromptHistory(
+  async () => runtime?.connectionManager.get(),
+  () => getWorkspaceRoot()
+)
+/** Entry shown while browsing with ↑/↓ (-1 = the draft being typed) */
+const historyIndex = ref(-1)
+let historyDraft = ''
+
+const historyItems = computed<ListPanelItem[]>(() =>
+  promptHistory.entries.value.map((entry, i) => ({
+    value: String(i),
+    label: oneLine(entry.display),
+    detail: relativeTime(entry.timestamp),
+  }))
+)
+
+function oneLine(text: string, max = 120): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+}
+
+/** Replace the input text (caret at the end), without the completion menus */
+function setInputText(text: string) {
+  content.value = text
+  if (textareaRef.value) {
+    textareaRef.value.textContent = text
+    textareaRef.value.focus()
+    placeCaretAtEnd(textareaRef.value)
+  }
+  emit('input', text)
+  autoResizeTextarea()
+}
+
+/** Text offset of the caret in the input, or null when it is not in there */
+function caretOffset(): number | null {
+  const el = textareaRef.value
+  const sel = window.getSelection()
+  if (!el || !sel || sel.rangeCount === 0) return null
+  const range = sel.getRangeAt(0)
+  if (!el.contains(range.endContainer)) return null
+  const before = range.cloneRange()
+  before.selectNodeContents(el)
+  before.setEnd(range.endContainer, range.endOffset)
+  return before.toString().length
+}
+
+/**
+ * Caret on the first (or last) visual line: only then do ↑/↓ leave the text
+ * for the history, so moving inside a multi-line prompt keeps working.
+ */
+function caretOnEdgeLine(edge: 'first' | 'last'): boolean {
+  const el = textareaRef.value
+  if (!el) return false
+  if (!content.value) return true
+  const sel = window.getSelection()
+  if (!sel || !sel.isCollapsed) return false
+  const offset = caretOffset()
+  if (offset === null) return false
+  const all = document.createRange()
+  all.selectNodeContents(el)
+  const lines = all.getClientRects()
+  const caret = getCaretClientRect(el)
+  if (!caret || !lines.length || (caret.top === 0 && caret.bottom === 0)) {
+    return edge === 'first' ? offset === 0 : offset >= content.value.length
+  }
+  const half = (parseFloat(getComputedStyle(el).lineHeight) || 22) / 2
+  return edge === 'first'
+    ? caret.top < lines[0].top + half
+    : caret.bottom > lines[lines.length - 1].bottom - half
+}
+
+/** ↑ (older) / ↓ (newer) through the history; false = the key moves the caret instead */
+function navigateHistory(older: boolean): boolean {
+  const entries = promptHistory.entries.value
+  if (older) {
+    if (!caretOnEdgeLine('first')) return false
+    const next = historyIndex.value + 1
+    // At the oldest entry the key is still taken, so the caret does not jump
+    if (next >= entries.length) return historyIndex.value >= 0
+    if (historyIndex.value === -1) historyDraft = content.value
+    historyIndex.value = next
+    setInputText(entries[next].display)
+    return true
+  }
+  if (historyIndex.value < 0 || !caretOnEdgeLine('last')) return false
+  historyIndex.value -= 1
+  setInputText(historyIndex.value < 0 ? historyDraft : entries[historyIndex.value].display)
+  return true
+}
+
+function openHistorySearch() {
+  panelArg.value = content.value.trim()
+  activePanel.value = 'history-search'
+  void promptHistory.refresh(true)
+}
+
+function useHistoryEntry(value: string) {
+  const entry = promptHistory.entries.value[Number(value)]
+  if (!entry) return
+  historyIndex.value = -1
+  // After the panel closed and the input is shown again
+  setTimeout(() => setInputText(entry.display), 0)
+}
+
+// ---- Rewind (Esc Esc) ----
+
+let lastEscapeAt = 0
+const DOUBLE_ESCAPE_MS = 600
+
+/** Messages Rewind can go back to, newest first (fixed while the panel is open) */
+const rewindTargets = shallowRef<Message[]>([])
+
+/** Text the user typed in a message (no attachments, selections or injected context) */
+function messageText(message: Message): string {
+  const content = message.message.content
+  if (typeof content === 'string') return content
+  return content
+    .map((wrapper) => wrapper.content)
+    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+    .trim()
+}
+
+/** As in the CLI, the rewound message comes back in the input to edit and resend */
+function restoreRewoundText(text: string) {
+  // After the panel closed and the input is shown again
+  setTimeout(() => setInputText(text), 0)
+}
+
+function openRewind() {
+  const session = runtime?.sessionStore.activeSession()
+  if (!session) return
+  if (session.busy()) {
+    notify('Wait for the current turn to finish', 'warning')
+    return
+  }
+  rewindTargets.value = session
+    .messages()
+    .filter((m) => m.type === 'user' && !!m.uuid && !!messageText(m))
+    .reverse()
+  activePanel.value = 'rewind'
+}
+
+/** Esc Esc while idle: clear the input, or open rewind when it is empty (the CLI's keys) */
+function handleEscape(event: KeyboardEvent): boolean {
+  // Esc then stops the turn or the bash command (ChatPage); it must not start a double press
+  const shellRunning = runtime?.sessionStore.activeSession()?.shellRunning() ?? false
+  if (props.conversationWorking || shellRunning || event.repeat) {
+    lastEscapeAt = 0
+    return false
+  }
+  const now = Date.now()
+  if (now - lastEscapeAt > DOUBLE_ESCAPE_MS) {
+    lastEscapeAt = now
+    return false
+  }
+  lastEscapeAt = 0
+  if (content.value.trim()) {
+    clearInput()
+    historyIndex.value = -1
+  } else {
+    openRewind()
+  }
+  return true
+}
+
 function closePanel() {
   activePanel.value = null
   nextTick(() => textareaRef.value?.focus())
@@ -834,6 +1032,9 @@ function clearInput() {
   emit('input', '')
   nextTick(() => autoResizeTextarea())
 }
+
+/** `!command`: the input runs a shell command (the CLI's bash mode) */
+const bashMode = computed(() => content.value.trimStart().startsWith('!'))
 
 const isSubmitDisabled = computed(() => {
   return !content.value.trim() || isLoading.value
@@ -997,6 +1198,7 @@ function handleInput(event: Event) {
 
   content.value = textContent
   emit('input', textContent)
+  historyIndex.value = -1
 
   // Evaluate completions (slash and @)
   slashCompletion.evaluateQuery(textContent)
@@ -1054,6 +1256,42 @@ function handleKeydown(event: KeyboardEvent) {
   // Handle file reference completion keyboard events
   if (fileCompletion.isOpen.value) {
     fileCompletion.handleKeydown(event)
+    return
+  }
+
+  if (event.isComposing) return
+  const plainCtrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+  const noModifier = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+
+  // Ctrl+C clears the input like the CLI; with text selected it still copies
+  if (plainCtrl && event.key.toLowerCase() === 'c') {
+    const sel = window.getSelection()
+    if ((!sel || sel.isCollapsed) && content.value) {
+      event.preventDefault()
+      clearInput()
+      historyIndex.value = -1
+    }
+    return
+  }
+
+  // Ctrl+R: search the prompt history (VS Code's Open Recent stays outside the chat)
+  if (plainCtrl && event.key.toLowerCase() === 'r') {
+    event.preventDefault()
+    openHistorySearch()
+    return
+  }
+
+  if (noModifier && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    if (navigateHistory(event.key === 'ArrowUp')) {
+      event.preventDefault()
+    }
+    return
+  }
+
+  if (event.key === 'Escape' && noModifier) {
+    if (handleEscape(event)) {
+      event.preventDefault()
+    }
     return
   }
 
@@ -1292,9 +1530,22 @@ async function handleDrop(event: DragEvent) {
 }
 
 function handleSubmit() {
-  if (!content.value.trim()) return
+  const typed = content.value.trim()
+  if (!typed) return
 
-  if (openPickerFor(content.value.trim())) {
+  promptHistory.record(typed, runtime?.sessionStore.activeSession()?.sessionId())
+  historyIndex.value = -1
+
+  if (bashMode.value) {
+    const command = typed.slice(1).trim()
+    if (command) {
+      emit('bash', command)
+      clearInput()
+    }
+    return
+  }
+
+  if (openPickerFor(typed)) {
     return
   }
 
@@ -1373,10 +1624,17 @@ function handleSelectionChange() {
 // Add/remove the selectionchange listener
 onMounted(() => {
   document.addEventListener('selectionchange', handleSelectionChange)
+  textareaRef.value?.addEventListener('focus', refreshHistory)
+  void promptHistory.refresh(true)
 })
+
+function refreshHistory() {
+  void promptHistory.refresh()
+}
 
 onUnmounted(() => {
   document.removeEventListener('selectionchange', handleSelectionChange)
+  textareaRef.value?.removeEventListener('focus', refreshHistory)
 })
 
 // Exposed methods: let the parent set content and focus
@@ -1419,6 +1677,12 @@ defineExpose({
 .full-input-box:focus-within {
   border-color: var(--cs-fg-20) !important;
   outline: none !important;
+}
+
+/* Bash mode (`!command`): the frame takes the CLI's bash color */
+.full-input-box.bash-mode,
+.full-input-box.bash-mode:focus-within {
+  border-color: var(--vscode-terminal-ansiMagenta, #d670d6) !important;
 }
 
 /* Placeholder styles */

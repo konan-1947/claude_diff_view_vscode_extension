@@ -214,16 +214,37 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
 - [x] `Shift+Tab` đổi permission mode.
 - [x] Gõ tin khi đang bận → vào hàng đợi (`MessageQueueList`).
 - [x] `@` gợi ý file, `/` gợi ý lệnh.
-- [ ] `↑` / `↓` khi ô nhập trống → gọi lại các prompt đã gửi (history của CLI).
-- [ ] `Esc Esc` → rewind: chọn một tin nhắn cũ để quay lại (CLI có checkpoint: khôi phục
-      hội thoại và/hoặc code). Có thể dùng `resumeSessionAt` / file checkpointing của SDK.
-- [ ] Tiền tố `!` → chạy lệnh shell trực tiếp, đưa output vào context (bash mode của CLI).
-- [ ] Tiền tố `#` → thêm ghi chú vào memory (nếu CLI còn hỗ trợ; kiểm tra lại).
-- [ ] `Ctrl+R` → tìm trong lịch sử prompt.
+- [x] `↑` / `↓` → gọi lại các prompt đã gửi khi caret ở dòng đầu / dòng cuối (đi trong
+      prompt nhiều dòng vẫn bình thường; bản nháp đang gõ quay lại khi `↓` hết lịch sử).
+      Dùng chung `~/.claude/history.jsonl` với CLI, lọc theo project: CLI chạy qua SDK
+      **không** ghi file này, nên UI tự ghi một dòng đúng định dạng CLI mỗi lần Enter
+      (`src/claude/services/claude/promptTools.ts`, `webview-ui/.../utils/promptHistory.ts`).
+- [x] `Esc Esc` khi rảnh (hoặc `/rewind`, alias `/undo`, `/checkpoint`, có trong gợi ý `/`):
+      ô có chữ → xoá ô; ô trống → panel Rewind (chọn tin nhắn, rồi
+      "Restore code and conversation" / "Restore conversation" / "Restore code").
+      Code: `Query.rewindFiles(uuid)` (bật `enableFileCheckpointing` theo `/config
+      checkpoints`); file khôi phục được watcher mở thành diff để review. Hội thoại: đọc
+      `parentUuid` của tin đó trong transcript rồi relaunch với `resumeSessionAt` (cùng
+      session id, không fork); tin nhắn quay lại ô nhập như CLI. Mỗi tin gửi đi mang `uuid`
+      do UI gán, CLI giữ nguyên làm uuid trong transcript. Còn lại: nút "Restore checkpoint"
+      trong `UserMessage.vue` vẫn là TODO (có thể nối vào cùng panel).
+- [x] Tiền tố `!` → bash mode: viền ô nhập đổi màu; lệnh chạy ở host (bash/`$SHELL`, Windows:
+      `CLAUDE_CODE_GIT_BASH_PATH` hoặc PowerShell), timeout `BASH_DEFAULT_TIMEOUT_MS` (2 phút),
+      `Esc` dừng cả process group. Lệnh + output gửi vào transcript bằng một tin
+      `shouldQuery: false` (`<bash-input>` / `<bash-stdout>` / `<bash-stderr>`, định dạng của
+      CLI): không tốn lượt model, Claude thấy ở tin kế tiếp. Hiển thị bằng `BashMessage.vue`,
+      cả với session CLI cũ (CLI lưu hai tin riêng).
+- [x] ~~Tiền tố `#` → thêm ghi chú vào memory~~: N/A, CLI đã bỏ từ 2.0.70 ("Removed #
+      shortcut for quick memory entry").
+- [x] `Ctrl+R` → panel "Search prompts" (lọc khi gõ, Enter đưa prompt vào ô nhập). Không
+      chuyển ra VS Code (Open Recent) vì phím được `preventDefault` trong ô nhập.
 - [~] Dán ảnh (`Ctrl+V`) và kéo thả file: đã có `handlePaste` / Shift+drop, cần kiểm tra
       với ảnh chụp màn hình.
-- [ ] `Ctrl+C` khi ô nhập có chữ → xoá ô nhập (giống CLI), không đụng tới copy khi có
-      vùng chọn.
+- [x] `Ctrl+C` khi ô nhập có chữ và không có vùng chọn → xoá ô nhập; có vùng chọn → copy.
+- [ ] Bug thấy khi làm mục này: `ChatInputBox` emit `queueMessage` khi đang bận nhưng
+      `ChatPage` không nghe (và `handleSubmit` bỏ qua khi bận) → tin gõ lúc Claude đang chạy
+      bị xoá khỏi ô mà không được gửi. Dòng "Gõ tin khi đang bận → vào hàng đợi" ở trên
+      cần kiểm tra lại.
 
 ## 7. Luồng xin quyền và tương tác của tool
 

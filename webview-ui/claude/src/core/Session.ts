@@ -32,6 +32,26 @@ export interface AttachmentPayload {
 
 const IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
 
+/** Id of a sent user message; the CLI keeps it as the transcript entry's uuid (rewind points at it) */
+function newMessageUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export interface RewindFilesPreview {
+  canRewind: boolean;
+  error?: string;
+  filesChanged?: string[];
+  insertions?: number;
+  deletions?: number;
+}
+
 export interface SessionOptions {
   isExplicit?: boolean;
   existingWorktree?: { name: string; path: string };
@@ -74,10 +94,19 @@ export class Session {
    * the only way to tell "auto" from that level picked explicitly.
    */
   private pendingEffortArg?: string;
+  /** Rewind: the next launch resumes the conversation only up to this transcript entry */
+  private pendingResumeAt?: string;
+  /**
+   * Bash-mode messages sent with shouldQuery: false and not answered yet. The
+   * CLI still sends system/init + result for each, which must not show a turn.
+   */
+  private silentInputs = 0;
+  private shellAbort?: AbortController;
 
   readonly connection = signal<BaseTransport | undefined>(undefined);
 
   readonly busy = signal(false);
+  readonly shellRunning = signal(false);
   readonly isLoading = signal(false);
   readonly error = signal<string | undefined>(undefined);
   readonly sessionId = signal<string | undefined>(undefined);
@@ -295,6 +324,8 @@ export class Session {
       this.thinkingLevel(connection.config()?.thinkingLevel || 'default_on');
     }
 
+    const resumeAt = this.pendingResumeAt;
+    this.pendingResumeAt = undefined;
     const stream = connection.launchClaude(
       channelId,
       this.sessionId() ?? undefined,
@@ -305,7 +336,8 @@ export class Session {
       this.permissionModeExplicit ? this.permissionMode() : undefined,
       this.thinkingLevel(),
       this.effortLevel(),
-      this.additionalDirectories()
+      this.additionalDirectories(),
+      resumeAt
     );
 
     void this.readMessages(stream, channelId);
@@ -352,6 +384,130 @@ export class Session {
     const connection = await this.getConnection();
     this.claudeChannelId(undefined);
     connection.closeChannel(old);
+    await this.launchClaude();
+  }
+
+  /**
+   * Bash mode (`!command`), as in the CLI: the command runs in the session's
+   * folder outside the model, its output is shown, and both are appended to the
+   * transcript without a turn (shouldQuery: false), so Claude sees them with the
+   * next message. One message holds command and output (each message sent
+   * makes the CLI answer with an empty init/result).
+   */
+  async runShell(command: string): Promise<void> {
+    const connection = await this.getConnection();
+    const cwd = this.cwd() ?? connection.config()?.defaultCwd;
+    const uuid = newMessageUuid();
+    const inputText = `<bash-input>${command}</bash-input>`;
+    const raw = (texts: string[]) => ({
+      type: 'user',
+      uuid,
+      session_id: '',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: texts.map((text) => ({ type: 'text', text })) },
+    });
+
+    const pending = MessageModel.fromRaw(raw([inputText]));
+    if (pending) {
+      this.messages([...this.messages(), pending]);
+    }
+    this.isExplicit(false);
+    this.lastModifiedTime(Date.now());
+
+    this.shellAbort = new AbortController();
+    this.shellRunning(true);
+    let stdout = '';
+    let stderr = '';
+    try {
+      const result = await connection.runShellCommand(command, cwd ?? undefined, this.shellAbort.signal);
+      stdout = result.stdout;
+      stderr = result.stderr;
+      if (result.interrupted) {
+        stderr = `${stderr}${stderr ? '\n' : ''}Command interrupted`;
+      } else if (result.exitCode !== null && result.exitCode !== 0 && !stderr.trim()) {
+        stderr = `Exit code ${result.exitCode}`;
+      }
+    } catch (error) {
+      stderr = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.shellAbort = undefined;
+      this.shellRunning(false);
+    }
+
+    const full = raw([inputText, `<bash-stdout>${stdout}</bash-stdout><bash-stderr>${stderr}</bash-stderr>`]);
+    const done = MessageModel.fromRaw(full);
+    if (done) {
+      const list = [...this.messages()];
+      const index = pending ? list.indexOf(pending) : -1;
+      if (index >= 0) list[index] = done;
+      else list.push(done);
+      this.messages(list);
+    }
+
+    try {
+      const channelId = await this.launchClaude();
+      this.silentInputs++;
+      connection.sendInput(channelId, { ...full, shouldQuery: false }, false);
+    } catch (error) {
+      this.silentInputs = Math.max(0, this.silentInputs - 1);
+      console.error('[Session] bash output not kept for Claude', error);
+    }
+  }
+
+  /** Esc while a bash-mode command runs: stop it (the output so far is kept) */
+  cancelShell(): void {
+    this.shellAbort?.abort();
+  }
+
+  /** Rewind code (dryRun: only what would change). Launches the session if needed. */
+  async rewindCode(userMessageId: string, dryRun = false): Promise<RewindFilesPreview> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    return connection.rewindFiles(channelId, userMessageId, dryRun);
+  }
+
+  /**
+   * Rewind the conversation to just before `target`, like the CLI's Esc Esc:
+   * the CLI resumes up to the transcript entry before it (resumeSessionAt) and
+   * everything from `target` on leaves the chat. The CLI does not fork: the
+   * next message continues from that point in the same session.
+   */
+  async rewindConversation(target: Message): Promise<void> {
+    if (this.busy()) {
+      throw new Error('Wait for the current turn to finish');
+    }
+    const uuid = target.uuid;
+    const index = this.messages().indexOf(target);
+    if (!uuid || index < 0) {
+      throw new Error('This message cannot be rewound to');
+    }
+    const connection = await this.getConnection();
+    const sessionId = this.sessionId();
+    let parentUuid: string | null = null;
+    if (sessionId) {
+      const point = await connection.getRewindPoint(sessionId, uuid, this.cwd() ?? undefined);
+      if (!point.found) {
+        throw new Error('This message is not in the saved conversation');
+      }
+      parentUuid = point.parentUuid;
+    }
+
+    const old = this.claudeChannelId();
+    this.claudeChannelId(undefined);
+    if (old) {
+      connection.closeChannel(old);
+    }
+    this.silentInputs = 0;
+    this.messages(this.messages().slice(0, index));
+    this.todos([]);
+    this.lastSentSelection = undefined;
+    if (parentUuid) {
+      this.pendingResumeAt = parentUuid;
+    } else {
+      // It was the first message: nothing is left to resume
+      this.sessionId(undefined);
+      this.summary(undefined);
+    }
     await this.launchClaude();
   }
 
@@ -591,7 +747,10 @@ export class Session {
         this.permissionMode(event.permissionMode as PermissionMode);
       }
       if (event.subtype === 'init') {
-        this.busy(true);
+        // A bash-mode message (shouldQuery: false) starts no turn
+        if (this.silentInputs === 0 || this.busy()) {
+          this.busy(true);
+        }
         if (typeof event.output_style === 'string' && event.output_style) {
           this.outputStyle(event.output_style);
         }
@@ -612,6 +771,9 @@ export class Session {
         }
       }
     } else if (event?.type === 'result') {
+      if (this.silentInputs > 0 && event.num_turns === 0) {
+        this.silentInputs--;
+      }
       this.busy(false);
       this.updateCost(event);
       void this.refreshContextUsage();
@@ -854,6 +1016,7 @@ This may or may not be related to the current task.</ide_selection>`
 
     return {
       type: 'user',
+      uuid: newMessageUuid(),
       session_id: '',
       parent_tool_use_id: null,
       message: {

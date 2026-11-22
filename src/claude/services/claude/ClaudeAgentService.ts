@@ -49,6 +49,8 @@ import type {
     GetConfigOptionsResponse,
     ConfigOption,
     GetStatusResponse,
+    RewindFilesRequest,
+    RewindFilesResponse,
 } from '../../shared/messages';
 
 // SDK type imports
@@ -143,6 +145,10 @@ import {
     handleAuthLogin,
     handleAuthLoginAction,
     handleAuthLogout,
+    handleGetPromptHistory,
+    handleAddPromptHistory,
+    handleRunShellCommand,
+    handleGetRewindPoint,
 } from './handlers/handlers';
 
 export const IClaudeAgentService = createDecorator<IClaudeAgentService>('claudeAgentService');
@@ -202,7 +208,8 @@ export interface IClaudeAgentService {
         permissionMode: string | undefined,
         thinkingLevel: string | null,
         effortLevel?: string | null,
-        additionalDirectories?: string[]
+        additionalDirectories?: string[],
+        resumeSessionAt?: string
     ): Promise<void>;
 
     /** Reload plugins in every open session (after `/plugin` enabled or disabled one) */
@@ -371,7 +378,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                                 message.permissionMode || undefined,
                                 message.thinkingLevel || null,
                                 message.effortLevel ?? null,
-                                message.additionalDirectories
+                                message.additionalDirectories,
+                                message.resumeSessionAt
                             );
                         } catch (error) {
                             this.logService.error(`[ClaudeAgentService] launch_claude failed for ${message.channelId}: ${error}`);
@@ -430,7 +438,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         permissionMode: string | undefined,
         thinkingLevel: string | null,
         effortLevel: string | null = null,
-        additionalDirectories: string[] = []
+        additionalDirectories: string[] = [],
+        resumeSessionAt?: string
     ): Promise<void> {
         // Save thinkingLevel
         if (thinkingLevel) {
@@ -445,7 +454,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         this.logService.info('║  Launching Claude session              ║');
         this.logService.info('╚════════════════════════════════════════╝');
         this.logService.info(`  Channel ID: ${channelId}`);
-        this.logService.info(`  Resume: ${resume || 'null'}`);
+        this.logService.info(`  Resume: ${resume || 'null'}${resumeSessionAt ? ` at ${resumeSessionAt}` : ''}`);
         this.logService.info(`  CWD: ${cwd}`);
         this.logService.info(`  Model: ${model || 'null'}`);
         this.logService.info(`  Permission: ${permissionMode ?? 'CLI default'}`);
@@ -507,7 +516,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         errorType: error.type,
                     });
                 },
-                additionalDirectories
+                additionalDirectories,
+                resumeSessionAt
             );
             this.logService.info('  ✓ spawnClaude() done, Query object created');
 
@@ -649,7 +659,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         thinking: ThinkingConfig | undefined,
         effort: EffortLevel | undefined,
         onStderrError?: SdkQueryParams['onStderrError'],
-        additionalDirectories?: string[]
+        additionalDirectories?: string[],
+        resumeSessionAt?: string
     ): Promise<Query> {
         return this.sdkService.query({
             inputStream,
@@ -661,7 +672,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             thinking,
             effort,
             onStderrError,
-            additionalDirectories
+            additionalDirectories,
+            resumeSessionAt
         });
     }
 
@@ -969,6 +981,21 @@ export class ClaudeAgentService implements IClaudeAgentService {
             // Process operations
             case "exec":
                 return handleExec(request, this.handlerContext);
+
+            case "get_prompt_history":
+                return handleGetPromptHistory(request, this.handlerContext);
+
+            case "add_prompt_history":
+                return handleAddPromptHistory(request, this.handlerContext);
+
+            case "run_shell_command":
+                return handleRunShellCommand(request, this.handlerContext, signal);
+
+            case "get_rewind_point":
+                return handleGetRewindPoint(request, this.handlerContext);
+
+            case "rewind_files":
+                return this.rewindFiles(channelId, request as RewindFilesRequest);
 
             // case "open_claude_in_terminal":
             //     return handleOpenClaudeInTerminal(request, this.handlerContext);
@@ -1363,6 +1390,32 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 memoryFiles: memoryFiles(cwd).filter((f) => f.exists)
             }
         };
+    }
+
+    /**
+     * Rewind code to before a user message (Esc Esc). The files go back on disk;
+     * the workspace watcher then shows them as diffs to review like any edit.
+     */
+    async rewindFiles(channelId: string | undefined, request: RewindFilesRequest): Promise<RewindFilesResponse> {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        if (!channel?.query) {
+            return { type: "rewind_files_response", canRewind: false, error: 'No running session' };
+        }
+        try {
+            const result = await channel.query.rewindFiles(request.userMessageId, { dryRun: request.dryRun === true });
+            return {
+                type: "rewind_files_response",
+                canRewind: result.canRewind,
+                error: result.error,
+                filesChanged: result.filesChanged,
+                insertions: result.insertions,
+                deletions: result.deletions
+            };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logService.warn(`[rewindFiles] ${message}`);
+            return { type: "rewind_files_response", canRewind: false, error: message };
+        }
     }
 
     async reloadPlugins(): Promise<void> {

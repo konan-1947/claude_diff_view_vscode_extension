@@ -31,6 +31,8 @@ export interface UseSessionReturn {
   // Base state
   connection: Ref<BaseTransport | undefined>;
   busy: Ref<boolean>;
+  /** A bash-mode command (`!command`) is running */
+  shellRunning: Ref<boolean>;
   isLoading: Ref<boolean>;
   error: Ref<string | undefined>;
   sessionId: Ref<string | undefined>;
@@ -107,6 +109,7 @@ export function useSession(session: Session): UseSessionReturn {
   //  Bridge signals/computed with the official useSignal
   const connection = useSignal(session.connection);
   const busy = useSignal(session.busy);
+  const shellRunning = useSignal(session.shellRunning);
   const isLoading = useSignal(session.isLoading);
   const error = useSignal(session.error);
   const sessionId = useSignal(session.sessionId);
@@ -161,6 +164,7 @@ export function useSession(session: Session): UseSessionReturn {
     // State
     connection,
     busy,
+    shellRunning,
     isLoading,
     error,
     sessionId,

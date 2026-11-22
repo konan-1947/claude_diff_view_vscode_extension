@@ -14,7 +14,7 @@ import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 /**
  * Message type
  */
-export type MessageRole = 'user' | 'assistant' | 'system' | 'result' | 'tip' | 'slash_command_result';
+export type MessageRole = 'user' | 'assistant' | 'system' | 'result' | 'tip' | 'slash_command_result' | 'bash';
 
 /**
  * Message content data
@@ -40,6 +40,8 @@ export class Message {
   subtype?: string;
   session_id?: string;
   is_error?: boolean;
+  /** Transcript id of a user message (set by the UI on send, read back from history): rewind points at it */
+  uuid?: string;
 
   constructor(
     type: MessageRole,
@@ -133,7 +135,7 @@ export class Message {
         }
       }
 
-      return new Message(
+      const message = new Message(
         messageType,
         {
           role: raw.message?.role ?? raw.type,
@@ -141,6 +143,10 @@ export class Message {
         },
         toEpochMs(raw.timestamp)
       );
+      if (raw.type === 'user' && typeof raw.uuid === 'string') {
+        message.uuid = raw.uuid;
+      }
+      return message;
     }
 
     // Compaction marker, as the CLI prints "Conversation compacted" in the transcript
@@ -241,6 +247,10 @@ export function isSystemMessage(msg: Message): boolean {
  * Returns a specific message type used to pick the renderer
  */
 function getSpecialMessageType(contentBlocks: ContentBlockType[]): MessageRole | null {
+  if (contentBlocks.length > 0 && contentBlocks.every((block) => block.type === 'bash')) {
+    return 'bash';
+  }
+
   if (contentBlocks.length === 1) {
     const blockType = contentBlocks[0].type;
 

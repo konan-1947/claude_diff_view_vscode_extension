@@ -41,7 +41,7 @@
                 />
               </template>
             <!-- </div> -->
-            <div v-if="isBusy" class="spinnerRow">
+            <div v-if="isBusy || shellRunning" class="spinnerRow">
               <Spinner :size="16" :permission-mode="permissionMode" />
             </div>
             <div ref="endEl" />
@@ -72,6 +72,7 @@
             :effort-levels="effortLevels"
             @command-panel-open="() => session?.refreshAppliedEffort()"
             @submit="handleSubmit"
+            @bash="handleBash"
             @run-commands="handleRunCommands"
             @open-history="$emit('switchToSessions')"
             @stop="handleStop"
@@ -141,6 +142,7 @@
   // All access now goes through Vue Refs (.value)
   const messages = computed<any[]>(() => session.value?.messages.value ?? []);
   const isBusy = computed(() => session.value?.busy.value ?? false);
+  const shellRunning = computed(() => session.value?.shellRunning.value ?? false);
 
   // Turns shown the way Cursor does: one user message + everything the assistant did
   const chatItems = computed(() => buildChatItems(messages.value));
@@ -331,6 +333,17 @@
     }
   }
 
+  // `!command` (bash mode): runs outside the model, even while a turn runs
+  async function handleBash(command: string) {
+    const s = session.value;
+    if (!s) return;
+    try {
+      await s.__session.runShell(command);
+    } catch (e) {
+      console.error('[ChatPage] bash failed', e);
+    }
+  }
+
   // Commands from a panel (`/config` with values the CLI only takes one per
   // command). Sent one after another; the CLI runs queued input in order.
   async function handleRunCommands(commands: string[]) {
@@ -399,15 +412,19 @@
     priority: 100,
   });
 
-  // Esc stops the running turn, as in Claude Code. Not while a permission
-  // prompt or a dropdown (completion, pickers) is open: Esc closes those.
+  // Esc stops the running turn (or bash-mode command), as in Claude Code. Not
+  // while a permission prompt or a dropdown (completion, pickers) is open: Esc
+  // closes those.
   useKeybinding({
     keys: 'escape',
-    handler: handleStop,
+    handler: () => {
+      if (shellRunning.value) session.value?.__session.cancelShell();
+      else handleStop();
+    },
     allowInEditable: true,
     priority: 50,
     when: () =>
-      isBusy.value &&
+      (isBusy.value || shellRunning.value) &&
       !pendingPermission.value &&
       !document.querySelector('.dropdown-popover') &&
       !document.querySelector('.command-panel'),

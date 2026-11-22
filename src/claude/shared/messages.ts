@@ -43,6 +43,8 @@ export interface LaunchClaudeMessage extends BaseMessage {
     thinkingLevel?: string | null; // Thinking level (off | default_on)
     effortLevel?: string | null;   // Effort level reported by the CLI for the model; null/"auto" = CLI default
     additionalDirectories?: string[]; // `/add-dir` for this session only (absolute paths)
+    /** Rewind: resume only up to this transcript entry (with `resume`) */
+    resumeSessionAt?: string;
 }
 
 /**
@@ -826,6 +828,86 @@ export interface ExecResponse {
 }
 
 /**
+ * Prompt history shared with the CLI (`~/.claude/history.jsonl`): the
+ * prompts typed in this project, newest first, for ↑/↓ and Ctrl+R.
+ */
+export interface GetPromptHistoryRequest {
+    type: "get_prompt_history";
+    cwd?: string;
+}
+
+export interface PromptHistoryEntry {
+    display: string;
+    timestamp: number;
+}
+
+export interface GetPromptHistoryResponse {
+    type: "get_prompt_history_response";
+    entries: PromptHistoryEntry[];
+}
+
+/** Append a typed prompt to the CLI's history (as the CLI does on Enter) */
+export interface AddPromptHistoryRequest {
+    type: "add_prompt_history";
+    display: string;
+    cwd?: string;
+    sessionId?: string;
+}
+
+export interface AddPromptHistoryResponse {
+    type: "add_prompt_history_response";
+}
+
+/** `!command` (bash mode): run in the session's folder, output shown and kept for Claude */
+export interface RunShellCommandRequest {
+    type: "run_shell_command";
+    command: string;
+    cwd?: string;
+}
+
+export interface RunShellCommandResponse {
+    type: "run_shell_command_response";
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    /** Stopped by Esc or the time limit */
+    interrupted?: boolean;
+}
+
+/** Rewind code: restore the files Claude changed since a user message (`Query.rewindFiles`) */
+export interface RewindFilesRequest {
+    type: "rewind_files";
+    userMessageId: string;
+    dryRun?: boolean;
+}
+
+export interface RewindFilesResponse {
+    type: "rewind_files_response";
+    canRewind: boolean;
+    error?: string;
+    filesChanged?: string[];
+    insertions?: number;
+    deletions?: number;
+}
+
+/**
+ * Rewind conversation: the transcript entry just before a user message, to
+ * resume at (`resumeSessionAt`). null = it was the first message.
+ */
+export interface GetRewindPointRequest {
+    type: "get_rewind_point";
+    sessionId: string;
+    userMessageId: string;
+    cwd?: string;
+}
+
+export interface GetRewindPointResponse {
+    type: "get_rewind_point_response";
+    found: boolean;
+    parentUuid: string | null;
+}
+
+/**
  * List files
  */
 export interface ListFilesRequest {
@@ -1252,6 +1334,11 @@ export type WebViewRequest =
     | ListSessionsRequest
     | GetSessionRequest
     | ExecRequest
+    | GetPromptHistoryRequest
+    | AddPromptHistoryRequest
+    | RunShellCommandRequest
+    | RewindFilesRequest
+    | GetRewindPointRequest
     | ListFilesRequest
     | OpenURLRequest
     | StatPathRequest
@@ -1305,6 +1392,11 @@ export type WebViewRequestResponse =
     | ListSessionsResponse
     | GetSessionResponse
     | ExecResponse
+    | GetPromptHistoryResponse
+    | AddPromptHistoryResponse
+    | RunShellCommandResponse
+    | RewindFilesResponse
+    | GetRewindPointResponse
     | ListFilesResponse
     | OpenURLResponse
     | StatPathResponse

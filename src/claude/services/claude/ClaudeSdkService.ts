@@ -22,6 +22,7 @@ import { IFileSystemService } from '../fileSystemService';
 import { AsyncStream } from './transport';
 import { loadClaudeSdk } from '../../sdkLoader';
 import { describeMissingCli, locateClaudeCli } from '../../cliLocator';
+import { fileCheckpointingEnabled } from './configValues';
 
 // SDK type imports
 import type {
@@ -76,6 +77,8 @@ export interface SdkQueryParams {
     onStderrError?: (error: LLMRequestError) => void;
     /** Extra working directories (`/add-dir` for this session only), absolute paths */
     additionalDirectories?: string[];
+    /** Rewind: resume the conversation only up to this transcript entry */
+    resumeSessionAt?: string;
 }
 
 /** How to start the `claude` CLI for a subcommand (`claude plugin list`, `claude auth login`) */
@@ -183,7 +186,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
      * Query Claude through the SDK
      */
     async query(params: SdkQueryParams): Promise<Query> {
-        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, effort, onStderrError, additionalDirectories } = params;
+        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, effort, onStderrError, additionalDirectories, resumeSessionAt } = params;
 
         this.logService.info('========================================');
         this.logService.info('ClaudeSdkService.query() called');
@@ -242,6 +245,9 @@ export class ClaudeSdkService implements IClaudeSdkService {
             // Basic parameters
             cwd: cwdParam,
             resume: resume || undefined,
+            resumeSessionAt: resume && resumeSessionAt ? resumeSessionAt : undefined,
+            // Backups taken before each edit, so Esc Esc can restore the code (rewindFiles)
+            enableFileCheckpointing: fileCheckpointingEnabled(),
             model: modelParam,
             permissionMode: permissionModeParam,
             // Without this the CLI refuses a later switch to bypassPermissions.

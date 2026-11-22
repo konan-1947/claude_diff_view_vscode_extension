@@ -79,6 +79,12 @@ export interface IClaudeSessionService {
      * Get all messages of a session
      */
     getSession(sessionIdOrPath: string, cwd: string): Promise<any[]>;
+
+    /**
+     * Transcript entry just before a user message (its parentUuid): where a
+     * rewind resumes the conversation. null = it was the first entry.
+     */
+    getRewindPoint(sessionId: string, userMessageId: string, cwd: string): Promise<{ found: boolean; parentUuid: string | null }>;
 }
 
 // ============================================================================
@@ -162,6 +168,8 @@ function convertMessage(msg: SessionMessage): any | undefined {
             type: "user",
             message: msg.message,
             session_id: msg.uuid,
+            // Transcript id of the message: what rewind (code and conversation) points at
+            uuid: msg.uuid,
             parent_tool_use_id: null,
             toolUseResult: msg.toolUseResult,
             // Same flag the live stream sets on the summary (isSynthetic): not shown
@@ -207,7 +215,7 @@ function convertMessage(msg: SessionMessage): any | undefined {
  * local command output, caveats, system reminders). Never usable as a title.
  */
 const SYNTHETIC_PROMPT_REGEX =
-    /^\s*(<command-name>|<command-message>|<command-args>|<local-command-|<system-reminder>|<ide_|Caveat: The messages below were generated)/;
+    /^\s*(<command-name>|<command-message>|<command-args>|<local-command-|<bash-|<system-reminder>|<ide_|Caveat: The messages below were generated)/;
 
 /**
  * Extract the user-typed text of a message, or "" when there is none
@@ -515,6 +523,19 @@ export class ClaudeSessionService implements IClaudeSessionService {
             this.logService.error(`[ClaudeSessionService] Failed to get session messages:`, error);
             return [];
         }
+    }
+
+    async getRewindPoint(sessionId: string, userMessageId: string, cwd: string): Promise<{ found: boolean; parentUuid: string | null }> {
+        const id = validateSessionId(sessionId);
+        if (!id) {
+            return { found: false, parentUuid: null };
+        }
+        const entries = await readJSONL(path.join(getProjectHistoryDir(cwd), `${id}.jsonl`));
+        const entry = entries.find(msg => msg.uuid === userMessageId);
+        if (!entry) {
+            return { found: false, parentUuid: null };
+        }
+        return { found: true, parentUuid: entry.parentUuid ?? null };
     }
 
 }

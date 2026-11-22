@@ -74,6 +74,13 @@ function blockToMarkdown(wrapper: ContentBlockWrapper): string {
       return block.result ? fence(String(block.result).trim()) : ''
     case 'llm_error':
       return `**Error:** ${block.message}`
+    case 'bash': {
+      const parts: string[] = []
+      if (block.command !== undefined) parts.push(fence(`! ${block.command}`))
+      const output = [block.stdout, block.stderr].filter(Boolean).join('\n')
+      if (output) parts.push(fence(shorten(output)))
+      return parts.join('\n\n')
+    }
     default:
       return ''
   }
@@ -94,11 +101,12 @@ export function transcriptToMarkdown(messages: Message[], title?: string): strin
   const parts: string[] = [`# ${title?.trim() || 'Claude conversation'}`]
   let lastRole: string | undefined
   for (const message of messages) {
-    if (message.type !== 'user' && message.type !== 'assistant' && message.type !== 'slash_command_result') continue
+    if (!['user', 'assistant', 'slash_command_result', 'bash'].includes(message.type)) continue
     const body = messageBody(message)
     if (!body) continue
     // A slash command's output comes from the CLI, so it reads as the reply
-    const role = message.type === 'user' ? 'User' : 'Claude'
+    // Bash mode is typed by the user, output included (the CLI ran it, not Claude)
+    const role = message.type === 'user' || message.type === 'bash' ? 'User' : 'Claude'
     // Consecutive assistant messages are one reply
     if (role !== lastRole) parts.push(`## ${role}`)
     parts.push(body)

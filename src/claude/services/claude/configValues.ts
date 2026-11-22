@@ -78,6 +78,14 @@ function readGlobalConfig(env: Record<string, string | undefined>): Record<strin
 }
 
 /**
+ * `/config checkpoints` (on unless turned off): the SDK only keeps file
+ * checkpoints for rewind when asked to, so the UI follows the CLI's switch.
+ */
+export function fileCheckpointingEnabled(env: Record<string, string | undefined> = process.env): boolean {
+    return readGlobalConfig(env).fileCheckpointingEnabled !== false;
+}
+
+/**
  * Current value of each key in `keys` that can be read, as the text
  * `/config key=value` takes (`true`/`false` for switches).
  */

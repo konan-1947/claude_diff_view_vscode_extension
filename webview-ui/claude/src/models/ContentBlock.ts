@@ -89,6 +89,17 @@ export interface SlashCommandResultBlock {
   isError: boolean;
 }
 
+/**
+ * Bash mode (`!command`), as the CLI stores it: `<bash-input>` for the
+ * command, `<bash-stdout>`/`<bash-stderr>` for its output (one message or two).
+ */
+export interface BashBlock {
+  type: 'bash';
+  command?: string;
+  stdout?: string;
+  stderr?: string;
+}
+
 export interface ToolResultBlock {
   type: 'tool_result';
   tool_use_id: string;
@@ -119,5 +130,6 @@ export type ContentBlockType =
   | OpenedFileBlock
   | DiagnosticsBlock
   | SlashCommandResultBlock
+  | BashBlock
   | ToolUseContentBlock
   | ToolResultBlock;

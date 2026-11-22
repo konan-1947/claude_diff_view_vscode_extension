@@ -24,6 +24,7 @@ export const UI_SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: 'add-dir', description: 'Add a new working directory' },
   { name: 'plugin', description: 'Enable or disable installed plugins' },
   { name: 'release-notes', description: 'View release notes' },
+  { name: 'rewind', description: 'Restore the code and/or conversation to a previous point' },
   { name: 'login', description: 'Sign in with your Anthropic account' },
   { name: 'logout', description: 'Sign out from your Anthropic account' },
 ]

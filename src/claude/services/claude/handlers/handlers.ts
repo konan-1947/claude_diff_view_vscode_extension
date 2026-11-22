@@ -98,8 +98,17 @@ import type {
     GetHooksRequest,
     GetHooksResponse,
     ExportConversationRequest,
-    ExportConversationResponse
+    ExportConversationResponse,
+    GetPromptHistoryRequest,
+    GetPromptHistoryResponse,
+    AddPromptHistoryRequest,
+    AddPromptHistoryResponse,
+    RunShellCommandRequest,
+    RunShellCommandResponse,
+    GetRewindPointRequest,
+    GetRewindPointResponse
 } from '../../../shared/messages';
+import { appendPromptHistory, readPromptHistory, runShellCommand } from '../promptTools';
 import {
     changelogFile,
     ensureClaudeFile,
@@ -671,6 +680,54 @@ export async function handleExec(
             });
         });
     });
+}
+
+function requestCwd(cwd: string | undefined, context: HandlerContext): string {
+    return cwd || context.workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
+}
+
+/** ↑/↓ and Ctrl+R: the prompts typed in this project, shared with the CLI */
+export async function handleGetPromptHistory(
+    request: GetPromptHistoryRequest,
+    context: HandlerContext
+): Promise<GetPromptHistoryResponse> {
+    return {
+        type: "get_prompt_history_response",
+        entries: await readPromptHistory(requestCwd(request.cwd, context))
+    };
+}
+
+export async function handleAddPromptHistory(
+    request: AddPromptHistoryRequest,
+    context: HandlerContext
+): Promise<AddPromptHistoryResponse> {
+    try {
+        await appendPromptHistory(request.display, requestCwd(request.cwd, context), request.sessionId);
+    } catch (error) {
+        context.logService.warn(`[handleAddPromptHistory] ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return { type: "add_prompt_history_response" };
+}
+
+/** `!command` (bash mode); Esc cancels the request, which stops the command */
+export async function handleRunShellCommand(
+    request: RunShellCommandRequest,
+    context: HandlerContext,
+    signal?: AbortSignal
+): Promise<RunShellCommandResponse> {
+    return runShellCommand(request.command, requestCwd(request.cwd, context), signal);
+}
+
+export async function handleGetRewindPoint(
+    request: GetRewindPointRequest,
+    context: HandlerContext
+): Promise<GetRewindPointResponse> {
+    const point = await context.sessionService.getRewindPoint(
+        request.sessionId,
+        request.userMessageId,
+        requestCwd(request.cwd, context)
+    );
+    return { type: "get_rewind_point_response", ...point };
 }
 
 /**

@@ -23,7 +23,7 @@ export interface LooseMessage {
 
 export type ChatItem = Turn | LooseMessage;
 
-const STANDALONE = new Set(['tip', 'system', 'slash_command_result']);
+const STANDALONE = new Set(['tip', 'system', 'slash_command_result', 'bash']);
 
 export function buildChatItems(messages: Message[]): ChatItem[] {
   const items: ChatItem[] = [];
