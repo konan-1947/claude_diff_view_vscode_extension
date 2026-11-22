@@ -94,6 +94,10 @@ html {
   --cs-row-gap: 14px;
   --cs-edge: 16px; /* pane edge -> bubble / input */
   --cs-row-inset: 11px; /* bubble edge -> text rows and tool cards */
+  /* Widest the transcript and input get (edges included). A Claude UI tab runs
+     both in the narrow side bar and as the wide Agent-mode main panel: there
+     the column stops here and is centred, so lines stay readable. */
+  --cs-column-max: 840px;
   --cs-duration: 100ms;
 }
 

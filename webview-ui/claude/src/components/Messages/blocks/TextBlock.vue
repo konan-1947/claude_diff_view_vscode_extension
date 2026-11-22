@@ -265,10 +265,15 @@ async function onClick(event: MouseEvent) {
   font-size: 14px;
 }
 
+/* A table wider than the pane (side bar) scrolls on its own instead of being
+   cut off by the transcript, which hides horizontal overflow */
 .markdown-content :deep(table) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 0;
-  width: 100%;
 }
 
 .markdown-content :deep(th),

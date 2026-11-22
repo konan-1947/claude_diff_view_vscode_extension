@@ -259,7 +259,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 6px 14px;
+  /* wide pane: same centred column as the chat, the hairline stays full width */
+  padding: 6px max(14px, calc((100% - var(--cs-column-max)) / 2 + 14px));
   border-bottom: 1px solid var(--cs-fg-8);
   color: var(--cs-fg-66);
   flex-shrink: 0;
@@ -286,6 +287,10 @@ onMounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 6px 0;
+}
+.list > * {
+  max-width: var(--cs-column-max);
+  margin-inline: auto;
 }
 
 .group + .group {

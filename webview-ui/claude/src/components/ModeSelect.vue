@@ -10,7 +10,7 @@
     @close="onClose"
   >
     <template #trigger>
-      <div class="mode-dropdown" :title="selectedMode.description">
+      <div class="mode-dropdown" :title="`${selectedMode.label}: ${selectedMode.description}`">
         <div class="dropdown-content">
           <div :class="['codicon', selectedMode.icon, 'dropdown-icon', 'text-[14px]!']" />
           <div class="dropdown-text">

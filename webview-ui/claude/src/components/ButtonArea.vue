@@ -212,7 +212,9 @@ function handleFileUpload(event: Event) {
 
 .button-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  /* minmax(0, …): a plain 1fr cannot go below its content, so in a narrow
+     side bar the pickers would run under the buttons on the right */
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   height: 28px;
   padding-right: 2px;
@@ -232,6 +234,17 @@ function handleFileUpload(event: Event) {
   min-width: 0;
   height: 20px;
   max-width: 100%;
+}
+
+/* Only the model name gives way when the row runs short (it ellipsizes); the
+   mode pill and effort keep their size and lose their labels below instead.
+   No overflow:hidden here, it would clip their popovers. */
+.controls-section > :deep(.dropdown-trigger-container) {
+  flex-shrink: 0;
+}
+.controls-section > :deep(.dropdown-trigger-container:nth-child(2)) {
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .actions-section {
@@ -314,5 +327,34 @@ function handleFileUpload(event: Event) {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* Narrow pane (side bar): what an icon or a tooltip already says goes. The
+   effort keeps its level (its icon is the same for every level) and the mode
+   pill its icon; below 280px the effort picker leaves (`/effort` still works). */
+@media (max-width: 420px) {
+  .controls-section {
+    gap: 4px;
+  }
+  .controls-section :deep(.mode-dropdown .chevron-icon),
+  .controls-section :deep(.effort-dropdown .chevron-icon),
+  .actions-section :deep(.progress-text) {
+    display: none;
+  }
+  /* the icon's own rule is display: flex !important */
+  .controls-section :deep(.effort-dropdown .effort-icon) {
+    display: none !important;
+  }
+}
+@media (max-width: 340px) {
+  .controls-section :deep(.mode-dropdown .dropdown-text) {
+    display: none;
+  }
+}
+@media (max-width: 280px) {
+  .controls-section > :deep(.dropdown-trigger-container:nth-child(3)),
+  .controls-section :deep(.chevron-icon) {
+    display: none;
+  }
 }
 </style>

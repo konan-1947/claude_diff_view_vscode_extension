@@ -798,6 +798,14 @@
     padding: 10px 0 12px;
     position: relative;
   }
+  /* Wide pane (Agent-mode main panel): one centred column. The scrollbar stays
+     at the pane edge since the scroll container itself keeps the full width. */
+  .messagesContainer > *,
+  .main > .inputContainer {
+    width: 100%;
+    max-width: var(--cs-column-max);
+    margin-inline: auto;
+  }
   .spinnerRow {
     padding: 0 calc(var(--cs-edge) + var(--cs-row-inset));
   }

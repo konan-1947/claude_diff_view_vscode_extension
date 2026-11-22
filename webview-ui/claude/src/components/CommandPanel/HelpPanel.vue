@@ -151,7 +151,7 @@ function onKey(event: KeyboardEvent) {
 }
 
 .hp-name {
-  width: 130px;
+  width: min(130px, 40%);
   flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;

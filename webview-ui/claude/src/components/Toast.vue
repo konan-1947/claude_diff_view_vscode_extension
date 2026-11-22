@@ -71,7 +71,10 @@ onUnmounted(() => {
   border-radius: 6px;
   font-size: 12px;
   line-height: 1.4;
-  max-width: 480px;
+  /* left: 50% alone would cap it at half the pane (side bar: ~140px) */
+  width: max-content;
+  max-width: min(480px, calc(100vw - 24px));
+  box-sizing: border-box;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   pointer-events: auto;
 }

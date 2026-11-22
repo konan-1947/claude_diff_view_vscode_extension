@@ -54,6 +54,7 @@ const TAB_ICON_ATTRS = 'viewBox="0 0 24 24" width="16" height="16" fill="none" s
 const TAB_ICON_LIST = `<svg ${TAB_ICON_ATTRS}><path d="M4 6.5h16M4 12h16M4 17.5h9"/></svg>`;
 const TAB_ICON_INFO = `<svg ${TAB_ICON_ATTRS}><circle cx="12" cy="12" r="8.75"/><path d="M12 11v5.5"/><path d="M12 7.5h.01"/></svg>`;
 const TAB_ICON_SETTINGS = `<svg ${TAB_ICON_ATTRS}><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2.5"/><circle cx="15" cy="16" r="2.5"/></svg>`;
+const TAB_ICON_TABS = `<svg ${TAB_ICON_ATTRS}><rect x="3" y="7.5" width="14" height="12.5" rx="3"/><path d="M7.5 4h10.5a3 3 0 0 1 3 3v9"/></svg>`;
 const TAB_ICON_BACK = `<svg class="btn-icon icon-back" ${TAB_ICON_ATTRS}><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M7 9l3 3-3 3"/><rect x="12.5" y="12.5" width="4" height="3.5" rx="1" fill="currentColor" stroke="none"/></svg>`;
 
 export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
@@ -186,12 +187,15 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .view-diff-btn .icon-back { width: 16px; }
   .view-diff-btn:not(.preview-open) .icon-back,
   .view-diff-btn.preview-open .icon-diff { display: none; }
-  /* Narrow sidebar: labels no longer fit, so fall back to icon-only buttons. */
-  @media (max-width: 280px) {
-    .agent-mode-btn,
+  /* Narrow sidebar: the labelled buttons turn icon-only one by one (View diff
+     first, then Agent mode), so the tab strip keeps room for the tab titles. */
+  @media (max-width: 560px) {
     .view-diff-btn { width: 26px; min-width: 26px; padding: 0; }
-    .agent-mode-btn .btn-label,
     .view-diff-btn .btn-label { display: none; }
+  }
+  @media (max-width: 420px) {
+    .agent-mode-btn { width: 26px; min-width: 26px; padding: 0; }
+    .agent-mode-btn .btn-label { display: none; }
   }
   .agent-mode-btn:active, .view-diff-btn:active { transform: translateY(1px); }
   .agent-mode-btn:focus-visible, .view-diff-btn:focus-visible, .header-btn:focus-visible, .tab-add:focus-visible {
@@ -246,7 +250,8 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     gap: 4px;
     overflow-x: auto;
     overflow-y: hidden;
-    min-width: 0;
+    /* never squeezed away by the header buttons: at least part of a title shows */
+    min-width: 60px;
     scrollbar-width: none;
   }
   .tabs::-webkit-scrollbar { display: none; }
@@ -315,6 +320,71 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     transition: background 0.12s, opacity 0.12s;
   }
   .tab-add:hover, .tab-add[aria-expanded="true"] { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); opacity: 1; }
+  /* Very narrow side bar: tighter strip (after the base rules above, which
+     would otherwise win at equal specificity) */
+  @media (max-width: 320px) {
+    #tab-strip { padding: 0 6px; }
+    #header-actions { gap: 2px; }
+    .header-separator { display: none; }
+  }
+  @media (max-width: 260px) {
+    #tab-strip { gap: 2px; }
+    #tab-strip .header-btn,
+    .agent-mode-btn,
+    .view-diff-btn { width: 24px; min-width: 24px; }
+    .tab-add { flex-basis: 22px; width: 22px; }
+  }
+
+  /* Narrow side bar: the tab row gives way to one icon (like View diff) that
+     lists the tabs in a menu, so the header buttons keep their room. */
+  .tabs-btn { display: none; position: relative; flex: 0 0 auto; }
+  .tabs-count {
+    position: absolute;
+    right: 1px;
+    bottom: 1px;
+    min-width: 11px;
+    height: 11px;
+    padding: 0 2px;
+    box-sizing: border-box;
+    border-radius: 6px;
+    background: var(--chrome-bg, var(--vscode-sideBar-background));
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 11px;
+    text-align: center;
+  }
+  .tabs-count:empty { display: none; }
+  /* a background tab finished (same signal as the green dot on a tab) */
+  .tabs-btn.has-done::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #3fb950;
+  }
+  @media (max-width: 560px) {
+    #tab-strip .tabs { display: none; }
+    #tab-strip .tabs-btn { display: inline-flex; }
+  }
+  .tabs-menu .agent-item.active { background: var(--vscode-list-inactiveSelectionBackground, rgba(128,128,128,0.16)); }
+  .tabs-menu .agent-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tabs-menu .agent-item.done .agent-name::after { content: ' \u25CF'; color: #3fb950; }
+  .tab-menu-close {
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    font-size: 14px;
+    line-height: 1;
+    opacity: 0.6;
+  }
+  .tab-menu-close:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); opacity: 1; }
 
   /* Launcher menu opened by the "+" button */
   .agent-menu {
@@ -1201,6 +1271,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
 </head>
 <body class="page-terminal">
   <div id="tab-strip">
+    <button id="btn-tabs" class="header-btn tabs-btn" type="button" title="Tabs" aria-label="Tabs" aria-haspopup="menu" aria-expanded="false">
+      ${TAB_ICON_TABS}<span class="tabs-count" aria-hidden="true"></span>
+    </button>
     <div id="tabs" class="tabs"></div>
     <button id="tab-add" class="tab-add" type="button" title="New terminal or agent" aria-label="New terminal or agent" aria-haspopup="menu" aria-expanded="false">+</button>
     <div id="header-actions">
@@ -1226,6 +1299,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     </div>
   </div>
   <div id="agent-menu" class="agent-menu" role="menu" hidden></div>
+  <div id="tabs-menu" class="agent-menu tabs-menu" role="menu" hidden></div>
   <div id="content">
     <div id="pending-overlay" hidden>
       <div class="pending-head">
@@ -2137,6 +2211,111 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           if (agent) { e.preventDefault(); closeAgentMenu(false); startSession(agent.id); }
         }
       });
+
+      // Narrow side bar: the tab row is replaced by one button (CSS) whose menu lists
+      // the tabs. The tab elements stay the source of truth (order, title, state).
+      const btnTabs = document.getElementById('btn-tabs');
+      const tabsMenu = document.getElementById('tabs-menu');
+      const tabsCount = btnTabs.querySelector('.tabs-count');
+
+      function syncTabsButton() {
+        const tabs = Array.from(tabsEl.children);
+        tabsCount.textContent = tabs.length > 1 ? String(tabs.length) : '';
+        btnTabs.classList.toggle('has-done', tabs.some((t) => t.classList.contains('done')));
+        const active = tabs.find((t) => t.classList.contains('active'));
+        const title = active ? (active.querySelector('.tab-title') || active).textContent : '';
+        btnTabs.title = title ? 'Tabs: ' + title : 'Tabs';
+        if (!tabsMenu.hidden) renderTabsMenu();
+      }
+      new MutationObserver(syncTabsButton).observe(tabsEl, {
+        childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'],
+      });
+
+      function closeTabsMenu(refocus) {
+        if (tabsMenu.hidden) return;
+        tabsMenu.hidden = true;
+        btnTabs.setAttribute('aria-expanded', 'false');
+        if (refocus) { try { btnTabs.focus(); } catch (_) {} }
+      }
+
+      function renderTabsMenu() {
+        const focusedId = document.activeElement && tabsMenu.contains(document.activeElement)
+          ? document.activeElement.dataset.id : undefined;
+        tabsMenu.textContent = '';
+        Array.from(tabsEl.children).forEach((tab) => {
+          const id = tab.dataset.id;
+          const sess = sessions.get(id);
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'agent-item';
+          item.dataset.id = id;
+          item.setAttribute('role', 'menuitem');
+          item.classList.toggle('active', tab.classList.contains('active'));
+          item.classList.toggle('done', tab.classList.contains('done'));
+          const icon = document.createElement('span');
+          icon.className = 'agent-icon';
+          icon.innerHTML = sess && sess.kind === 'claude' ? ICON_CLAUDE : ICON_TERMINAL;
+          const label = document.createElement('span');
+          label.className = 'agent-name';
+          label.textContent = (tab.querySelector('.tab-title') || tab).textContent;
+          label.title = tab.title || label.textContent;
+          const close = document.createElement('span');
+          close.className = 'tab-menu-close';
+          close.title = 'Close tab';
+          close.textContent = '\u00D7';
+          close.addEventListener('click', (e) => {
+            e.stopPropagation();
+            vscode.postMessage({ type: 'closeSession', id });
+          });
+          item.appendChild(icon);
+          item.appendChild(label);
+          item.appendChild(close);
+          item.addEventListener('click', () => { closeTabsMenu(false); activateTab(id); });
+          tabsMenu.appendChild(item);
+        });
+        if (focusedId) {
+          const again = tabsMenu.querySelector('.agent-item[data-id="' + CSS.escape(focusedId) + '"]');
+          if (again) again.focus();
+        }
+        if (!tabsMenu.hidden) positionTabsMenu();
+      }
+
+      function positionTabsMenu() {
+        const rect = btnTabs.getBoundingClientRect();
+        const width = tabsMenu.offsetWidth;
+        tabsMenu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + 'px';
+        tabsMenu.style.top = (rect.bottom + 4) + 'px';
+      }
+
+      btnTabs.addEventListener('click', () => {
+        if (!tabsMenu.hidden) { closeTabsMenu(false); return; }
+        closeAgentMenu(false);
+        tabsMenu.hidden = false;
+        btnTabs.setAttribute('aria-expanded', 'true');
+        renderTabsMenu();
+        const current = tabsMenu.querySelector('.agent-item.active') || tabsMenu.querySelector('.agent-item');
+        if (current) current.focus();
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (tabsMenu.hidden) return;
+        if (tabsMenu.contains(e.target) || btnTabs.contains(e.target)) return;
+        closeTabsMenu(false);
+      });
+      window.addEventListener('blur', () => closeTabsMenu(false));
+      // Widened past the breakpoint: the button is gone, so is its menu
+      window.addEventListener('resize', () => { if (!btnTabs.offsetParent) closeTabsMenu(false); });
+      tabsMenu.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); closeTabsMenu(true); return; }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          const items = Array.from(tabsMenu.querySelectorAll('.agent-item'));
+          if (items.length === 0) return;
+          const at = items.indexOf(document.activeElement);
+          const next = e.key === 'ArrowDown' ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+          items[next].focus();
+        }
+      });
+      syncTabsButton();
 
       const themeObserver = new MutationObserver(() => {
         if (currentSettings.themePreset === 'vscode') {

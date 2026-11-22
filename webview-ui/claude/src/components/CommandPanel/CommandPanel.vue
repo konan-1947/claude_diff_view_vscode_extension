@@ -129,7 +129,12 @@ defineExpose({ focus: () => rootRef.value?.focus() })
   height: 26px;
 }
 
+/* Narrow pane: the title ellipsizes, the actions keep their size */
 .cp-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--cs-fg-66);
 }
 
@@ -137,10 +142,12 @@ defineExpose({ focus: () => rootRef.value?.focus() })
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .cp-action {
   display: inline-flex;
+  white-space: nowrap;
   align-items: center;
   gap: 4px;
   padding: 2px 6px;
@@ -194,12 +201,26 @@ defineExpose({ focus: () => rootRef.value?.focus() })
   color: var(--cs-fg-36);
 }
 
+/* One line where it fits; in a narrow pane whole entries wrap onto more
+   lines (never a single entry broken mid-way) */
 .cp-hint {
-  height: 28px;
+  min-height: 28px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 0 16px;
+  padding: 6px 0;
   font-size: 12px;
   color: var(--cs-fg-36);
+}
+
+.cp-hint > span {
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .cp-hint {
+    column-gap: 12px;
+  }
 }
 </style>
