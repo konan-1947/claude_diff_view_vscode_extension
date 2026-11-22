@@ -83,6 +83,12 @@ interface Props {
 
   // Dropdown menu
   width?: number
+  /**
+   * Grow to the content's natural width (one line per description), left
+   * aligned to the trigger and capped only by the right edge of the viewport;
+   * text wraps only once that cap is reached. Ignores `width` / `align`.
+   */
+  fitContent?: boolean
   contentHeight?: number
   containerStyle?: Record<string, any>
   popoverStyle?: Record<string, any>
@@ -137,11 +143,27 @@ const isVisible = ref(false)
 const searchTerm = ref('')
 
 // Smart positioning
+// Room from the trigger's left edge to the viewport's right edge, measured on
+// open (fitContent)
+const roomToRight = ref(0)
+
 const dropdownStyle = computed(() => {
+  if (props.fitContent) {
+    return {
+      position: 'absolute',
+      minWidth: '140px',
+      width: 'max-content',
+      maxWidth: `${Math.max(140, roomToRight.value)}px`,
+      left: '0px',
+      zIndex: 2548,
+      ...verticalPlacement()
+    }
+  }
+
   const style: any = {
     position: 'absolute',
     minWidth: '140px',
-    maxWidth: '240px',
+    maxWidth: props.width ? `${props.width}px` : '240px',
     width: props.width ? `${props.width}px` : 'auto',
     zIndex: 2548
   }
@@ -149,30 +171,9 @@ const dropdownStyle = computed(() => {
   if (!triggerRef.value) return style
 
   const viewportWidth = window.innerWidth
-  const viewportHeight = window.innerHeight
   const triggerRect = triggerRef.value.getBoundingClientRect()
 
-  // Compute the total dropdown height
-  const searchHeight = props.showSearch ? 32 : 0
-  const footerHeight = 25
-  const dropdownTotalHeight = searchHeight + 240 + footerHeight // use the max height of 240px
-
-  // Compute the available space
-  const spaceAbove = triggerRect.top
-  const spaceBelow = viewportHeight - triggerRect.bottom
-
-  // Pick the display position smartly
-  const showBelow = spaceBelow >= dropdownTotalHeight || spaceBelow > spaceAbove
-
-  // Vertical positioning - relative to the trigger
-  if (showBelow) {
-    style.top = '100%'
-    style.marginTop = '4px'
-  } else {
-    style.bottom = '100%'
-    style.top = 'auto'
-    style.marginBottom = '4px'
-  }
+  Object.assign(style, verticalPlacement())
 
   // Compute the dropdown width (for bounds checks)
   const dropdownWidth = props.width || 240 // use props.width or the default max width
@@ -216,6 +217,30 @@ const dropdownStyle = computed(() => {
   return style
 })
 
+// Above or below the trigger, whichever has room for the max height
+function verticalPlacement(): Record<string, string> {
+  const trigger = triggerRef.value
+  if (!trigger) return {}
+  const triggerRect = trigger.getBoundingClientRect()
+
+  // Compute the total dropdown height
+  const searchHeight = props.showSearch ? 32 : 0
+  const footerHeight = 25
+  const dropdownTotalHeight = searchHeight + 240 + footerHeight // use the max height of 240px
+
+  // Compute the available space
+  const spaceAbove = triggerRect.top
+  const spaceBelow = window.innerHeight - triggerRect.bottom
+
+  // Pick the display position smartly
+  const showBelow = spaceBelow >= dropdownTotalHeight || spaceBelow > spaceAbove
+
+  // Vertical positioning - relative to the trigger
+  return showBelow
+    ? { top: '100%', marginTop: '4px' }
+    : { bottom: '100%', top: 'auto', marginBottom: '4px' }
+}
+
 // Methods
 function toggleDropdown() {
   if (props.disabled) return
@@ -230,6 +255,10 @@ function toggleDropdown() {
 function openDropdown() {
   if (props.disabled) return
 
+  if (props.fitContent && triggerRef.value) {
+    const edgePadding = 8
+    roomToRight.value = window.innerWidth - triggerRef.value.getBoundingClientRect().left - edgePadding
+  }
   isVisible.value = true
   emit('open')
   emit('toggle', true)

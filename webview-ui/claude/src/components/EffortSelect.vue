@@ -1,7 +1,13 @@
 <template>
   <DropdownTrigger
+    ref="triggerRef"
     align="left"
+    fit-content
     :close-on-click-outside="true"
+    :selected-index="activeIndex"
+    :data-nav="navMode"
+    @open="onOpen"
+    @close="onClose"
   >
     <template #trigger>
       <div class="effort-dropdown" :title="`Effort: ${selectedLabel}`">
@@ -22,17 +28,20 @@
           checked: effortLevel === opt.id,
           type: 'effort'
         }"
-        :is-selected="effortLevel === opt.id"
+        :is-selected="activeIndex === idx"
         :index="idx"
+        stacked
         @click="(item) => handleSelect(item, close)"
+        @mouseenter="onMouseEnter"
       />
     </template>
   </DropdownTrigger>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { DropdownTrigger, DropdownItem, type DropdownItemData } from './Dropdown'
+import { usePickerKeyboard } from '../composables/usePickerKeyboard'
 
 interface Props {
   /** Current level; "auto" = the model's default */
@@ -73,6 +82,14 @@ const options = computed(() => [
 
 const selectedLabel = computed(() => labelOf(props.effortLevel))
 
+const triggerRef = ref<InstanceType<typeof DropdownTrigger>>()
+const { activeIndex, navMode, onOpen, onClose, onMouseEnter } = usePickerKeyboard({
+  trigger: triggerRef,
+  count: () => options.value.length,
+  currentIndex: () => options.value.findIndex((o) => o.id === props.effortLevel),
+  onPick: (index) => emit('effortSelect', options.value[index].id)
+})
+
 function handleSelect(item: DropdownItemData, close: () => void) {
   close()
   emit('effortSelect', item.id)
@@ -87,7 +104,7 @@ function handleSelect(item: DropdownItemData, close: () => void) {
   align-items: center;
   line-height: 16.8px;
   min-width: 0;
-  padding: 2px 6px;
+  padding: 2px 6px 2px 8px;
   border-radius: 23px;
   flex-shrink: 1;
   cursor: pointer;
@@ -119,8 +136,8 @@ function handleSelect(item: DropdownItemData, close: () => void) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 12px;
-  height: 13px;
+  line-height: 16px;
+  height: 16px;
 }
 
 .chevron-icon {

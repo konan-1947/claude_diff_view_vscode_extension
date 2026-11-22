@@ -73,6 +73,8 @@ interface Props {
   height?: string | number
   width?: string | number
   horizontalScroll?: boolean
+  /** Max height in px; overrides the 320px default of the stylesheet */
+  maxHeight?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -126,6 +128,7 @@ const contentWrapperStyle = computed((): CSSProperties => ({
   width: '100%',
   overflow: 'hidden',
   height: typeof props.height === 'number' ? `${props.height}px` : props.height,
+  ...(props.maxHeight !== undefined ? { maxHeight: `${props.maxHeight}px` } : {}),
   position: 'relative'
 }))
 

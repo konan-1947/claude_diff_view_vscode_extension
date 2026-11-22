@@ -96,11 +96,6 @@ export async function handleInit(
     // Get the default working directory
     const defaultCwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
 
-    // TODO: read openNewInTab from config
-    // Claude UI tabs live in the terminal panel tab strip: let the webview
-    // route new-conversation and tab-title requests to the host.
-    const openNewInTab = true;
-
     // Get the thinking level (default value)
     const thinkingLevel = 'default_on';
 
@@ -108,7 +103,6 @@ export async function handleInit(
         type: "init_response",
         state: {
             defaultCwd,
-            openNewInTab,
             // authStatus,
             modelSetting,
             platform: process.platform,

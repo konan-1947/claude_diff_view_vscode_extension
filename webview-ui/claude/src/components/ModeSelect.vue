@@ -1,7 +1,13 @@
 <template>
   <DropdownTrigger
+    ref="triggerRef"
     align="left"
+    fit-content
     :close-on-click-outside="true"
+    :selected-index="activeIndex"
+    :data-nav="navMode"
+    @open="onOpen"
+    @close="onClose"
   >
     <template #trigger>
       <div class="mode-dropdown" :title="selectedMode.description">
@@ -27,19 +33,22 @@
           checked: permissionMode === mode.id,
           type: 'permission-mode'
         }"
-        :is-selected="permissionMode === mode.id"
+        :is-selected="activeIndex === idx"
         :index="idx"
+        stacked
         @click="(item) => handleModeSelect(item, close)"
+        @mouseenter="onMouseEnter"
       />
     </template>
   </DropdownTrigger>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { DropdownTrigger, DropdownItem, type DropdownItemData } from './Dropdown'
 import { describeMode, type ModeOption } from '../utils/permissionModes'
+import { usePickerKeyboard } from '../composables/usePickerKeyboard'
 
 interface Props {
   permissionMode?: PermissionMode
@@ -60,6 +69,14 @@ const emit = defineEmits<Emits>()
 
 const selectedMode = computed(() => describeMode(props.permissionMode))
 
+const triggerRef = ref<InstanceType<typeof DropdownTrigger>>()
+const { activeIndex, navMode, onOpen, onClose, onMouseEnter } = usePickerKeyboard({
+  trigger: triggerRef,
+  count: () => props.modes.length,
+  currentIndex: () => props.modes.findIndex((m) => m.id === props.permissionMode),
+  onPick: (index) => emit('modeSelect', props.modes[index].id as PermissionMode)
+})
+
 function handleModeSelect(item: DropdownItemData, close: () => void) {
   close()
   emit('modeSelect', item.id as PermissionMode)
@@ -76,7 +93,9 @@ function handleModeSelect(item: DropdownItemData, close: () => void) {
   line-height: 16.8px;
   min-width: 0;
   max-width: 100%;
-  padding: 2px 4px 2px 8px;
+  /* 8px left / 6px right: the chevron glyph adds ~2px of its own on the
+     right, so both sides read the same */
+  padding: 2px 6px 2px 8px;
   border-radius: 9999px;
   flex-shrink: 0;
   cursor: pointer;
@@ -117,11 +136,11 @@ function handleModeSelect(item: DropdownItemData, close: () => void) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 12px;
+  line-height: 16px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 3px;
-  height: 13px;
+  height: 16px;
   font-weight: 400;
 }
 
@@ -129,7 +148,8 @@ function handleModeSelect(item: DropdownItemData, close: () => void) {
   opacity: 0.8;
   max-width: 120px;
   overflow: hidden;
-  height: 13px;
+  line-height: 16px;
+  height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;

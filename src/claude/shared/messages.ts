@@ -142,7 +142,6 @@ export interface InitResponse {
     type: "init_response";
     state: {
         defaultCwd: string;
-        openNewInTab: boolean;
         // authStatus: null | { authenticated: boolean };
         modelSetting: string;
         platform: string;

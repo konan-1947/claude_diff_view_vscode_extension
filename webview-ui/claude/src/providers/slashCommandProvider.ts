@@ -34,12 +34,19 @@ export function getSlashCommands(
   // Without a query, return all commands
   if (!query || !query.trim()) return allCommands
 
-  // Filter commands: match label or description
-  const lowerQuery = query.toLowerCase()
-  return allCommands.filter(cmd =>
-    cmd.label.toLowerCase().includes(lowerQuery) ||
-    cmd.description?.toLowerCase().includes(lowerQuery)
-  )
+  // Match on the command name (the label starts with "/"); names starting with
+  // the query rank first. Descriptions are only searched when no name matches.
+  const q = query.trim().toLowerCase().replace(/^\//, '')
+  const byName = allCommands
+    .filter(cmd => cmd.label.toLowerCase().slice(1).includes(q))
+    .sort((a, b) => {
+      const pa = a.label.toLowerCase().slice(1).startsWith(q) ? 0 : 1
+      const pb = b.label.toLowerCase().slice(1).startsWith(q) ? 0 : 1
+      return pa - pb
+    })
+  if (byName.length > 0) return byName
+
+  return allCommands.filter(cmd => cmd.description?.toLowerCase().includes(q))
 }
 
 /**

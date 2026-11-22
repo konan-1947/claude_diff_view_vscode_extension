@@ -1,7 +1,13 @@
 <template>
   <DropdownTrigger
+    ref="triggerRef"
     align="left"
+    fit-content
     :close-on-click-outside="true"
+    :selected-index="activeIndex"
+    :data-nav="navMode"
+    @open="onOpen"
+    @close="onClose"
   >
     <template #trigger>
       <div class="model-dropdown">
@@ -25,18 +31,21 @@
           checked: selectedModel === model.id,
           type: 'model'
         }"
-        :is-selected="selectedModel === model.id"
+        :is-selected="activeIndex === idx"
         :index="idx"
+        stacked
         @click="(item) => handleModelSelect(item, close)"
+        @mouseenter="onMouseEnter"
       />
     </template>
   </DropdownTrigger>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { DropdownTrigger, DropdownItem, type DropdownItemData } from './Dropdown'
 import { useModelCatalog } from '../composables/useModelCatalog'
+import { usePickerKeyboard } from '../composables/usePickerKeyboard'
 
 interface Props {
   selectedModel?: string
@@ -57,6 +66,20 @@ const { availableModels, labelFor } = useModelCatalog()
 
 const selectedModelLabel = computed(() => labelFor(props.selectedModel) || 'Select model')
 
+const triggerRef = ref<InstanceType<typeof DropdownTrigger>>()
+
+// Lets `/model` (no argument) open this picker, like the CLI's model menu.
+defineExpose({
+  open: () => triggerRef.value?.open()
+})
+
+const { activeIndex, navMode, onOpen, onClose, onMouseEnter } = usePickerKeyboard({
+  trigger: triggerRef,
+  count: () => availableModels.value.length,
+  currentIndex: () => availableModels.value.findIndex((m) => m.id === props.selectedModel),
+  onPick: (index) => emit('modelSelect', availableModels.value[index].id)
+})
+
 function handleModelSelect(item: DropdownItemData, close: () => void) {
   close()
   emit('modelSelect', item.id)
@@ -75,7 +98,7 @@ function handleModelSelect(item: DropdownItemData, close: () => void) {
   max-width: 100%;
   /* Same 2px vertical padding and 16.8px line as the mode pill, so the
      three controls share one height and centre line */
-  padding: 2px 6px;
+  padding: 2px 6px 2px 8px;
   border-radius: 23px;
   flex-shrink: 1;
   cursor: pointer;
@@ -106,11 +129,11 @@ function handleModelSelect(item: DropdownItemData, close: () => void) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 12px;
+  line-height: 16px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 3px;
-  height: 13px;
+  height: 16px;
   font-weight: 400;
 }
 
@@ -118,7 +141,8 @@ function handleModelSelect(item: DropdownItemData, close: () => void) {
   opacity: 0.8;
   max-width: 120px;
   overflow: hidden;
-  height: 13px;
+  line-height: 16px;
+  height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;

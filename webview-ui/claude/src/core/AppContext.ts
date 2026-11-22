@@ -129,22 +129,14 @@ export class AppContext {
     }
   }
 
-  startNewConversationTab(initialPrompt?: string): boolean {
-    const connection = this.connectionManager.connection();
-    if (connection?.config()?.openNewInTab) {
-      void connection.startNewConversationTab(initialPrompt);
-      return true;
-    }
-    return false;
+  /** Tabs live in the host's terminal tab strip: ask it to open one. */
+  startNewConversationTab(initialPrompt?: string): void {
+    void this.connectionManager.get().then((c) => c.startNewConversationTab(initialPrompt));
   }
 
-  renameTab(title: string): boolean {
-    const connection = this.connectionManager.connection();
-    if (connection?.config()?.openNewInTab) {
-      void connection.renameTab(title);
-      return true;
-    }
-    return false;
+  /** Set the title of the host tab showing this conversation. */
+  renameTab(title: string): void {
+    void this.connectionManager.get().then((c) => c.renameTab(title));
   }
 
   openURL(url: OpenURLRequest['url']): void {

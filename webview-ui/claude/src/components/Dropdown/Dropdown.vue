@@ -27,7 +27,7 @@
       <slot name="header" />
 
       <!-- Middle scrollable area - uses ScrollableElement -->
-      <ScrollableElement ref="scrollableRef">
+      <ScrollableElement ref="scrollableRef" :max-height="listMaxHeight">
         <div class="menu-content">
           <slot
             name="content"
@@ -73,6 +73,11 @@ interface Props {
   preferPlacement?: 'auto' | 'above' | 'below' // placement preference
   selectedIndex?: number // currently selected index (for visible item alignment)
   scrollPadding?: number // minimum gap between the selected item and the container edge
+  /**
+   * Grow to the content's natural width, capped only by the right edge of the
+   * viewport; text wraps once that cap is reached. Ignores `width` / `align`.
+   */
+  fitContent?: boolean
 }
 
 interface Emits {
@@ -106,6 +111,31 @@ const selectedIndex = ref(0)
 const scrollableRef = ref<any>()
 const containerRef = ref<HTMLElement>()
 
+const EDGE_MARGIN = 8
+
+// Which side of the anchor the list opens on (preferPlacement, else the roomier side)
+const placement = computed<'above' | 'below'>(() => {
+  const rect = props.position
+  const searchHeight = props.showSearch ? 32 : 0
+  const dropdownTotalHeight = searchHeight + 240 + 25
+  const spaceAbove = rect.top
+  const spaceBelow = window.innerHeight - rect.top - (rect.height || 0)
+  if (props.preferPlacement === 'below') return 'below'
+  if (props.preferPlacement === 'above') return 'above'
+  return spaceBelow >= dropdownTotalHeight || spaceBelow > spaceAbove ? 'below' : 'above'
+})
+
+// Height left for the scrolling list between the anchor and the viewport edge,
+// so a long list scrolls instead of running off the view
+const listMaxHeight = computed(() => {
+  const rect = props.position
+  const room = placement.value === 'above'
+    ? rect.top - props.offsetY
+    : window.innerHeight - rect.top - (rect.height || 0) - props.offsetY
+  const chrome = (props.showSearch ? 32 : 0) + 2 // search box + borders
+  return Math.max(80, Math.min(320, room - EDGE_MARGIN - chrome))
+})
+
 // Computed properties
 const dropdownStyle = computed(() => {
   const style: any = {
@@ -119,6 +149,19 @@ const dropdownStyle = computed(() => {
   const viewportWidth = window.innerWidth
   const viewportHeight = window.innerHeight
   const triggerRect = props.position
+
+  if (props.fitContent) {
+    const left = Math.max(EDGE_MARGIN, triggerRect.left + props.offsetX)
+    style.width = 'max-content'
+    style.maxWidth = `${Math.max(140, viewportWidth - left - EDGE_MARGIN)}px`
+    style.left = `${left}px`
+    if (placement.value === 'below') {
+      style.top = `${triggerRect.top + (triggerRect.height || 0) + props.offsetY}px`
+    } else {
+      style.bottom = `${viewportHeight - triggerRect.top + props.offsetY}px`
+    }
+    return style
+  }
 
   // Compute the total dropdown height
   const searchHeight = props.showSearch ? 32 : 0  // search box height

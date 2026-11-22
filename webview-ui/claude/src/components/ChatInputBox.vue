@@ -40,6 +40,7 @@
 
     <!-- Row 2: ButtonArea component + TokenIndicator -->
     <ButtonArea
+      ref="buttonAreaRef"
       :disabled="isSubmitDisabled"
       :loading="isLoading"
       :selected-model="selectedModel"
@@ -69,12 +70,12 @@
       v-if="slashCompletion.isOpen.value"
       :is-visible="slashCompletion.isOpen.value"
       :position="slashCompletion.position.value"
-      :width="240"
+      fit-content
       :should-auto-focus="false"
       :close-on-click-outside="false"
       :data-nav="slashCompletion.navigationMode.value"
       :selected-index="slashCompletion.activeIndex.value"
-      :offset-y="-8"
+      :offset-y="6"
       :offset-x="-8"
       :prefer-placement="'above'"
       @close="slashCompletion.close"
@@ -87,6 +88,7 @@
                 :item="item"
                 :index="index"
                 :is-selected="index === slashCompletion.activeIndex.value"
+                stacked
                 @click="slashCompletion.selectActive()"
                 @mouseenter="slashCompletion.handleMouseEnter(index)"
               />
@@ -107,7 +109,7 @@
       :close-on-click-outside="false"
       :data-nav="fileCompletion.navigationMode.value"
       :selected-index="fileCompletion.activeIndex.value"
-      :offset-y="-8"
+      :offset-y="6"
       :offset-x="-8"
       :prefer-placement="'above'"
       @close="fileCompletion.close"
@@ -216,6 +218,26 @@ const content = ref('')
 const isLoading = ref(false)
 const textareaRef = ref<HTMLDivElement | null>(null)
 
+const buttonAreaRef = ref<InstanceType<typeof ButtonArea>>()
+
+// `/model` without an argument opens the model picker, as the CLI opens its
+// model menu; through the SDK the CLI would only print usage text. Deferred so
+// the click that picked the completion item does not reach the picker's
+// click-outside handler and close it straight away.
+function openModelPicker() {
+  clearInput()
+  setTimeout(() => buttonAreaRef.value?.openModelSelect(), 0)
+}
+
+function clearInput() {
+  content.value = ''
+  if (textareaRef.value) {
+    textareaRef.value.textContent = ''
+  }
+  emit('input', '')
+  nextTick(() => autoResizeTextarea())
+}
+
 const isSubmitDisabled = computed(() => {
   return !content.value.trim() || isLoading.value
 })
@@ -229,6 +251,10 @@ const slashCompletion = useCompletionDropdown({
   provider: (query, signal) => getSlashCommands(query, runtime, signal),
   toDropdownItem: commandToDropdownItem,
   onSelect: (command, query) => {
+    if (command.label === '/model') {
+      openModelPicker()
+      return
+    }
     if (query) {
       // Replace the text
       const updated = slashCompletion.replaceText(content.value, `${command.label} `)
@@ -348,17 +374,19 @@ function updateDropdownPosition(
     rect = getCaretClientRect(el)
   }
 
-  // Last resort: use the input box's own rect
-  if (!rect) {
-    const r = el.getBoundingClientRect()
-    rect = new DOMRect(r.left, r.top, r.width, r.height)
-  }
+  // Vertical anchor = top edge of the whole input box, so the (above-placed)
+  // dropdown never covers the text being typed. A collapsed range can yield an
+  // empty/stale rect, so the character rect is only used for the left edge.
+  const box = (el.closest('.full-input-box') as HTMLElement | null)?.getBoundingClientRect()
+    ?? el.getBoundingClientRect()
+  const elRect = el.getBoundingClientRect()
+  const left = rect && rect.left > 0 ? rect.left : elRect.left
 
   completion.updatePosition({
-    top: rect.top,
-    left: rect.left,
-    width: rect.width,
-    height: rect.height
+    top: box.top,
+    left,
+    width: rect?.width ?? 0,
+    height: 0
   })
 }
 
@@ -669,6 +697,11 @@ async function handleDrop(event: DragEvent) {
 
 function handleSubmit() {
   if (!content.value.trim()) return
+
+  if (content.value.trim() === '/model') {
+    openModelPicker()
+    return
+  }
 
   if (props.conversationWorking) {
     // Conversation busy: add to the queue

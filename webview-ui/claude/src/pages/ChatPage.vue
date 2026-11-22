@@ -1,11 +1,7 @@
 <template>
   <div class="chat-page">
-    <!-- Top bar: one chat tab on the left, session actions on the right (Cursor's tab strip) -->
+    <!-- Top bar: session actions only (tabs live in the host terminal tab strip) -->
     <div class="chat-header">
-      <div class="chat-tab" :title="title">
-        <span class="codicon codicon-comment chat-tab-icon"></span>
-        <span class="chat-title">{{ title }}</span>
-      </div>
       <div class="header-right">
         <button class="header-btn" title="New conversation" @click="createNew">
           <span class="codicon codicon-add"></span>
@@ -135,7 +131,6 @@
   });
 
   // All access now goes through Vue Refs (.value)
-  const title = computed(() => session.value?.summary.value || 'New Conversation');
   const messages = computed<any[]>(() => session.value?.messages.value ?? []);
   const isBusy = computed(() => session.value?.busy.value ?? false);
 
@@ -164,7 +159,7 @@
 
   // Capabilities of the selected model, as the CLI reports them. Everything
   // below follows these flags, so a CLI update needs no change here.
-  const { findModelInfo } = useModelCatalog();
+  const { findModelInfo, availableModels } = useModelCatalog();
   const modelInfo = computed(() => findModelInfo(session.value?.modelSelection.value));
   const effortLevels = computed<string[]>(() => {
     const info = modelInfo.value;
@@ -182,6 +177,19 @@
     })
   );
   const platform = computed(() => runtime.appContext.platform);
+
+  // Auto is the default mode: a session nobody picked a mode for switches to it
+  // as soon as the model allows it (supportsAutoMode, known once the model
+  // list has loaded). Overrides the CLI's `permissions.defaultMode`; a mode
+  // picked by the user (picker, Shift+Tab) is never touched.
+  watch(
+    () => [activeSessionRaw.value, modes.value.some((m) => m.id === 'auto')] as const,
+    ([raw, autoAvailable]) => {
+      if (!raw || !autoAvailable || raw.hasExplicitPermissionMode) return;
+      void raw.setPermissionMode('auto');
+    },
+    { immediate: true }
+  );
 
   // Register the command permissionMode.toggle (registered after the function is defined below)
 
@@ -278,22 +286,8 @@
   });
 
   async function createNew(): Promise<void> {
-    if (!runtime) return;
-
-    // 1. First try creating a new tab through appContext.startNewConversationTab (multi-tab mode)
-    if (runtime.appContext.startNewConversationTab()) {
-      return;
-    }
-
-    // 2. Not in multi-tab mode: check whether the current session is empty
-    const currentMessages = messages.value;
-    if (currentMessages.length === 0) {
-      // The current session is already empty, no need to create a new one
-      return;
-    }
-
-    // 3. The current session has content: create a new session
-    await runtime.sessionStore.createSession({ isExplicit: true });
+    // Tabs are managed by the host terminal tab strip, not by this app.
+    runtime?.appContext.startNewConversationTab();
   }
 
   // ChatInput event handling
@@ -379,6 +373,26 @@
       !document.querySelector('.dropdown-popover'),
   });
 
+  // The CLI can switch model by itself (`/model <name>` typed in the chat);
+  // follow it so the picker shows, and the next launch sends, what is really
+  // running. The CLI reports a model ID, so pick the picker entry resolving to
+  // it — a named model over "Default" — or keep the ID as is.
+  // Only a change between two reads of the same session counts: the first read
+  // after a launch just reports the ID behind the selection (`opus[1m]` runs as
+  // `claude-opus-5-5`), which must not replace it.
+  watch(
+    () => [session.value, session.value?.cliModel.value] as const,
+    ([s, running], [prevSession, prevRunning]) => {
+      if (!s || !running || s !== prevSession || !prevRunning || running === prevRunning) return;
+      const selected = s.modelSelection.value;
+      const current = findModelInfo(selected);
+      if ((current?.resolvedModel ?? selected) === running) return;
+      const matches = availableModels.value.filter((m) => m.info?.resolvedModel === running);
+      const entry = matches.find((m) => m.id !== 'default') ?? matches[0];
+      s.adoptModel(entry?.id ?? running);
+    }
+  );
+
   async function handleModelSelect(modelId: string) {
     const s = session.value;
     if (!s) return;
@@ -437,44 +451,15 @@
     height: 100%;
   }
 
-  /* Cursor tab strip: 35px, active tab = editor background, hairline below */
+  /* Slim action bar: 35px, hairline below */
   .chat-header {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: stretch;
     height: 35px;
     flex-shrink: 0;
     background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
     border-bottom: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--cs-fg-12));
-  }
-
-  .chat-tab {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    max-width: 200px;
-    padding: 0 10px;
-    font-size: 13px;
-    background: var(--vscode-editor-background);
-    color: var(--vscode-foreground);
-    /* tab sits on top of the hairline */
-    margin-bottom: -1px;
-    border-right: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--cs-fg-12));
-  }
-
-  .chat-tab-icon {
-    font-size: 16px;
-    flex-shrink: 0;
-  }
-
-  .chat-title {
-    margin: 0;
-    font-size: 13px;
-    font-weight: 400;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .header-right {

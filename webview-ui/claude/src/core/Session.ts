@@ -55,8 +55,8 @@ export interface SessionContext {
     buttons?: string[],
     onlyIfNotVisible?: boolean
   ) => Promise<string | undefined>;
-  startNewConversationTab?: (initialPrompt?: string) => boolean;
-  renameTab?: (title: string) => boolean;
+  startNewConversationTab?: (initialPrompt?: string) => void;
+  renameTab?: (title: string) => void;
   openURL?: (url: string) => void;
 }
 
@@ -83,6 +83,12 @@ export class Session {
   readonly permissionMode = signal<PermissionMode>('default');
   readonly summary = signal<string | undefined>(undefined);
   readonly modelSelection = signal<string | undefined>(undefined);
+  /**
+   * Model ID the CLI is actually running (e.g. `claude-haiku-5-5`), read back
+   * after every turn. It changes when the CLI switches on its own, e.g. after
+   * `/model <name>` typed in the chat.
+   */
+  readonly cliModel = signal<string | undefined>(undefined);
   readonly thinkingLevel = signal<string>('default_on');
   /** "auto" = the model's default effort (as the CLI decides) */
   readonly effortLevel = signal<string>('auto');
@@ -305,6 +311,11 @@ export class Session {
     return connection.listFiles(pattern, signal);
   }
 
+  /** True once a mode was picked (by the user or the UI's Auto default). */
+  get hasExplicitPermissionMode(): boolean {
+    return this.permissionModeExplicit;
+  }
+
   async setPermissionMode(mode: PermissionMode, applyToConnection = true): Promise<boolean> {
     const previous = this.permissionMode();
     this.permissionMode(mode);
@@ -323,6 +334,9 @@ export class Session {
   }
 
   async setModel(model: ModelOption): Promise<boolean> {
+    // A context-usage read still in flight predates this switch and would
+    // report the old model; drop it.
+    this.contextUsageSeq++;
     const previous = this.modelSelection();
     this.modelSelection(model.value);
 
@@ -344,6 +358,14 @@ export class Session {
     this.usageData({ ...this.usageData(), contextWindow: window ?? 200000 });
     void this.refreshContextUsage();
     return true;
+  }
+
+  /**
+   * Takes over a model the CLI already switched to: updates the selection
+   * (picker, and the model sent on the next launch) without telling the CLI.
+   */
+  adoptModel(model: string): void {
+    this.modelSelection(model);
   }
 
   async setThinkingLevel(level: string): Promise<void> {
@@ -569,6 +591,9 @@ export class Session {
       const usage = await connection.getContextUsage(channelId);
       if (!usage || seq !== this.contextUsageSeq || channelId !== this.claudeChannelId()) {
         return;
+      }
+      if (usage.model) {
+        this.cliModel(usage.model);
       }
       this.usageData({
         ...this.usageData(),

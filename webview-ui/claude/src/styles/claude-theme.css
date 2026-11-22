@@ -261,7 +261,8 @@ body {
   cursor: text;
   box-sizing: border-box;
   width: 100%;
-  backdrop-filter: blur(9px) saturate(1.05);
+  /* No backdrop-filter here: it would make this box the containing block of the
+     position:fixed completion dropdowns rendered inside it, misplacing them. */
   transition: box-shadow 100ms ease-in-out, border-color 100ms ease-in-out;
   z-index: 1;
   opacity: 1;

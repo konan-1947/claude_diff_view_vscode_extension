@@ -68,8 +68,8 @@ terminalHtml.ts (terminal webview)                         extension host
   that sent `launch_claude` for that `channelId`, else to every tab (config
   broadcasts). Permission requests therefore reach only the tab that owns the
   channel.
-- **Tab title / new tab**: `init` reports `openNewInTab: true`, so the app sends
-  `rename_tab` and `new_conversation_tab`; `extension.ts` turns them into
+- **Tab title / new tab**: the app always sends
+  `rename_tab` and `new_conversation_tab` (no `openNewInTab` flag); `extension.ts` turns them into
   `TerminalSessionStore.setClaudeTitle()` / `createClaude()`.
 - **Restore**: the store keeps only `{ title, sessionId }` per Claude tab
   (`sessionId` comes from the `session_id` of the SDK messages). When a webview
@@ -83,7 +83,7 @@ terminalHtml.ts (terminal webview)                         extension host
 
 ## Changes to upstream uic
 
-Kept as close to upstream as possible; the deliberate differences:
+uic is our own code now (no upstream sync); the differences from the original Claudix:
 
 | Area | Change |
 | --- | --- |

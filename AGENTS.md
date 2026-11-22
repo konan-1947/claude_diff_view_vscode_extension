@@ -152,8 +152,8 @@ workbench shortcuts out. The iframe's protocol messages travel as
 `TerminalSessionStore` keeps only `{ title, sessionId }` per Claude tab; a
 rebuilt webview recreates the iframe with `resume = sessionId`. The SDK
 `PreToolUse` hook calls `DiffManager.snapshotBefore()` so pending diffs have the
-right before-image. Keep upstream uic code unchanged where possible; the list
-of deliberate differences is in `docs/CLAUDE_UI.md`.
+right before-image. uic is our own code (no upstream sync); differences from
+the original Claudix are listed in `docs/CLAUDE_UI.md`.
 
 - `claudeCliPath` selects the Claude CLI; model and permission mode are chosen
   in the chat (uic stores its own config in `~/.claude/ai-cli-diff-view-ui.json`).

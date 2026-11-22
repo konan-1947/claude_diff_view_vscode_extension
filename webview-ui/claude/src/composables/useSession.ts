@@ -44,6 +44,7 @@ export interface UseSessionReturn {
   permissionMode: Ref<PermissionMode>;
   summary: Ref<string | undefined>;
   modelSelection: Ref<string | undefined>;
+  cliModel: Ref<string | undefined>;
   thinkingLevel: Ref<string>;
   effortLevel: Ref<string>;
   todos: Ref<any[]>;
@@ -80,6 +81,7 @@ export interface UseSessionReturn {
   listFiles: (pattern?: string) => Promise<any>;
   setPermissionMode: (mode: PermissionMode, applyToConnection?: boolean) => Promise<boolean>;
   setModel: (model: ModelOption) => Promise<boolean>;
+  adoptModel: (model: string) => void;
   setThinkingLevel: (level: string) => Promise<void>;
   setEffortLevel: (level: string) => Promise<void>;
   getMcpServers: () => Promise<any>;
@@ -112,6 +114,7 @@ export function useSession(session: Session): UseSessionReturn {
   const permissionMode = useSignal(session.permissionMode);
   const summary = useSignal(session.summary);
   const modelSelection = useSignal(session.modelSelection);
+  const cliModel = useSignal(session.cliModel);
   const thinkingLevel = useSignal(session.thinkingLevel);
   const effortLevel = useSignal(session.effortLevel);
   const todos = useSignal(session.todos);
@@ -138,6 +141,7 @@ export function useSession(session: Session): UseSessionReturn {
   const listFiles = session.listFiles.bind(session);
   const setPermissionMode = session.setPermissionMode.bind(session);
   const setModel = session.setModel.bind(session);
+  const adoptModel = session.adoptModel.bind(session);
   const setThinkingLevel = session.setThinkingLevel.bind(session);
   const setEffortLevel = session.setEffortLevel.bind(session);
   const getMcpServers = session.getMcpServers.bind(session);
@@ -160,6 +164,7 @@ export function useSession(session: Session): UseSessionReturn {
     permissionMode,
     summary,
     modelSelection,
+    cliModel,
     thinkingLevel,
     effortLevel,
     todos,
@@ -184,6 +189,7 @@ export function useSession(session: Session): UseSessionReturn {
     listFiles,
     setPermissionMode,
     setModel,
+    adoptModel,
     setThinkingLevel,
     setEffortLevel,
     getMcpServers,

@@ -4,7 +4,8 @@
       ref="itemRef"
       class="dropdown-menu-item rounded"
       :class="{
-        'selected': isSelected
+        'selected': isSelected,
+        'stacked': stacked
       }"
       :data-is-selected="isSelected"
       @click="handleClick"
@@ -30,7 +31,7 @@
             <!-- Secondary info (e.g. file path, description) -->
             <span
               v-if="item.detail"
-              :class="item.type === 'command' ? 'description-container' : 'file-path-container'"
+              :class="item.type === 'command' || stacked ? 'description-container' : 'file-path-container'"
             >
               <span class="monaco-highlighted-label file-path-text">{{ item.detail }}</span>
             </span>
@@ -38,7 +39,7 @@
         </div>
 
         <!-- Right-side status area -->
-        <div v-if="item.rightIcon || item.checked" class="menu-item-right-section">
+        <div v-if="item.rightIcon || item.checked || (stacked && item.checked !== undefined)" class="menu-item-right-section">
           <span v-if="item.checked" class="check-icon codicon codicon-check"></span>
           <span v-else-if="item.rightIcon" class="submenu-arrow-icon codicon" :class="item.rightIcon"></span>
         </div>
@@ -55,6 +56,8 @@ interface Props {
   item: DropdownItemData
   isSelected?: boolean
   index: number
+  /** Name on its own line with the full description wrapped below (pickers) */
+  stacked?: boolean
 }
 
 interface Emits {
@@ -63,7 +66,8 @@ interface Emits {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  isSelected: false
+  isSelected: false,
+  stacked: false
 })
 
 const emit = defineEmits<Emits>()
@@ -309,6 +313,64 @@ function handleMouseEnter() {
   font-weight: 700;
 }
 
+
+/* Stacked rows: a fixed check column on every row, well clear of the text,
+   so the menu's width already includes it whichever row is checked */
+.stacked .menu-item-right-section {
+  flex-shrink: 0;
+  width: 12px;
+  margin-left: 1.5rem;
+  justify-content: flex-end;
+}
+
+/* Stacked rows (model picker): name on its own line, the full description
+   wrapped below it, roomier padding */
+.dropdown-menu-item.stacked {
+  padding: 0.1875rem 0.5rem;
+}
+
+.stacked .menu-item-left-section,
+.stacked .menu-item-text-section {
+  height: auto;
+}
+
+/* icon beside the name line, not centred on a multi-line description */
+.stacked .menu-item-left-section {
+  align-items: flex-start;
+}
+
+.stacked .menu-item-icon-span {
+  height: 17px;
+}
+
+.stacked .menu-item-text-section {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.stacked .file-info-container {
+  max-width: 100%;
+}
+
+.stacked .file-info-container .monaco-highlighted-label {
+  font-size: 13px;
+  line-height: 17px;
+}
+
+.stacked .description-container {
+  /* keeps the description from shrinking under the check column */
+  flex-shrink: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+}
+
+.stacked .description-container .file-path-text {
+  font-size: 11px;
+  line-height: 14px;
+  white-space: normal;
+}
 
 .codicon:not(.bg-codicon-icon) {
   font-size: 12px !important;

@@ -85,7 +85,6 @@ export abstract class BaseTransport {
     const initResponse = await this.sendRequest<InitResponse>({ type: "init" });
     this.config({
       defaultCwd: initResponse.state.defaultCwd,
-      openNewInTab: initResponse.state.openNewInTab ?? false,
       modelSetting: initResponse.state.modelSetting,
       platform: initResponse.state.platform,
       thinkingLevel: initResponse.state.thinkingLevel,
@@ -426,7 +425,6 @@ export abstract class BaseTransport {
       case "update_state": {
         this.config({
           defaultCwd: req.state.defaultCwd,
-          openNewInTab: req.state.openNewInTab,
           modelSetting: req.state.modelSetting,
           platform: req.state.platform,
           thinkingLevel: req.state.thinkingLevel,

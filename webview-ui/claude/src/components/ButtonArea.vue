@@ -12,6 +12,7 @@
 
         <!-- Model Select -->
         <ModelSelect
+          ref="modelSelectRef"
           :selected-model="selectedModel"
           @model-select="(modelId) => emit('modelSelect', modelId)"
         />
@@ -144,6 +145,11 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const fileInputRef = ref<HTMLInputElement>()
+const modelSelectRef = ref<InstanceType<typeof ModelSelect>>()
+
+defineExpose({
+  openModelSelect: () => modelSelectRef.value?.open()
+})
 
 
 const isThinkingOn = computed(() => props.thinkingLevel !== 'off')
@@ -219,7 +225,7 @@ function handleFileUpload(event: Event) {
 .controls-section {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   margin-right: 6px;
   flex-shrink: 1;
   flex-grow: 0;
