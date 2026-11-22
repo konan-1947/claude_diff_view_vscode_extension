@@ -11,7 +11,7 @@
     @focusout="onFocusOut"
   >
     <div class="cp-header">
-      <span class="cp-title">{{ title }}</span>
+      <span class="cp-title">{{ title }}<span v-if="subtitle" class="cp-subtitle">{{ subtitle }}</span></span>
       <div class="cp-actions">
         <button
           v-for="action in actions"
@@ -32,7 +32,9 @@
       <slot />
     </div>
 
-    <div v-if="hint" class="cp-hint">{{ hint }}</div>
+    <div v-if="hint.length" class="cp-hint">
+      <span v-for="item in hint" :key="item">{{ item }}</span>
+    </div>
   </div>
 </template>
 
@@ -50,12 +52,14 @@ export interface CommandPanelAction {
 
 interface Props {
   title: string
+  /** Muted text after the title (state: "Auto (Medium)", "2 unsaved") */
+  subtitle?: string
   actions?: CommandPanelAction[]
-  /** Muted key help under the content, e.g. "←/→ to adjust · Esc to cancel" */
-  hint?: string
+  /** Muted key help under the content, one entry per key: ["←/→ to adjust", "Esc to cancel"] */
+  hint?: string[]
 }
 
-withDefaults(defineProps<Props>(), { actions: () => [], hint: '' })
+withDefaults(defineProps<Props>(), { subtitle: '', actions: () => [], hint: () => [] })
 
 const emit = defineEmits<{
   (e: 'cancel'): void
@@ -167,10 +171,16 @@ defineExpose({ focus: () => rootRef.value?.focus() })
 }
 
 /* Bottom row, where the input's button row sits */
+.cp-subtitle {
+  margin-left: 10px;
+  color: var(--cs-fg-36);
+}
+
 .cp-hint {
   height: 28px;
   display: flex;
   align-items: center;
+  gap: 16px;
   font-size: 12px;
   color: var(--cs-fg-36);
 }

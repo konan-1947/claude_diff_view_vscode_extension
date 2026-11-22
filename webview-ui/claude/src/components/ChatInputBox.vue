@@ -10,6 +10,53 @@
       @select="(level, persist) => emit('effortSelect', level, persist)"
       @close="closePanel"
     />
+    <ListPanel
+      v-else-if="activePanel === 'output-style'"
+      title="Output style"
+      :items="outputStyleItems"
+      :loading="outputStylesLoading"
+      empty-text="The CLI listed no output styles"
+      @select="(style) => runCommand(`/output-style ${style}`)"
+      @close="closePanel"
+    />
+    <ListPanel
+      v-else-if="activePanel === 'autocompact'"
+      title="Auto-compact window"
+      :items="AUTOCOMPACT_ITEMS"
+      :hint="['↑/↓ to select', 'Enter to confirm', 'other sizes: /autocompact <tokens>']"
+      @select="(value) => runCommand(`/autocompact ${value}`)"
+      @close="closePanel"
+    />
+    <TextPanel
+      v-else-if="activePanel === 'rename'"
+      title="Rename conversation"
+      placeholder="New name"
+      submit-label="Rename"
+      :actions="[{ label: 'Generate', run: () => { runCommand('/rename'); closePanel() } }]"
+      note="Generate lets Claude name it from the conversation."
+      @submit="(name) => runCommand(`/rename ${name}`)"
+      @close="closePanel"
+    />
+    <TextPanel
+      v-else-if="activePanel === 'goal'"
+      title="Goal"
+      placeholder="Condition to keep working toward, e.g. all tests pass"
+      note="Claude keeps working until the condition is met."
+      @submit="(condition) => runCommand(`/goal ${condition}`)"
+      @close="closePanel"
+    />
+    <ConfigPanel
+      v-else-if="activePanel === 'config'"
+      @run="(commands) => emit('runCommands', commands)"
+      @open-file="openSettingsFile"
+      @close="closePanel"
+    />
+    <McpPanel v-else-if="activePanel === 'mcp'" @close="closePanel" />
+    <AutoModeSetupPanel
+      v-else-if="activePanel === 'auto-mode-setup'"
+      @run="runCommand"
+      @close="closePanel"
+    />
 
     <!-- Attachment list (if any) -->
     <div v-if="attachments && attachments.length > 0" v-show="!activePanel" class="attachments-list">
@@ -162,6 +209,11 @@ import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import FileIcon from './FileIcon.vue'
 import ButtonArea from './ButtonArea.vue'
 import EffortPanel from './CommandPanel/EffortPanel.vue'
+import ListPanel, { type ListPanelItem } from './CommandPanel/ListPanel.vue'
+import TextPanel from './CommandPanel/TextPanel.vue'
+import McpPanel from './CommandPanel/McpPanel.vue'
+import ConfigPanel from './CommandPanel/ConfigPanel.vue'
+import AutoModeSetupPanel from './CommandPanel/AutoModeSetupPanel.vue'
 import type { AttachmentItem } from '../types/attachment'
 import type { ModeOption } from '../utils/permissionModes'
 import { Dropdown, DropdownItem } from './Dropdown'
@@ -193,6 +245,8 @@ interface Props {
 interface Emits {
   (e: 'submit', content: string): void
   (e: 'queueMessage', content: string): void
+  /** Several commands from one panel (`/config`), sent in order even while busy */
+  (e: 'runCommands', commands: string[]): void
   (e: 'stop'): void
   (e: 'input', content: string): void
   (e: 'attach'): void
@@ -239,29 +293,106 @@ const textareaRef = ref<HTMLDivElement | null>(null)
 
 const buttonAreaRef = ref<InstanceType<typeof ButtonArea>>()
 
-// `/model` / `/effort` without an argument open their picker, as the CLI opens
-// its menu; through the SDK the CLI would only print usage text. Deferred so
-// the click that picked the completion item does not reach the picker's
+// Commands that are a menu in the CLI open a picker or panel when typed bare;
+// through the SDK the CLI would only print usage text (or, for `/rename`, fail
+// to generate a name). With an argument they go to the CLI as typed. Deferred
+// so the click that picked the completion item does not reach the picker's
 // click-outside handler and close it straight away. Returns false when there
 // is no picker for it (a model without effort levels): the command then goes
 // to the CLI as typed.
+type PanelName =
+  | 'effort'
+  | 'output-style'
+  | 'autocompact'
+  | 'rename'
+  | 'goal'
+  | 'config'
+  | 'mcp'
+  | 'auto-mode-setup'
+
+const PANEL_COMMANDS: Record<string, PanelName> = {
+  '/output-style': 'output-style',
+  '/autocompact': 'autocompact',
+  '/rename': 'rename',
+  '/name': 'rename',
+  '/goal': 'goal',
+  '/config': 'config',
+  '/settings': 'config',
+  '/mcp': 'mcp',
+  '/auto-mode-setup': 'auto-mode-setup',
+}
+
 function openPickerFor(command: string): boolean {
-  if (command === '/model') {
+  const name = command.toLowerCase()
+  if (name === '/model') {
     clearInput()
     setTimeout(() => buttonAreaRef.value?.openModelSelect(), 0)
     return true
   }
-  if (command === '/effort' && props.effortLevels.length > 0) {
+  if (name === '/effort' && props.effortLevels.length > 0) {
     clearInput()
     activePanel.value = 'effort'
     emit('commandPanelOpen', 'effort')
+    return true
+  }
+  const panel = PANEL_COMMANDS[name]
+  if (panel) {
+    clearInput()
+    activePanel.value = panel
+    if (panel === 'output-style') void loadOutputStyles()
     return true
   }
   return false
 }
 
 /** Command panel shown in place of the input (null = the input itself) */
-const activePanel = ref<'effort' | null>(null)
+const activePanel = ref<PanelName | null>(null)
+
+/** A panel's command goes the way a typed one does (queued while busy) */
+function runCommand(text: string) {
+  if (props.conversationWorking) {
+    emit('queueMessage', text)
+  } else {
+    emit('submit', text)
+  }
+}
+
+// `/output-style`: the CLI's list, the current style checked
+const outputStyleItems = ref<ListPanelItem[]>([])
+const outputStylesLoading = ref(false)
+
+async function loadOutputStyles() {
+  const session = runtime?.sessionStore.activeSession()
+  outputStyleItems.value = []
+  if (!session) return
+  outputStylesLoading.value = true
+  try {
+    const { current, available } = await session.getOutputStyles()
+    outputStyleItems.value = available.map((style) => ({
+      value: style,
+      label: style,
+      current: style.toLowerCase() === (current ?? 'default').toLowerCase(),
+    }))
+  } catch (error) {
+    console.warn('[ChatInputBox] output styles failed:', error)
+  } finally {
+    outputStylesLoading.value = false
+  }
+}
+
+// `/autocompact [auto|<tokens>]`; the CLI checks the size (at least 100K)
+const AUTOCOMPACT_ITEMS: ListPanelItem[] = [
+  { value: 'auto', label: 'Auto', detail: 'window tuned for the model' },
+  { value: '100000', label: '100K tokens' },
+  { value: '200000', label: '200K tokens' },
+  { value: '400000', label: '400K tokens' },
+  { value: '1000000', label: '1M tokens' },
+]
+
+function openSettingsFile() {
+  void runtime?.sessionStore.activeSession()?.openConfigFile('settings')
+  closePanel()
+}
 
 function closePanel() {
   activePanel.value = null

@@ -15,8 +15,6 @@ import type {
     InitResponse,
     GetClaudeStateRequest,
     GetClaudeStateResponse,
-    GetMcpServersRequest,
-    GetMcpServersResponse,
     GetAssetUrisRequest,
     GetAssetUrisResponse,
     OpenFileRequest,
@@ -151,17 +149,6 @@ export async function handleSdkProbe(
         data: result.data,
         errors: result.errors
     };
-}
-
-/**
- * Get MCP servers
- */
-export async function handleGetMcpServers(
-    _request: GetMcpServersRequest,
-    context: HandlerContext,
-    channelId?: string
-): Promise<GetMcpServersResponse> {
-    return await getMcpServers(context, channelId);
 }
 
 /**
@@ -900,37 +887,6 @@ async function loadConfig(context: HandlerContext): Promise<any> {
     await query.return?.();
 
     return config;
-}
-
-/**
- * Get MCP server status
- */
-async function getMcpServers(
-    context: HandlerContext,
-    channelId?: string
-): Promise<GetMcpServersResponse> {
-    const { logService, agentService } = context;
-
-    if (!channelId) {
-        throw new Error('Channel ID is required');
-    }
-
-    // TODO: get the channel through agentService
-    // const channel = agentService.getChannel(channelId);
-
-    try {
-        return {
-            type: "get_mcp_servers_response",
-            // mcpServers: await channel.query.mcpServerStatus?.() || []
-            mcpServers: []
-        };
-    } catch (error) {
-        logService.error(`Error fetching MCP servers: ${error}`);
-        return {
-            type: "get_mcp_servers_response",
-            mcpServers: []
-        };
-    }
 }
 
 /**

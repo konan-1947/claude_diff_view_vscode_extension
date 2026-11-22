@@ -50,6 +50,12 @@ export function useRuntime(): RuntimeInstance {
 
   // The effect inside SessionStore watches for the connection and fetches the session list automatically
 
+  // Commands the CLI lists but that do nothing useful through the SDK, so they
+  // stay out of the `/` suggestions (typed by hand they still go to the CLI):
+  // /color only tints the CLI's prompt bar, /agents lost its wizard, /focus
+  // "isn't available here yet", /fast "is not available in the Agent SDK".
+  const HIDDEN_SLASH_COMMANDS = new Set(['color', 'agents', 'focus', 'fast']);
+
   // Watch claudeConfig changes and register Slash Commands
   let slashCommandDisposers: Array<() => void> = [];
 
@@ -64,7 +70,7 @@ export function useRuntime(): RuntimeInstance {
     // Register new Slash Commands
     if (claudeConfig?.slashCommands && Array.isArray(claudeConfig.slashCommands)) {
       slashCommandDisposers = claudeConfig.slashCommands
-        .filter((cmd: any) => typeof cmd?.name === 'string' && cmd.name)
+        .filter((cmd: any) => typeof cmd?.name === 'string' && cmd.name && !HIDDEN_SLASH_COMMANDS.has(cmd.name))
         .map((cmd: any) => {
           return appContext.commandRegistry.registerAction(
             {

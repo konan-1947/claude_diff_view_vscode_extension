@@ -303,9 +303,74 @@ export interface GetMcpServersRequest {
     type: "get_mcp_servers";
 }
 
+export interface McpServerInfo {
+    name: string;
+    /** connected | failed | needs-auth | pending | disabled */
+    status: string;
+    error?: string;
+    /** Config scope (user, project, local, claudeai, …) */
+    scope?: string;
+    toolCount?: number;
+}
+
 export interface GetMcpServersResponse {
     type: "get_mcp_servers_response";
-    mcpServers: Array<{ name: string; status: string }>;
+    mcpServers: McpServerInfo[];
+}
+
+/**
+ * `/mcp reconnect|enable|disable <server>` done through the SDK's control
+ * requests, so the chat does not get a command message per click.
+ */
+export interface McpServerActionRequest {
+    type: "mcp_server_action";
+    action: "reconnect" | "enable" | "disable";
+    serverName: string;
+}
+
+export interface McpServerActionResponse {
+    type: "mcp_server_action_response";
+    ok: boolean;
+    error?: string;
+}
+
+/**
+ * Settings the CLI's `/config key=value` accepts, parsed from the usage text a
+ * bare `/config` prints (so new keys need no change here), for the `/config`
+ * panel. `values` null = free text (`language=<value>`).
+ * `current` holds what could be read back: only keys that keep the same name
+ * in the effective settings (`theme`, `model`, …); the CLI has no way to print
+ * the others.
+ */
+export interface ConfigOption {
+    key: string;
+    values: string[] | null;
+}
+
+export interface GetConfigOptionsRequest {
+    type: "get_config_options";
+}
+
+export interface GetConfigOptionsResponse {
+    type: "get_config_options_response";
+    options: ConfigOption[];
+    current: Record<string, string>;
+    /** Set when the list could not be read */
+    error?: string;
+}
+
+/**
+ * Output styles the CLI offers (`initializationResult()`), for the
+ * `/output-style` picker. `current` is the style of the running session.
+ */
+export interface GetOutputStylesRequest {
+    type: "get_output_styles";
+}
+
+export interface GetOutputStylesResponse {
+    type: "get_output_styles_response";
+    current?: string;
+    available: string[];
 }
 
 /**
@@ -854,6 +919,9 @@ export type WebViewRequest =
     | GetClaudeStateRequest
     | SdkProbeRequest
     | GetMcpServersRequest
+    | McpServerActionRequest
+    | GetOutputStylesRequest
+    | GetConfigOptionsRequest
     | GetContextUsageRequest
     | GetAppliedEffortRequest
     | GetAssetUrisRequest

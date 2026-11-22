@@ -1,7 +1,7 @@
 import { signal, computed, effect } from 'alien-signals';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { PermissionRequest } from './PermissionRequest';
-import type { ModelOption } from '@shared/messages';
+import type { GetConfigOptionsResponse, McpServerInfo, ModelOption } from '@shared/messages';
 import type { SessionSummary } from './types';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
@@ -104,6 +104,8 @@ export class Session {
    * undefined = not known yet.
    */
   readonly appliedEffort = signal<string | null | undefined>(undefined);
+  /** Output style the CLI reported in the last system/init (`output_style`) */
+  readonly outputStyle = signal<string | undefined>(undefined);
   readonly todos = signal<any[]>([]);
   readonly worktree = signal<{ name: string; path: string } | undefined>(undefined);
   readonly selection = signal<SelectionRange | undefined>(undefined);
@@ -411,10 +413,39 @@ export class Session {
     void this.refreshAppliedEffort();
   }
 
-  async getMcpServers(): Promise<any> {
+  async getMcpServers(): Promise<McpServerInfo[]> {
     const connection = await this.getConnection();
     const channelId = await this.launchClaude();
     return connection.getMcpServers(channelId);
+  }
+
+  /** `/mcp reconnect|enable|disable <server>`; resolves to the CLI's error, if any. */
+  async mcpServerAction(
+    action: 'reconnect' | 'enable' | 'disable',
+    serverName: string
+  ): Promise<string | undefined> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    return connection.mcpServerAction(channelId, action, serverName);
+  }
+
+  /** Keys, values and readable current values for the `/config` panel */
+  async getConfigOptions(): Promise<Omit<GetConfigOptionsResponse, 'type'>> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    return connection.getConfigOptions(channelId);
+  }
+
+  /**
+   * Styles for the `/output-style` picker. The current one comes from the last
+   * system/init (it follows `/output-style <name>`); the init answer is only
+   * the fallback, as it is cached from the channel's start.
+   */
+  async getOutputStyles(): Promise<{ current?: string; available: string[] }> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    const styles = await connection.getOutputStyles(channelId);
+    return { current: this.outputStyle() ?? styles.current, available: styles.available };
   }
 
   async openConfigFile(configType: string): Promise<void> {
@@ -521,6 +552,9 @@ export class Session {
       }
       if (event.subtype === 'init') {
         this.busy(true);
+        if (typeof event.output_style === 'string' && event.output_style) {
+          this.outputStyle(event.output_style);
+        }
         const window = this.windowFromModel(event.model ?? this.modelSelection());
         if (window) {
           this.usageData({ ...this.usageData(), contextWindow: window });

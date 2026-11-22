@@ -28,6 +28,7 @@ import { IClaudeSessionService } from './ClaudeSessionService';
 import { AsyncStream, ITransport } from './transport';
 import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
+import { readConfigValues } from './configValues';
 
 // Message type imports
 import type {
@@ -40,6 +41,12 @@ import type {
     ToolPermissionResponse,
     GetContextUsageResponse,
     GetAppliedEffortResponse,
+    GetMcpServersResponse,
+    McpServerActionRequest,
+    McpServerActionResponse,
+    GetOutputStylesResponse,
+    GetConfigOptionsResponse,
+    ConfigOption,
 } from '../../shared/messages';
 
 // SDK type imports
@@ -64,11 +71,30 @@ function toEffort(level: string | null | undefined): EffortLevel | undefined {
     return level && level !== 'auto' ? (level as EffortLevel) : undefined;
 }
 
+/**
+ * `/config` usage text → options. Lines look like `  theme=auto|dark|light`
+ * or `  language=<value>` (free text); anything else is skipped.
+ */
+function parseConfigUsage(text: string): ConfigOption[] {
+    const options: ConfigOption[] = [];
+    for (const line of text.split(/\r?\n/)) {
+        const match = /^\s+([A-Za-z][\w.-]*)=(.+?)\s*$/.exec(line);
+        if (!match) {
+            continue;
+        }
+        const raw = match[2];
+        options.push({
+            key: match[1],
+            values: /^<[^>]*>$/.test(raw) ? null : raw.split('|').map((v) => v.trim()).filter(Boolean)
+        });
+    }
+    return options;
+}
+
 // Handler imports
 import {
     handleInit,
     handleGetClaudeState,
-    handleGetMcpServers,
     handleGetAssetUris,
     handleOpenFile,
     handleGetCurrentSelection,
@@ -704,7 +730,16 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 return handleSdkProbe(request as any, this.handlerContext);
 
             case "get_mcp_servers":
-                return handleGetMcpServers(request, this.handlerContext, channelId);
+                return this.getMcpServers(channelId);
+
+            case "mcp_server_action":
+                return this.mcpServerAction(channelId, request as McpServerActionRequest);
+
+            case "get_output_styles":
+                return this.getOutputStyles(channelId);
+
+            case "get_config_options":
+                return this.getConfigOptions(channelId);
 
             case "get_context_usage":
                 return this.getContextUsage(channelId);
@@ -1085,6 +1120,129 @@ export class ClaudeAgentService implements IClaudeAgentService {
         } catch (error) {
             this.logService.warn(`[getContextUsage] ${error instanceof Error ? error.message : String(error)}`);
             return { type: "get_context_usage_response", usage: null };
+        }
+    }
+
+    /**
+     * MCP servers of the running session (`/mcp`), as the CLI reports them.
+     * Empty when the channel has no live query.
+     */
+    async getMcpServers(channelId?: string): Promise<GetMcpServersResponse> {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        if (!channel?.query) {
+            return { type: "get_mcp_servers_response", mcpServers: [] };
+        }
+        try {
+            const servers = await channel.query.mcpServerStatus();
+            return {
+                type: "get_mcp_servers_response",
+                mcpServers: servers.map((s) => ({
+                    name: s.name,
+                    status: s.status,
+                    error: s.error,
+                    scope: s.scope,
+                    toolCount: s.tools?.length
+                }))
+            };
+        } catch (error) {
+            this.logService.warn(`[getMcpServers] ${error instanceof Error ? error.message : String(error)}`);
+            return { type: "get_mcp_servers_response", mcpServers: [] };
+        }
+    }
+
+    /** `/mcp reconnect|enable|disable <server>`; the error text is the CLI's own. */
+    async mcpServerAction(channelId: string | undefined, request: McpServerActionRequest): Promise<McpServerActionResponse> {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        if (!channel?.query) {
+            return { type: "mcp_server_action_response", ok: false, error: 'No running session' };
+        }
+        try {
+            if (request.action === 'reconnect') {
+                await channel.query.reconnectMcpServer(request.serverName);
+            } else {
+                await channel.query.toggleMcpServer(request.serverName, request.action === 'enable');
+            }
+            return { type: "mcp_server_action_response", ok: true };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logService.warn(`[mcpServerAction] ${request.action} ${request.serverName}: ${message}`);
+            return { type: "mcp_server_action_response", ok: false, error: message };
+        }
+    }
+
+    /** Keys and values of `/config`, read once per CLI (they only change with it) */
+    private configOptions?: Promise<ConfigOption[]>;
+
+    /**
+     * `/config` panel data. The list comes from the usage text of a bare
+     * `/config`, run in a throwaway CLI (sending it on the session would put a
+     * message in the chat); current values from the session's effective settings.
+     */
+    async getConfigOptions(channelId?: string): Promise<GetConfigOptionsResponse> {
+        if (!this.configOptions) {
+            this.configOptions = this.sdkService
+                .runLocalCommand(this.getCwd(), '/config')
+                .then(parseConfigUsage);
+            // A failed read is retried on the next open
+            this.configOptions.catch(() => { this.configOptions = undefined; });
+        }
+
+        let options: ConfigOption[];
+        try {
+            options = await this.configOptions;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logService.warn(`[getConfigOptions] ${message}`);
+            return { type: "get_config_options_response", options: [], current: {}, error: message };
+        }
+        if (options.length === 0) {
+            this.configOptions = undefined;
+        }
+
+        let effective: Record<string, any> | undefined;
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        try {
+            const query = channel?.query as { getSettings?: () => Promise<any> } | undefined;
+            effective = query?.getSettings ? (await query.getSettings())?.effective : undefined;
+        } catch (error) {
+            this.logService.warn(`[getConfigOptions] settings: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        // Only values the key accepts, in the CLI's spelling
+        const current: Record<string, string> = {};
+        const read = readConfigValues(options.map((o) => o.key), effective);
+        for (const option of options) {
+            const value = read[option.key];
+            if (value === undefined) {
+                continue;
+            }
+            const match = option.values === null
+                ? value
+                : option.values.find((v) => v.toLowerCase() === value.toLowerCase());
+            if (match !== undefined) {
+                current[option.key] = match;
+            }
+        }
+
+        return { type: "get_config_options_response", options, current };
+    }
+
+    /** Output styles for the `/output-style` picker (`initializationResult()`). */
+    async getOutputStyles(channelId?: string): Promise<GetOutputStylesResponse> {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        if (!channel?.query) {
+            return { type: "get_output_styles_response", available: [] };
+        }
+        try {
+            const init = await channel.query.initializationResult();
+            return {
+                type: "get_output_styles_response",
+                current: init.output_style,
+                available: Array.isArray(init.available_output_styles) ? init.available_output_styles : []
+            };
+        } catch (error) {
+            this.logService.warn(`[getOutputStyles] ${error instanceof Error ? error.message : String(error)}`);
+            return { type: "get_output_styles_response", available: [] };
         }
     }
 

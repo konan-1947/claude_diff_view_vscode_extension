@@ -104,6 +104,13 @@ export interface IClaudeSdkService {
     probe(params: SdkProbeParams): Promise<SdkProbeResult>;
 
     /**
+     * Run one local slash command (e.g. bare `/config`) in a throwaway CLI
+     * process and return its text output. No session is saved and no model is
+     * called; meant for reading what the CLI prints, not for changing state.
+     */
+    runLocalCommand(cwd: string, command: string, timeoutMs?: number): Promise<string>;
+
+    /**
      * Interrupt the running query
      */
     interrupt(query: Query): Promise<void>;
@@ -451,11 +458,54 @@ export class ClaudeSdkService implements IClaudeSdkService {
      * Lightweight SDK query (probe only)
      * No logging, no hooks, minimal config
      */
-    private async queryLite(cwd: string): Promise<Query> {
+    async runLocalCommand(cwd: string, command: string, timeoutMs = 15000): Promise<string> {
         const inputStream = new AsyncStream<SDKUserMessage>();
-
-        // Close the input stream immediately (the probe sends no messages)
+        inputStream.enqueue({
+            type: 'user',
+            session_id: '',
+            parent_tool_use_id: null,
+            message: { role: 'user', content: [{ type: 'text', text: command }] }
+        });
         inputStream.done();
+
+        const query = await this.queryLite(cwd, inputStream, { persistSession: false });
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        try {
+            return await Promise.race([
+                (async () => {
+                    for await (const message of query) {
+                        if (message.type === 'result') {
+                            return message.subtype === 'success' ? message.result : '';
+                        }
+                    }
+                    return '';
+                })(),
+                new Promise<string>((_, reject) => {
+                    timeoutId = setTimeout(() => reject(new Error(`${command} timed out`)), timeoutMs);
+                })
+            ]);
+        } finally {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            try {
+                await query.return?.();
+            } catch {
+                // Silently ignore close errors
+            }
+        }
+    }
+
+    /** `inputStream` omitted: no messages (the probe), the stream is closed at once. */
+    private async queryLite(
+        cwd: string,
+        inputStream?: AsyncStream<SDKUserMessage>,
+        extra: Partial<Options> = {}
+    ): Promise<Query> {
+        if (!inputStream) {
+            inputStream = new AsyncStream<SDKUserMessage>();
+            inputStream.done();
+        }
 
         const cliPath = await this.getClaudeExecutablePath();
 
@@ -491,7 +541,9 @@ export class ClaudeSdkService implements IClaudeSdkService {
             includePartialMessages: false,
 
             // No hooks
-            hooks: {}
+            hooks: {},
+
+            ...extra
         };
 
         const { query } = await loadClaudeSdk();

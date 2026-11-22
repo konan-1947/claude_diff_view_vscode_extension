@@ -70,21 +70,45 @@ cho CLI (và đồng bộ trạng thái như mục 1).
       lệnh menu tiếp theo.
       Còn thiếu: tab mới hiện "Auto" dù CLI đang dùng mức đã lưu → đọc
       `applied.effort` khi mở session.
-- [ ] `/output-style` → dropdown chọn style (danh sách lấy từ chính output của lệnh,
-      hoặc đọc file style).
-- [ ] `/config` → mở trang Settings của uic / form `key=value` (CLI chỉ in danh sách key).
-- [ ] `/mcp` → panel danh sách MCP server + reconnect / enable / disable
-      (tham số `reconnect|enable|disable [<server>|all]` CLI vẫn nhận được).
-- [ ] `/autocompact` → dropdown `auto | <tokens>`.
-- [ ] `/rename` không tham số → ô nhập tên (CLI báo "Couldn't generate a name" khi chưa
-      có hội thoại).
-- [ ] `/goal` không tham số → ô nhập điều kiện (CLI chỉ in "Usage: /goal <condition>").
-- [ ] `/auto-mode-setup` → wizard (CLI trả JSON `"code": "usage"`).
-- [ ] `/color`: không tham số CLI **tự random màu**; trong UI màu không có tác dụng →
-      ẩn khỏi danh sách gợi ý, hoặc gắn vào màu tab.
-- [ ] `/agents`: CLI đã bỏ wizard → ẩn khỏi danh sách gợi ý.
-- [ ] `/focus`: CLI báo "isn't available here yet" → ẩn.
-- [ ] `/fast`: CLI báo "Fast mode is not available in the Agent SDK" → ẩn.
+- [~] `/output-style` → `ListPanel` (đã làm, chờ test tay): danh sách lấy từ
+      `initializationResult().available_output_styles` (request `get_output_styles`), style
+      đang dùng lấy từ `output_style` của `system/init` gần nhất (`Session.outputStyle`).
+      Chọn = gửi `/output-style <tên>` cho CLI (CLI tự ghi `.claude/settings.local.json`).
+- [~] `/config` (cả alias `/settings`) → `ConfigPanel` kiểu màn Settings của CLI (đã làm,
+      chờ test tay): danh sách key + giá trị lấy từ usage của `/config` trơn (33 key ở CLI
+      2.1.327), chạy trong một CLI tạm (`ClaudeSdkService.runLocalCommand`,
+      `persistSession: false`, ~0.25 s, cache theo tiến trình) để không thêm tin vào chat.
+      Lọc bằng gõ chữ, `←/→`/Space đổi giá trị, true/false hiện dạng công tắc, key tự do
+      (`language`) sửa tại chỗ bằng Enter; Enter lưu = `/config a=b c=d` (giá trị có dấu
+      cách phải đi một lệnh riêng: CLI chỉ nhận nhiều cặp khi không cặp nào có dấu cách).
+      Giá trị hiện tại: CLI không có lệnh đọc, nên `src/claude/services/claude/configValues.ts`
+      chép lại chỗ màn /config của CLI 2.1.327 đọc từng key (settings đã merge hoặc
+      `~/.claude.json`, kèm giá trị mặc định của CLI). Đọc được 31/33 key; `workflows`,
+      `workflowSizeGuideline`, `switchModelsOnFlag` có mặc định do server quyết định nên
+      chỉ hiện khi đã được đặt ("default" nếu chưa). Key mới ở CLI sau này hiện "default"
+      cho tới khi thêm vào bảng (đối chiếu lại khi nâng CLI).
+- [~] `/mcp` → `McpPanel` (đã làm, chờ test tay): danh sách server + trạng thái + số tool
+      (`mcpServerStatus()`, request `get_mcp_servers` — trước đây là stub trả `[]`);
+      `R` reconnect, `E`/Space enable/disable qua `reconnectMcpServer` / `toggleMcpServer`
+      (request `mcp_server_action`), không thêm tin nhắn vào chat. Gõ kèm tham số thì vẫn
+      gửi cho CLI.
+- [~] `/autocompact` → `ListPanel`: Auto / 100K / 200K / 400K / 1M → gửi
+      `/autocompact <giá trị>`; cỡ khác thì gõ tay. Chưa đánh dấu giá trị đang dùng
+      (`getSettings().applied` không có `autoCompactWindow`).
+- [~] `/rename` (cả alias `/name`) không tham số → `TextPanel` nhập tên → `/rename <tên>`;
+      nút "Generate" gửi `/rename` trơn để CLI tự đặt tên.
+- [~] `/goal` không tham số → `TextPanel` nhập điều kiện → `/goal <condition>`.
+- [~] `/auto-mode-setup` → `AutoModeSetupPanel`: 3 câu hỏi của wizard (posture / scope /
+      depth, giá trị lấy từ usage của CLI 2.1.327) → gửi
+      `--wizard posture=… scope=… depth=… --propose`. Bước apply (`--expect-sha256 …
+      --apply-file …`) chưa có UI, CLI trả proposal dạng text.
+- [x] `/color`, `/agents`, `/focus`, `/fast`: ẩn khỏi gợi ý `/` (`HIDDEN_SLASH_COMMANDS`
+      trong `useRuntime.ts`); gõ tay vẫn gửi cho CLI.
+
+Các panel đều nằm trong `components/CommandPanel/` và dùng khung `CommandPanel.vue`:
+`ListPanel.vue` (chọn 1 mục: ↑/↓, j/k, số 1–9, Enter), `TextPanel.vue` (ô nhập một dòng),
+`McpPanel.vue`, `AutoModeSetupPanel.vue`. Bảng lệnh → panel là `PANEL_COMMANDS` trong
+`ChatInputBox.vue`.
 
 ## 3. Lệnh terminal không có qua SDK ("isn't available in this environment")
 

@@ -1,9 +1,10 @@
 <template>
   <CommandPanel
     ref="panelRef"
-    :title="title"
+    title="Effort"
+    :subtitle="subtitle"
     :actions="actions"
-    hint="←/→ to adjust · Esc to cancel"
+    :hint="['←/→ to adjust', 'Esc to cancel']"
     @cancel="emit('close')"
     @key="onKey"
   >
@@ -93,8 +94,8 @@ watch(
   }
 )
 
-const title = computed(() =>
-  isAuto.value ? `Effort · Auto (${labelOf(props.levels[index.value] ?? 'medium')})` : 'Effort'
+const subtitle = computed(() =>
+  isAuto.value ? `Auto (${labelOf(props.levels[index.value] ?? 'medium')})` : ''
 )
 
 const current = computed(() => (isAuto.value ? 'auto' : props.levels[index.value]))

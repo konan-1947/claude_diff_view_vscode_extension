@@ -68,6 +68,7 @@
             :effort-levels="effortLevels"
             @command-panel-open="() => session?.refreshAppliedEffort()"
             @submit="handleSubmit"
+            @run-commands="handleRunCommands"
             @stop="handleStop"
             @add-attachment="handleAddAttachment"
             @remove-attachment="handleRemoveAttachment"
@@ -306,6 +307,21 @@
       attachments.value = [];
     } catch (e) {
       console.error('[ChatPage] send failed', e);
+    }
+  }
+
+  // Commands from a panel (`/config` with values the CLI only takes one per
+  // command). Sent one after another; the CLI runs queued input in order.
+  async function handleRunCommands(commands: string[]) {
+    const s = session.value;
+    if (!s) return;
+    for (const command of commands) {
+      try {
+        await s.send(command);
+      } catch (e) {
+        console.error('[ChatPage] send failed', e);
+        return;
+      }
     }
   }
 

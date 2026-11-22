@@ -7,7 +7,10 @@ import type {
   ExtensionRequestResponse,
   ExtensionToWebViewMessage,
   GetClaudeStateResponse,
+  GetConfigOptionsResponse,
   InitResponse,
+  McpServerActionRequest,
+  McpServerInfo,
   RequestMessage,
   SdkProbeResponse,
   ToolPermissionRequest,
@@ -136,8 +139,26 @@ export abstract class BaseTransport {
   openConfigFile(configType: string): Promise<any> {
     return this.sendRequest({ type: "open_config_file", configType });
   }
-  getMcpServers(channelId?: string): Promise<any> {
-    return this.sendRequest({ type: "get_mcp_servers" }, channelId);
+  async getMcpServers(channelId?: string): Promise<McpServerInfo[]> {
+    const response = await this.sendRequest({ type: "get_mcp_servers" }, channelId);
+    return (response as any)?.mcpServers ?? [];
+  }
+  /** Resolves to the CLI's error text, or undefined when it worked. */
+  async mcpServerAction(
+    channelId: string,
+    action: McpServerActionRequest["action"],
+    serverName: string
+  ): Promise<string | undefined> {
+    const response = await this.sendRequest({ type: "mcp_server_action", action, serverName }, channelId);
+    return (response as any)?.ok ? undefined : ((response as any)?.error ?? "Failed");
+  }
+  async getConfigOptions(channelId: string): Promise<Omit<GetConfigOptionsResponse, "type">> {
+    const response = (await this.sendRequest({ type: "get_config_options" }, channelId)) as GetConfigOptionsResponse;
+    return { options: response?.options ?? [], current: response?.current ?? {}, error: response?.error };
+  }
+  async getOutputStyles(channelId: string): Promise<{ current?: string; available: string[] }> {
+    const response = await this.sendRequest({ type: "get_output_styles" }, channelId);
+    return { current: (response as any)?.current, available: (response as any)?.available ?? [] };
   }
   async getContextUsage(channelId: string): Promise<{
     totalTokens: number;

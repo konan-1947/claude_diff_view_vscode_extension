@@ -22,7 +22,7 @@ import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { Session, SelectionRange } from '../core/Session';
 import type { PermissionRequest } from '../core/PermissionRequest';
 import type { BaseTransport } from '../transport/BaseTransport';
-import type { ModelOption } from '@shared/messages';
+import type { McpServerInfo, ModelOption } from '@shared/messages';
 
 /**
  * useSession return type
@@ -86,7 +86,9 @@ export interface UseSessionReturn {
   adoptModel: (model: string) => void;
   setThinkingLevel: (level: string) => Promise<void>;
   setEffortLevel: (level: string, persist?: boolean) => Promise<void>;
-  getMcpServers: () => Promise<any>;
+  getMcpServers: () => Promise<McpServerInfo[]>;
+  mcpServerAction: (action: 'reconnect' | 'enable' | 'disable', serverName: string) => Promise<string | undefined>;
+  getOutputStyles: () => Promise<{ current?: string; available: string[] }>;
   openConfigFile: (configType: string) => Promise<void>;
   onPermissionRequested: (callback: (request: PermissionRequest) => void) => () => void;
   dispose: () => void;
@@ -149,6 +151,8 @@ export function useSession(session: Session): UseSessionReturn {
   const setThinkingLevel = session.setThinkingLevel.bind(session);
   const setEffortLevel = session.setEffortLevel.bind(session);
   const getMcpServers = session.getMcpServers.bind(session);
+  const mcpServerAction = session.mcpServerAction.bind(session);
+  const getOutputStyles = session.getOutputStyles.bind(session);
   const openConfigFile = session.openConfigFile.bind(session);
   const onPermissionRequested = session.onPermissionRequested.bind(session);
   const dispose = session.dispose.bind(session);
@@ -199,6 +203,8 @@ export function useSession(session: Session): UseSessionReturn {
     setThinkingLevel,
     setEffortLevel,
     getMcpServers,
+    mcpServerAction,
+    getOutputStyles,
     openConfigFile,
     onPermissionRequested,
     dispose,
