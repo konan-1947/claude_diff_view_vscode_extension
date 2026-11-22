@@ -21,7 +21,7 @@
       <!-- <div class="chatContainer"> -->
         <div
           ref="containerEl"
-          :class="['messagesContainer', 'custom-scroll-container', { dimmed: permissionRequestsLen > 0 }]"
+          :class="['messagesContainer', 'custom-scroll-container', { dimmed: dimTranscript }]"
         >
           <template v-if="messages.length === 0" />
           <template v-else>
@@ -55,12 +55,19 @@
         </div>
 
         <div ref="inputContainerEl" class="inputContainer">
+          <SessionConflictPrompt
+            v-if="openConflict && !pendingPermission"
+            :summary="openConflict.session.summary()"
+            :owner-title="openConflict.owner.title"
+            @focus-owner="focusConflictOwner"
+            @fork="forkConflict"
+            @cancel="cancelConflict"
+          />
           <PermissionRequestModal
             v-if="pendingPermission && toolContext"
             :request="pendingPermission"
             :context="toolContext"
-            :on-resolve="handleResolvePermission"
-            data-permission-panel="1"
+            :modes="modes.map((m) => m.id)"
           />
           <RateLimitBanner :info="activity.rateLimit.value" />
           <BackgroundTasksList
@@ -105,6 +112,20 @@
             @mode-select="handleModeSelect"
             @model-select="handleModelSelect"
           />
+          <!-- `claude --continue`: under the input, so the centered empty-state
+               input does not move when this appears (it is found asynchronously) -->
+          <button
+            v-if="continueTarget && messages.length === 0 && !openConflict"
+            type="button"
+            class="continue-last"
+            :title="continueTarget.summary() || 'Continue the most recent conversation'"
+            @click="continueLast"
+          >
+            <span class="codicon codicon-history"></span>
+            <span>Continue last conversation</span>
+            <span class="continue-name">{{ continueTarget.summary() }}</span>
+            <span class="continue-ago">{{ formatAgo(continueTarget.lastModifiedTime()) }}</span>
+          </button>
         </div>
       <!-- </div> -->
     </div>
@@ -112,11 +133,10 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, inject, onMounted, onUnmounted, nextTick, watch } from 'vue';
+  import { ref, shallowRef, computed, inject, provide, onMounted, onUnmounted, nextTick, watch } from 'vue';
   import { RuntimeKey } from '../composables/runtimeContext';
   import { useSession } from '../composables/useSession';
   import type { Session } from '../core/Session';
-  import type { PermissionRequest } from '../core/PermissionRequest';
   import type { ToolContext } from '../types/tool';
   import type { AttachmentItem } from '../types/attachment';
   import { convertFileToAttachment } from '../types/attachment';
@@ -127,10 +147,13 @@
   import { useLiveActivity } from '../composables/useLiveActivity';
   import type { QueuedMessage } from '../types/queue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
+  import SessionConflictPrompt from '../components/SessionConflictPrompt.vue';
+  import type { Message } from '../models/Message';
+  import { RestoreCheckpointKey } from '../composables/runtimeContext';
   import Spinner from '../components/Messages/WaitingIndicator.vue';
   import MessageRenderer from '../components/Messages/MessageRenderer.vue';
   import TurnView from '../components/Messages/TurnView.vue';
-  import { buildChatItems } from '../utils/turns';
+  import { buildChatItems, formatAgo } from '../utils/turns';
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
@@ -200,6 +223,12 @@
   );
   const permissionRequestsLen = computed(() => permissionRequests.value.length);
   const pendingPermission = computed(() => permissionRequests.value[0] as any);
+  // A plan to approve or a question to answer is decided by reading the
+  // transcript above (the plan card, Claude's reasoning): keep it readable.
+  const dimTranscript = computed(() => {
+    const tool = pendingPermission.value?.toolName;
+    return permissionRequestsLen.value > 0 && tool !== 'ExitPlanMode' && tool !== 'AskUserQuestion';
+  });
 
   // Capabilities of the selected model, as the CLI reports them. Everything
   // below follows these flags, so a CLI update needs no change here.
@@ -230,7 +259,7 @@
     () => [activeSessionRaw.value, modes.value.some((m) => m.id === 'auto')] as const,
     ([raw, autoAvailable]) => {
       if (!raw || !autoAvailable || raw.hasExplicitPermissionMode) return;
-      void raw.setPermissionMode('auto');
+      void raw.setPermissionMode('auto', true, true);
     },
     { immediate: true }
   );
@@ -344,6 +373,71 @@
   onUnmounted(() => {
     try { unregisterToggle?.(); } catch {}
   });
+
+  // ---- Opening a conversation another tab already has (SessionStore.openExisting) ----
+
+  const openConflict = useSignal(runtime.sessionStore.openConflict);
+
+  function focusConflictOwner() {
+    const conflict = openConflict.value;
+    runtime!.sessionStore.openConflict(undefined);
+    if (!conflict) return;
+    void runtime!.sessionStore.getConnection().then((c) => c.focusTab(conflict.owner.tabId));
+  }
+
+  function forkConflict() {
+    const conflict = openConflict.value;
+    if (conflict) runtime!.sessionStore.openFork(conflict.session);
+  }
+
+  function cancelConflict() {
+    runtime!.sessionStore.openConflict(undefined);
+  }
+
+  // ---- "Continue last conversation" (claude --continue) ----
+
+  // The most recent conversation not open in another tab, offered while this
+  // tab is still empty. Open ones are skipped: the newest is usually the one
+  // the user is working on next door, which --continue would collide with.
+  const sessionsByRecent = useSignal(runtime.sessionStore.sessionsByLastModified);
+  const continueTarget = shallowRef<Session | undefined>(undefined);
+  let continueSeq = 0;
+  watch(
+    () => [messages.value.length === 0 && !session.value?.sessionId.value, sessionsByRecent.value] as const,
+    async ([fresh, all]) => {
+      const seq = ++continueSeq;
+      if (!fresh) {
+        continueTarget.value = undefined;
+        return;
+      }
+      const active = activeSessionRaw.value;
+      const candidates = (all as Session[]).filter((s) => s !== active && !!s.sessionId()).slice(0, 5);
+      let found: Session | undefined;
+      try {
+        const connection = await runtime!.sessionStore.getConnection();
+        for (const candidate of candidates) {
+          const owner = await connection.getSessionOwner(candidate.sessionId()!);
+          if (seq !== continueSeq) return;
+          if (!owner) {
+            found = candidate;
+            break;
+          }
+        }
+      } catch {
+        found = candidates[0];
+      }
+      if (seq === continueSeq) continueTarget.value = found;
+    },
+    { immediate: true }
+  );
+
+  function continueLast() {
+    const target = continueTarget.value;
+    if (target) void runtime!.sessionStore.openExisting(target);
+  }
+
+  // "Restore checkpoint" on a sent message: Rewind, already on that message
+  provide(RestoreCheckpointKey, (message: Message) => chatInputRef.value?.openRewind(message));
 
   async function createNew(): Promise<void> {
     // Tabs are managed by the host terminal tab strip, not by this app.
@@ -563,6 +657,25 @@
     }
   );
 
+  // A resumed conversation brings back the model ID it ran with
+  // (Session.applyResumedSettings); show it as the picker entry resolving to
+  // that ID — a named model over "Default", the 1M variant only for a 1M ID.
+  watch(
+    () => [session.value, session.value?.modelSelection.value, availableModels.value] as const,
+    ([s, selected, models]) => {
+      if (!s || !selected || !models.length) return;
+      if (models.some((m) => m.id === selected)) return;
+      const matches = models.filter((m) => m.info?.resolvedModel === selected);
+      if (!matches.length) return;
+      const wide = selected.includes('[1m]');
+      const entry =
+        matches.find((m) => m.id !== 'default' && m.id.includes('[1m]') === wide) ??
+        matches.find((m) => m.id !== 'default') ??
+        matches[0];
+      s.adoptModel(entry.id);
+    }
+  );
+
   async function handleModelSelect(modelId: string) {
     const s = session.value;
     if (!s) return;
@@ -610,18 +723,6 @@
     attachments.value = attachments.value.filter(a => a.id !== id);
   }
 
-  // Permission modal handler
-  function handleResolvePermission(request: PermissionRequest, allow: boolean) {
-    try {
-      if (allow) {
-        request.accept(request.inputs);
-      } else {
-        request.reject('User denied', true);
-      }
-    } catch (e) {
-      console.error('[ChatPage] permission resolve failed', e);
-    }
-  }
 </script>
 
 <style scoped>
@@ -759,6 +860,48 @@
      there (where the idle input's top is when centered), so a command panel
      or a longer prompt grows it downward only. With messages it is pinned to
      the bottom and grows upward. The spacer shrinks when space runs out. */
+  .continue-last {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    margin-top: 6px;
+    padding: 4px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--cs-fg-66);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .continue-last:hover {
+    background: var(--cs-fg-8);
+    color: var(--cs-fg);
+  }
+  .continue-last .codicon {
+    flex-shrink: 0;
+    font-size: 13px;
+  }
+  .continue-last > span:nth-child(2) {
+    flex-shrink: 0;
+  }
+  .continue-name {
+    flex: 1;
+    min-width: 0;
+    margin-left: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--cs-fg-52);
+  }
+  .continue-ago {
+    flex-shrink: 0;
+    color: var(--cs-fg-36);
+  }
+
   .main.is-empty {
     justify-content: flex-start;
   }

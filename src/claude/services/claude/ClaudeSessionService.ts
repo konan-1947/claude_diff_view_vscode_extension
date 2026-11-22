@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
+import type { SessionSettings } from '../../shared/messages';
 
 export const IClaudeSessionService = createDecorator<IClaudeSessionService>('claudeSessionService');
 
@@ -36,6 +37,8 @@ interface SessionMessage {
     type: "user" | "assistant" | "attachment" | "system" | "summary" | "ai-title" | "custom-title";
     message?: any;
     isMeta?: boolean;
+    /** Who produced a user message: `human`, `task-notification`, `peer`, ... */
+    origin?: { kind?: string };
     /** The synthetic summary message written right after a compact_boundary */
     isCompactSummary?: boolean;
     subtype?: string;
@@ -85,6 +88,9 @@ export interface IClaudeSessionService {
      * rewind resumes the conversation. null = it was the first entry.
      */
     getRewindPoint(sessionId: string, userMessageId: string, cwd: string): Promise<{ found: boolean; parentUuid: string | null }>;
+
+    /** Model / effort / permission mode the conversation last ran with (see SessionSettings) */
+    getSessionSettings(sessionId: string, cwd: string): Promise<SessionSettings>;
 }
 
 // ============================================================================
@@ -154,7 +160,7 @@ async function readJSONL(filePath: string): Promise<SessionMessage[]> {
  * Convert the message format (for returning to the frontend)
  */
 function convertMessage(msg: SessionMessage): any | undefined {
-    if (msg.isMeta) {
+    if (msg.isMeta || isTaskNotification(msg)) {
         return undefined;
     }
 
@@ -203,7 +209,25 @@ function convertMessage(msg: SessionMessage): any | undefined {
         };
     }
 
-    if (msg.type === "system" || msg.type === "attachment") {
+    // A hook's error or message (the CLI stores these as attachments), shaped
+    // like the live `system/hook_response` so both render the same line. A
+    // blocking PreToolUse hook leaves no attachment: its error is the tool result.
+    if (msg.type === "attachment") {
+        const queued = queuedPrompt((msg as any).attachment);
+        if (queued !== undefined) {
+            return {
+                type: "user",
+                message: { role: "user", content: queued },
+                session_id: msg.uuid,
+                parent_tool_use_id: null,
+                timestamp
+            };
+        }
+        const hook = hookAttachment((msg as any).attachment);
+        return hook ? { ...hook, timestamp } : undefined;
+    }
+
+    if (msg.type === "system") {
         return undefined;
     }
 
@@ -211,11 +235,28 @@ function convertMessage(msg: SessionMessage): any | undefined {
 }
 
 /**
+ * The `<task-notification>` the CLI writes into the transcript as a user
+ * message when a background task/subagent finishes. Live it arrives as
+ * `system/task_notification` (LiveActivity) and is never shown as a prompt,
+ * so a reloaded session drops it too. Not flagged isMeta, hence this check.
+ */
+function isTaskNotification(msg: SessionMessage): boolean {
+    if (msg.type !== "user") {
+        return false;
+    }
+    if (msg.origin?.kind === "task-notification") {
+        return true;
+    }
+    const content = msg.message?.content;
+    return typeof content === "string" && content.trimStart().startsWith("<task-notification>");
+}
+
+/**
  * Text injected by the CLI rather than typed by the user (slash-command echo,
  * local command output, caveats, system reminders). Never usable as a title.
  */
 const SYNTHETIC_PROMPT_REGEX =
-    /^\s*(<command-name>|<command-message>|<command-args>|<local-command-|<bash-|<system-reminder>|<ide_|Caveat: The messages below were generated)/;
+    /^\s*(<command-name>|<command-message>|<command-args>|<local-command-|<bash-|<system-reminder>|<task-notification>|<ide_|Caveat: The messages below were generated)/;
 
 /**
  * Extract the user-typed text of a message, or "" when there is none
@@ -525,6 +566,18 @@ export class ClaudeSessionService implements IClaudeSessionService {
         }
     }
 
+    async getSessionSettings(sessionId: string, cwd: string): Promise<SessionSettings> {
+        const id = validateSessionId(sessionId);
+        if (!id) {
+            return {};
+        }
+        try {
+            return readSessionSettings(await readJSONL(path.join(getProjectHistoryDir(cwd), `${id}.jsonl`)));
+        } catch {
+            return {};
+        }
+    }
+
     async getRewindPoint(sessionId: string, userMessageId: string, cwd: string): Promise<{ found: boolean; parentUuid: string | null }> {
         const id = validateSessionId(sessionId);
         if (!id) {
@@ -538,4 +591,88 @@ export class ClaudeSessionService implements IClaudeSessionService {
         return { found: true, parentUuid: entry.parentUuid ?? null };
     }
 
+}
+
+/**
+ * A prompt the user typed into the CLI while a turn was running: the CLI hands
+ * it to the model mid-turn and stores it only as a `queued_command`
+ * attachment, never as a user message, so without this a reloaded session
+ * loses it. Task notifications and subagent hand-backs travel the same way
+ * (other `commandMode` / `origin`) and stay hidden. Returned without a uuid:
+ * there is no file-history snapshot at that point, so no rewind/restore.
+ */
+function queuedPrompt(att: any): string | any[] | undefined {
+    if (att?.type !== "queued_command" || att.commandMode !== "prompt" || att.isMeta) {
+        return undefined;
+    }
+    if (att.origin?.kind !== "human" && att.humanTurn !== true) {
+        return undefined;
+    }
+    const prompt = att.prompt;
+    if (typeof prompt === "string") {
+        return prompt.trim() ? prompt : undefined;
+    }
+    return Array.isArray(prompt) && prompt.length > 0 ? prompt : undefined;
+}
+
+/**
+ * A transcript hook attachment → the live `system/hook_response` shape, with
+ * `hook_kind` already decided (the live event leaves that to the webview).
+ * Only what the CLI prints in its transcript: errors, blocks, stops and a
+ * hook's `systemMessage`; successful runs and injected context stay hidden.
+ */
+function hookAttachment(att: any): Record<string, unknown> | undefined {
+    if (!att || typeof att.type !== "string") return undefined;
+    const kinds: Record<string, string> = {
+        hook_non_blocking_error: "error",
+        hook_error_during_execution: "error",
+        hook_blocking_error: "blocked",
+        hook_stopped_continuation: "stopped",
+        hook_system_message: "message",
+    };
+    const kind = kinds[att.type];
+    if (!kind) return undefined;
+    const text = [
+        att.content,
+        att.message,
+        att.blockingError?.blockingError,
+        att.stderr,
+        att.stdout,
+    ].find((v) => typeof v === "string" && v.trim());
+    return {
+        type: "system",
+        subtype: "hook_response",
+        hook_kind: kind,
+        hook_name: att.hookName ?? att.hookEvent ?? "hook",
+        hook_event: att.hookEvent,
+        exit_code: att.exitCode,
+        command: att.command ?? att.blockingError?.command,
+        output: text ?? "",
+    };
+}
+
+/**
+ * Last model / effort / permission mode of the main conversation (subagent
+ * entries are sidechains and may run another model). `<synthetic>` is the
+ * model the CLI writes on messages it made up (an interrupted turn).
+ */
+function readSessionSettings(entries: any[]): SessionSettings {
+    const settings: SessionSettings = {};
+    for (const entry of entries) {
+        if (!entry || entry.isSidechain) continue;
+        if (entry.type === "assistant") {
+            const model = typeof entry.requestedModel === "string" && entry.requestedModel
+                ? entry.requestedModel
+                : entry.message?.model;
+            if (typeof model === "string" && model && model !== "<synthetic>") {
+                settings.model = model;
+            }
+            if (typeof entry.effort === "string" && entry.effort) {
+                settings.effort = entry.effort;
+            }
+        } else if (entry.type === "user" && typeof entry.permissionMode === "string" && entry.permissionMode) {
+            settings.permissionMode = entry.permissionMode;
+        }
+    }
+    return settings;
 }

@@ -40,6 +40,7 @@ import type {
     ExtensionRequest,
     ToolPermissionRequest,
     ToolPermissionResponse,
+    ToolPermissionContext,
     GetContextUsageResponse,
     GetAppliedEffortResponse,
     GetMcpServersResponse,
@@ -107,6 +108,9 @@ import {
     handleGetCurrentSelection,
     handleShowNotification,
     handleNewConversationTab,
+    handleGetSessionOwner,
+    handleFocusTab,
+    handleReportSessionSettings,
     handleRenameTab,
     handleOpenDiff,
     handleListSessions,
@@ -211,7 +215,8 @@ export interface IClaudeAgentService {
         thinkingLevel: string | null,
         effortLevel?: string | null,
         additionalDirectories?: string[],
-        resumeSessionAt?: string
+        resumeSessionAt?: string,
+        forkSession?: boolean
     ): Promise<void>;
 
     /** Reload plugins in every open session (after `/plugin` enabled or disabled one) */
@@ -381,7 +386,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                                 message.thinkingLevel || null,
                                 message.effortLevel ?? null,
                                 message.additionalDirectories,
-                                message.resumeSessionAt
+                                message.resumeSessionAt,
+                                message.forkSession === true
                             );
                         } catch (error) {
                             this.logService.error(`[ClaudeAgentService] launch_claude failed for ${message.channelId}: ${error}`);
@@ -441,7 +447,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         thinkingLevel: string | null,
         effortLevel: string | null = null,
         additionalDirectories: string[] = [],
-        resumeSessionAt?: string
+        resumeSessionAt?: string,
+        forkSession = false
     ): Promise<void> {
         // Save thinkingLevel
         if (thinkingLevel) {
@@ -456,7 +463,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         this.logService.info('║  Launching Claude session              ║');
         this.logService.info('╚════════════════════════════════════════╝');
         this.logService.info(`  Channel ID: ${channelId}`);
-        this.logService.info(`  Resume: ${resume || 'null'}${resumeSessionAt ? ` at ${resumeSessionAt}` : ''}`);
+        this.logService.info(`  Resume: ${resume || 'null'}${resumeSessionAt ? ` at ${resumeSessionAt}` : ''}${forkSession ? ' (fork)' : ''}`);
         this.logService.info(`  CWD: ${cwd}`);
         this.logService.info(`  Model: ${model || 'null'}`);
         this.logService.info(`  Permission: ${permissionMode ?? 'CLI default'}`);
@@ -495,7 +502,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         channelId,
                         toolName,
                         input,
-                        options.suggestions || []
+                        options.suggestions || [],
+                        permissionContext(options)
                     );
                 },
                 model,
@@ -519,7 +527,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     });
                 },
                 additionalDirectories,
-                resumeSessionAt
+                resumeSessionAt,
+                forkSession
             );
             this.logService.info('  ✓ spawnClaude() done, Query object created');
 
@@ -662,7 +671,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         effort: EffortLevel | undefined,
         onStderrError?: SdkQueryParams['onStderrError'],
         additionalDirectories?: string[],
-        resumeSessionAt?: string
+        resumeSessionAt?: string,
+        forkSession?: boolean
     ): Promise<Query> {
         return this.sdkService.query({
             inputStream,
@@ -675,7 +685,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             effort,
             onStderrError,
             additionalDirectories,
-            resumeSessionAt
+            resumeSessionAt,
+            forkSession
         });
     }
 
@@ -875,6 +886,15 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "new_conversation_tab":
                 return handleNewConversationTab(request, this.handlerContext, message.webviewId);
+
+            case "get_session_owner":
+                return handleGetSessionOwner(request, this.handlerContext, message.webviewId);
+
+            case "focus_tab":
+                return handleFocusTab(request, this.handlerContext);
+
+            case "report_session_settings":
+                return handleReportSessionSettings(request, this.handlerContext);
 
             case "rename_tab":
                 return handleRenameTab(request, this.handlerContext, message.webviewId);
@@ -1082,13 +1102,15 @@ export class ClaudeAgentService implements IClaudeAgentService {
         channelId: string,
         toolName: string,
         inputs: Record<string, unknown>,
-        suggestions: PermissionUpdate[]
+        suggestions: PermissionUpdate[],
+        context?: ToolPermissionContext
     ): Promise<PermissionResult> {
         const request: ToolPermissionRequest = {
             type: "tool_permission_request",
             toolName,
             inputs,
-            suggestions
+            suggestions,
+            context
         };
 
         const response = await this.sendRequest<ToolPermissionRequest, ToolPermissionResponse>(
@@ -1483,4 +1505,23 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         this.logService.info(`[setModel] Set channel ${channelId} to model: ${model}`);
     }
+}
+
+/**
+ * The display part of `canUseTool`'s options. Picked field by field: the rest
+ * (an AbortSignal, request ids) cannot cross to the webview.
+ */
+function permissionContext(options: Record<string, unknown>): ToolPermissionContext {
+    const str = (key: string) => typeof options[key] === 'string' && options[key] ? options[key] as string : undefined;
+    return {
+        title: str('title'),
+        displayName: str('displayName'),
+        description: str('description'),
+        decisionReason: str('decisionReason'),
+        blockedPath: str('blockedPath'),
+        defaultToNo: options.defaultToNo === true || undefined,
+        suppressAlwaysAllowRule: options.suppressAlwaysAllowRule === true || undefined,
+        toolUseID: str('toolUseID'),
+        agentID: str('agentID'),
+    };
 }

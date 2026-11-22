@@ -79,6 +79,8 @@ export interface SdkQueryParams {
     additionalDirectories?: string[];
     /** Rewind: resume the conversation only up to this transcript entry */
     resumeSessionAt?: string;
+    /** With `resume`: continue in a new session id (the original stays untouched) */
+    forkSession?: boolean;
 }
 
 /** How to start the `claude` CLI for a subcommand (`claude plugin list`, `claude auth login`) */
@@ -186,7 +188,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
      * Query Claude through the SDK
      */
     async query(params: SdkQueryParams): Promise<Query> {
-        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, effort, onStderrError, additionalDirectories, resumeSessionAt } = params;
+        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, effort, onStderrError, additionalDirectories, resumeSessionAt, forkSession } = params;
 
         this.logService.info('========================================');
         this.logService.info('ClaudeSdkService.query() called');
@@ -246,6 +248,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
             cwd: cwdParam,
             resume: resume || undefined,
             resumeSessionAt: resume && resumeSessionAt ? resumeSessionAt : undefined,
+            forkSession: resume && forkSession ? true : undefined,
             // Backups taken before each edit, so Esc Esc can restore the code (rewindFiles)
             enableFileCheckpointing: fileCheckpointingEnabled(),
             model: modelParam,
@@ -318,6 +321,11 @@ export class ClaudeSdkService implements IClaudeSdkService {
                 preset: 'claude_code',
                 append: VS_CODE_APPEND_PROMPT
             },
+
+            // hook_started / hook_response for the user's command hooks, so the
+            // transcript can show a failed or blocking hook as the CLI does
+            // (the callback hooks below emit no such events).
+            includeHookEvents: true,
 
             // Hooks
             hooks: {

@@ -48,6 +48,13 @@ export function buildChatItems(messages: Message[]): ChatItem[] {
       return;
     }
 
+    // A hook line belongs to the turn it ran in (a blocked tool, a failed
+    // UserPromptSubmit hook); splitting the turn there would orphan the rest.
+    if (m.subtype === 'hook_response' && current) {
+      current.assistant.push(m);
+      return;
+    }
+
     if (STANDALONE.has(m.type)) {
       current = null;
       items.push({ kind: 'message', key: i, message: m });

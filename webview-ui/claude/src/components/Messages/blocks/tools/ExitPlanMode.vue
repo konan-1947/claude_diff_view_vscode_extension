@@ -45,8 +45,9 @@ interface Props {
 
 const props = defineProps<Props>();
 
-// Expanded state
-const isExpanded = ref(false);
+// Open while the plan waits for approval (the prompt under the chat refers
+// to it), folded once answered or when reloaded from history
+const isExpanded = ref(!props.toolResult);
 
 // Plan content
 const plan = computed(() => {

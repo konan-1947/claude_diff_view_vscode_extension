@@ -20,10 +20,18 @@ export interface PermissionEvent {
   permissionRequest: PermissionRequest;
 }
 
+/** A conversation the user asked to open that another Claude UI tab already has */
+export interface OpenConflict {
+  session: Session;
+  owner: { tabId: string; title: string };
+}
+
 export class SessionStore {
   readonly sessions = signal<Session[]>([]);
   readonly activeSession = signal<Session | undefined>(undefined);
   readonly permissionRequested = new EventEmitter<PermissionEvent>();
+  /** Set while ChatPage asks what to do about an OpenConflict */
+  readonly openConflict = signal<OpenConflict | undefined>(undefined);
 
   readonly sessionsByLastModified = computed(() =>
     [...this.sessions()].sort((a, b) => b.lastModifiedTime() - a.lastModifiedTime())
@@ -194,6 +202,49 @@ export class SessionStore {
 
   setActiveSession(session: Session | undefined): void {
     this.activeSession(session);
+  }
+
+  /**
+   * Open a conversation from history in this tab (`/resume`, the history page,
+   * "Continue last conversation"). If another tab already has it, nothing
+   * opens: `openConflict` is set and ChatPage asks the user (switch to that
+   * tab, open a fork here, or cancel). A failed check opens it anyway.
+   */
+  async openExisting(session: Session): Promise<void> {
+    this.openConflict(undefined);
+    if (session === this.activeSession()) return;
+    const id = session.sessionId();
+    if (id) {
+      try {
+        const connection = await this.getConnection();
+        const owner = await connection.getSessionOwner(id);
+        if (owner) {
+          this.openConflict({ session, owner });
+          return;
+        }
+      } catch (e) {
+        console.warn('[SessionStore] session owner check failed', e);
+      }
+    }
+    this.activeSession(session);
+  }
+
+  /**
+   * The conflicting conversation as a copy in this tab: the same history,
+   * resumed with `forkSession` so the CLI gives it its own id (the original,
+   * in the other tab, is not written to).
+   */
+  openFork(source: Session): Session {
+    const fork = new Session(() => this.getConnection(), this.context, { isExplicit: true });
+    fork.sessionId(source.sessionId());
+    fork.summary(source.summary() ? `${source.summary()} (fork)` : undefined);
+    fork.lastModifiedTime(Date.now());
+    fork.forkOnNextLaunch();
+    this.attachPermissionListener(fork);
+    this.sessions([fork, ...this.sessions()]);
+    this.openConflict(undefined);
+    this.activeSession(fork);
+    return fork;
   }
 
   dispose(): void {

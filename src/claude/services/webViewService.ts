@@ -15,6 +15,7 @@
 import * as vscode from 'vscode';
 import { createDecorator } from '../di/instantiation';
 import { ILogService } from './logService';
+import type { SessionSettings } from '../shared/messages';
 
 export const IWebViewService = createDecorator<IWebViewService>('webViewService');
 
@@ -26,7 +27,8 @@ export interface ClaudeUiSink {
 }
 
 export interface ClaudeUiTabRequest {
-	kind: 'new' | 'rename';
+	/** `focus`: bring `tabId` to the front */
+	kind: 'new' | 'rename' | 'focus';
 	tabId: string;
 	title?: string;
 	initialPrompt?: string;
@@ -61,6 +63,18 @@ export interface IWebViewService {
 
 	/** The Claude session id a tab is showing, so a rebuilt tab can resume it. */
 	readonly onTabSession: vscode.Event<{ tabId: string; sessionId: string }>;
+
+	/**
+	 * Where tab ownership is looked up: the terminal tab store, which keeps each
+	 * tab's session while its iframe is gone (a hidden view, Agent mode toggle).
+	 */
+	setSessionOwnerLookup(lookup: (sessionId: string, exceptTabId?: string) => { tabId: string; title: string } | undefined): void;
+	/** Settings a tab reported for a running conversation (newer than its transcript) */
+	noteSessionSettings(sessionId: string, settings: SessionSettings): void;
+	liveSessionSettings(sessionId: string): SessionSettings | undefined;
+
+	/** Another tab (not `exceptTabId`) holding `sessionId` */
+	sessionOwner(sessionId: string, exceptTabId?: string): { tabId: string; title: string } | undefined;
 }
 
 export class WebViewService implements IWebViewService {
@@ -75,6 +89,8 @@ export class WebViewService implements IWebViewService {
 	private readonly tabSessions = new vscode.EventEmitter<{ tabId: string; sessionId: string }>();
 	readonly onTabSession = this.tabSessions.event;
 	private readonly lastSession = new Map<string, string>();
+	private readonly liveSettings = new Map<string, SessionSettings>();
+	private ownerLookup?: (sessionId: string, exceptTabId?: string) => { tabId: string; title: string } | undefined;
 
 	constructor(@ILogService private readonly logService: ILogService) {}
 
@@ -97,9 +113,8 @@ export class WebViewService implements IWebViewService {
 		}
 		if (message?.type === 'io_message' && tabId) {
 			const sessionId = message.message?.session_id;
-			if (typeof sessionId === 'string' && sessionId && this.lastSession.get(tabId) !== sessionId) {
-				this.lastSession.set(tabId, sessionId);
-				this.tabSessions.fire({ tabId, sessionId });
+			if (typeof sessionId === 'string' && sessionId) {
+				this.noteTabSession(tabId, sessionId);
 			}
 		}
 		if (message?.type === 'close_channel' && typeof message.channelId === 'string') {
@@ -128,6 +143,12 @@ export class WebViewService implements IWebViewService {
 		}
 		if (message.type === 'launch_claude' && typeof message.channelId === 'string') {
 			this.channelOwner.set(message.channelId, tabId);
+			// Resuming claims the conversation right away (a fork gets its own id
+			// from system/init); waiting for the first io_message would leave a
+			// window where a second tab could open it too.
+			if (typeof message.resume === 'string' && message.resume && message.forkSession !== true) {
+				this.noteTabSession(tabId, message.resume);
+			}
 		} else if (message.type === 'close_channel' && typeof message.channelId === 'string') {
 			this.channelOwner.delete(message.channelId);
 		}
@@ -151,6 +172,43 @@ export class WebViewService implements IWebViewService {
 
 	requestTab(request: ClaudeUiTabRequest): void {
 		this.tabRequests.fire(request);
+	}
+
+	setSessionOwnerLookup(lookup: (sessionId: string, exceptTabId?: string) => { tabId: string; title: string } | undefined): void {
+		this.ownerLookup = lookup;
+	}
+
+	sessionOwner(sessionId: string, exceptTabId?: string): { tabId: string; title: string } | undefined {
+		if (this.ownerLookup) {
+			return this.ownerLookup(sessionId, exceptTabId);
+		}
+		for (const [tabId, id] of this.lastSession) {
+			if (id === sessionId && tabId !== exceptTabId) {
+				return { tabId, title: '' };
+			}
+		}
+		return undefined;
+	}
+
+	noteSessionSettings(sessionId: string, settings: SessionSettings): void {
+		// Bounded: one entry per conversation run in this window
+		if (!this.liveSettings.has(sessionId) && this.liveSettings.size >= 200) {
+			const oldest = this.liveSettings.keys().next().value;
+			if (oldest !== undefined) this.liveSettings.delete(oldest);
+		}
+		this.liveSettings.set(sessionId, { ...this.liveSettings.get(sessionId), ...settings });
+	}
+
+	liveSessionSettings(sessionId: string): SessionSettings | undefined {
+		return this.liveSettings.get(sessionId);
+	}
+
+	private noteTabSession(tabId: string, sessionId: string): void {
+		if (this.lastSession.get(tabId) === sessionId) {
+			return;
+		}
+		this.lastSession.set(tabId, sessionId);
+		this.tabSessions.fire({ tabId, sessionId });
 	}
 
 	private targetTab(message: any): string | undefined {

@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, shallowRef } from 'vue'
+import { computed, inject, onMounted, ref, shallowRef } from 'vue'
 import ListPanel, { type ListPanelItem } from './ListPanel.vue'
 import { RuntimeKey } from '../../composables/runtimeContext'
 import type { Message } from '../../models/Message'
@@ -36,6 +36,8 @@ import type { RewindFilesPreview } from '../../core/Session'
 const props = defineProps<{
   /** Messages that can be rewound to, newest first */
   targets: Message[]
+  /** Start on this message's "what to restore" step (Restore checkpoint) */
+  initialTarget?: Message
 }>()
 
 const emit = defineEmits<{
@@ -47,7 +49,7 @@ const emit = defineEmits<{
 
 const runtime = inject(RuntimeKey)
 
-const step = ref<'pick' | 'action'>('pick')
+const step = ref<'pick' | 'action'>(props.initialTarget ? 'action' : 'pick')
 const target = shallowRef<Message | null>(null)
 const preview = ref<RewindFilesPreview | null>(null)
 const loading = ref(false)
@@ -130,8 +132,15 @@ function session() {
   return runtime?.sessionStore.activeSession()
 }
 
-async function chooseTarget(value: string) {
-  const chosen = props.targets[Number(value)]
+function chooseTarget(value: string) {
+  void openTarget(props.targets[Number(value)])
+}
+
+onMounted(() => {
+  if (props.initialTarget) void openTarget(props.initialTarget)
+})
+
+async function openTarget(chosen: Message | undefined) {
   const s = session()
   if (!chosen?.uuid || !s) return
   target.value = chosen

@@ -23,6 +23,12 @@ import type {
     ShowNotificationRequest,
     ShowNotificationResponse,
     NewConversationTabRequest,
+    GetSessionOwnerRequest,
+    GetSessionOwnerResponse,
+    FocusTabRequest,
+    FocusTabResponse,
+    ReportSessionSettingsRequest,
+    ReportSessionSettingsResponse,
     NewConversationTabResponse,
     RenameTabRequest,
     RenameTabResponse,
@@ -491,6 +497,50 @@ export async function handleShowNotification(
 }
 
 /**
+ * The other Claude UI tab (if any) holding this conversation
+ */
+export async function handleGetSessionOwner(
+    request: GetSessionOwnerRequest,
+    context: HandlerContext,
+    webviewId?: string
+): Promise<GetSessionOwnerResponse> {
+    return {
+        type: "get_session_owner_response",
+        owner: context.webViewService.sessionOwner(request.sessionId, webviewId),
+    };
+}
+
+/**
+ * Model / effort / mode a running conversation uses now
+ */
+export async function handleReportSessionSettings(
+    request: ReportSessionSettingsRequest,
+    context: HandlerContext
+): Promise<ReportSessionSettingsResponse> {
+    if (typeof request.sessionId === 'string' && request.sessionId) {
+        const s = request.settings ?? {};
+        const clean = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+        const settings = Object.fromEntries(
+            Object.entries({ model: clean(s.model), effort: clean(s.effort), permissionMode: clean(s.permissionMode) })
+                .filter(([, v]) => v !== undefined)
+        );
+        context.webViewService.noteSessionSettings(request.sessionId, settings);
+    }
+    return { type: "report_session_settings_response" };
+}
+
+/**
+ * Bring another Claude UI tab to the front of the terminal tab strip
+ */
+export async function handleFocusTab(
+    request: FocusTabRequest,
+    context: HandlerContext
+): Promise<FocusTabResponse> {
+    context.webViewService.requestTab({ kind: 'focus', tabId: request.tabId });
+    return { type: "focus_tab_response" };
+}
+
+/**
  * New session tab (focus the side bar)
  */
 export async function handleNewConversationTab(
@@ -618,11 +668,18 @@ export async function handleGetSession(
 
     try {
         const cwd = workspaceService.getDefaultWorkspaceFolder()?.uri.fsPath || process.cwd();
-        const messages = await sessionService.getSession(request.sessionId, cwd);
+        const [messages, settings] = await Promise.all([
+            sessionService.getSession(request.sessionId, cwd),
+            sessionService.getSessionSettings(request.sessionId, cwd),
+        ]);
 
+        // What a tab reported while running beats the transcript, which only
+        // records a mode or model change with the next prompt
+        const live = context.webViewService.liveSessionSettings(request.sessionId);
         return {
             type: "get_session_response",
-            messages
+            messages,
+            settings: live ? { ...settings, ...live } : settings
         };
     } catch (error) {
         logService.error(`Failed to get session: ${error}`);

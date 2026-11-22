@@ -1,7 +1,7 @@
 import { signal, computed, effect } from 'alien-signals';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { PermissionRequest } from './PermissionRequest';
-import type { GetConfigOptionsResponse, McpServerInfo, ModelOption, StatusInfo } from '@shared/messages';
+import type { GetConfigOptionsResponse, McpServerInfo, ModelOption, SessionSettings, StatusInfo } from '@shared/messages';
 import type { SessionSummary } from './types';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
@@ -88,6 +88,8 @@ export class Session {
   private effectCleanup?: () => void;
   /** Set once the user picks a mode; until then the CLI's own default applies. */
   private permissionModeExplicit = false;
+  /** The mode is the UI's Auto default, not the user's pick: a resumed conversation's own mode wins */
+  private permissionModeIsDefault = false;
   private contextUsageSeq = 0;
   /**
    * Argument of an `/effort` sent and not answered yet ('' = no argument). The
@@ -97,6 +99,14 @@ export class Session {
   private pendingEffortArg?: string;
   /** Rewind: the next launch resumes the conversation only up to this transcript entry */
   private pendingResumeAt?: string;
+  /**
+   * The next launch resumes into a copy with its own session id: the
+   * conversation is already open in another tab, and two CLI processes must
+   * not write one transcript.
+   */
+  private forkOnLaunch = false;
+  private settingsReporterCleanup?: () => void;
+  private settingsReportTimer?: ReturnType<typeof setTimeout>;
   /**
    * Bash-mode messages sent with shouldQuery: false and not answered yet. The
    * CLI still sends system/init + result for each, which must not show a turn.
@@ -246,6 +256,7 @@ export class Session {
       // ReadCoalesced merging removed
       // this.messages(mergeConsecutiveReadMessages(accumulator));
       this.messages(accumulator);
+      this.applyResumedSettings(response?.settings, connection);
       await this.launchClaude();
     } finally {
       this.isLoading(false);
@@ -329,6 +340,8 @@ export class Session {
 
     const resumeAt = this.pendingResumeAt;
     this.pendingResumeAt = undefined;
+    const fork = this.forkOnLaunch && !!this.sessionId();
+    this.forkOnLaunch = false;
     const stream = connection.launchClaude(
       channelId,
       this.sessionId() ?? undefined,
@@ -340,11 +353,38 @@ export class Session {
       this.thinkingLevel(),
       this.effortLevel(),
       this.additionalDirectories(),
-      resumeAt
+      resumeAt,
+      fork
     );
 
     void this.readMessages(stream, channelId);
+    this.startSettingsReporter();
     return channelId;
+  }
+
+  /**
+   * Tell the host what this conversation runs with now (see
+   * ReportSessionSettingsRequest). Starts at the first launch, after
+   * applyResumedSettings, so the UI's initial defaults never overwrite what a
+   * resume restored. "auto" effort is left out: it means the model's default.
+   */
+  private startSettingsReporter(): void {
+    if (this.settingsReporterCleanup) return;
+    this.settingsReporterCleanup = effect(() => {
+      const sessionId = this.sessionId();
+      const settings = {
+        model: this.modelSelection() || undefined,
+        effort: this.effortLevel() !== 'auto' ? this.effortLevel() : undefined,
+        permissionMode: this.permissionMode() || undefined,
+      };
+      if (!sessionId || !this.claudeChannelId()) return;
+      clearTimeout(this.settingsReportTimer);
+      this.settingsReportTimer = setTimeout(() => {
+        void this.getConnection()
+          .then((c) => c.reportSessionSettings(sessionId, settings))
+          .catch(() => {});
+      }, 300);
+    });
   }
 
   /** Kill a background task (bash run in the background, background subagent) */
@@ -528,15 +568,49 @@ export class Session {
     return connection.listFiles(pattern, signal);
   }
 
+  /** Resume this conversation as a fork (see forkOnLaunch); call before it loads */
+  forkOnNextLaunch(): void {
+    this.forkOnLaunch = true;
+  }
+
+  /**
+   * A resumed conversation continues with the model, effort and permission
+   * mode it last ran with (read from its transcript), as the CLI's own resume
+   * does, instead of the UI defaults. Only values nobody set in this tab yet.
+   * The model comes back as an ID (`claude-opus-5-5`); ChatPage maps it to the
+   * matching picker entry once the model list is known.
+   */
+  private applyResumedSettings(settings: SessionSettings | undefined, connection: BaseTransport): void {
+    if (!settings) return;
+    if (settings.model && !this.modelSelection()) {
+      this.modelSelection(settings.model);
+    }
+    if (settings.effort && this.effortLevel() === 'auto') {
+      this.effortLevel(settings.effort);
+    }
+    const mode = settings.permissionMode;
+    if (mode && (!this.permissionModeExplicit || this.permissionModeIsDefault)) {
+      // Bypass is offered only when the user enabled it; otherwise keep the default
+      const bypassAllowed = connection.config()?.allowBypassPermissions === true;
+      if (mode !== 'bypassPermissions' || bypassAllowed) {
+        this.permissionMode(mode as PermissionMode);
+        this.permissionModeExplicit = true;
+        this.permissionModeIsDefault = false;
+      }
+    }
+  }
+
   /** True once a mode was picked (by the user or the UI's Auto default). */
   get hasExplicitPermissionMode(): boolean {
     return this.permissionModeExplicit;
   }
 
-  async setPermissionMode(mode: PermissionMode, applyToConnection = true): Promise<boolean> {
+  /** `isDefault`: the UI's Auto default rather than a user pick (see permissionModeIsDefault) */
+  async setPermissionMode(mode: PermissionMode, applyToConnection = true, isDefault = false): Promise<boolean> {
     const previous = this.permissionMode();
     this.permissionMode(mode);
     this.permissionModeExplicit = true;
+    this.permissionModeIsDefault = isDefault;
 
     const channelId = this.claudeChannelId();
     if (!channelId || !applyToConnection) {
@@ -676,6 +750,8 @@ export class Session {
     if (this.effectCleanup) {
       this.effectCleanup();
     }
+    this.settingsReporterCleanup?.();
+    clearTimeout(this.settingsReportTimer);
   }
 
   private async readMessages(stream: AsyncIterable<any>, channelId: string): Promise<void> {

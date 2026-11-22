@@ -90,6 +90,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       sessions.onExit(({ id, code }) => this.postSession({ type: 'exit', id, code })),
       sessions.onError(({ id, message }) => this.postSession({ type: 'error', id, message })),
       sessions.onTitle(({ id, title }) => this.postSession({ type: 'sessionTitleChanged', id, title })),
+      sessions.onActivate((id) => this.postSession({ type: 'activateSession', id })),
     ];
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
       if (this.diffPreviewOpen) {

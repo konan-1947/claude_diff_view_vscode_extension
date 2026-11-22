@@ -13,7 +13,7 @@
                   <span class="codicon" :class="copied ? 'codicon-check' : 'codicon-copy'"></span>
                 </button>
               </Tooltip>
-              <Tooltip content="Restore checkpoint">
+              <Tooltip v-if="canRestore" content="Restore checkpoint">
                 <button
                   class="restore-button"
                   @click.stop="handleRestore"
@@ -30,7 +30,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, inject } from 'vue';
+import { RestoreCheckpointKey } from '../../composables/runtimeContext';
 import type { Message } from '../../models/Message';
 import type { ToolContext } from '../../types/tool';
 import Tooltip from '../Common/Tooltip.vue';
@@ -80,9 +81,13 @@ async function copy() {
   setTimeout(() => (copied.value = false), 1200);
 }
 
+// Rewind needs the message's transcript id; ChatPage provides the opener
+const restoreCheckpoint = inject(RestoreCheckpointKey, undefined);
+const canRestore = computed(() => !!restoreCheckpoint && !!props.message.uuid);
+
+/** Same as Esc Esc on this message: Rewind opens on its "what to restore" step */
 function handleRestore() {
-  // TODO: implement restore checkpoint
-  console.log('[UserMessage] Restore checkpoint clicked');
+  restoreCheckpoint?.(props.message);
 }
 </script>
 

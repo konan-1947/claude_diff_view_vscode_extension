@@ -50,6 +50,18 @@ export interface NoticeBlock {
   icon?: string;
 }
 
+/** A hook that failed, blocked, stopped the turn or printed a message (CLI's hook line) */
+export interface HookBlock {
+  type: 'hook';
+  kind: 'error' | 'blocked' | 'stopped' | 'message';
+  /** `PreToolUse:Bash`, `UserPromptSubmit`… */
+  hookName: string;
+  /** stderr / reason / systemMessage */
+  output: string;
+  exitCode?: number;
+  command?: string;
+}
+
 export interface SelectionBlock {
   type: 'selection';
   filePath: string;
@@ -125,6 +137,7 @@ export type ContentBlockType =
   | DocumentBlock
   | InterruptBlock
   | NoticeBlock
+  | HookBlock
   | LLMErrorBlock
   | SelectionBlock
   | OpenedFileBlock

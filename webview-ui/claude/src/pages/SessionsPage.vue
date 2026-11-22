@@ -130,7 +130,8 @@ const openSession = (wrappedSession: ReturnType<typeof useSession> | undefined) 
   if (!wrappedSession) return;
   // 🔥 Get the raw Session instance from the wrapper
   const rawSession = wrappedSession.__session;
-  store.setActiveSession(rawSession);
+  // Already open in another tab → ChatPage asks what to do (openConflict)
+  void store.__store.openExisting(rawSession);
   emit('switchToChat', wrappedSession.sessionId.value);
 };
 

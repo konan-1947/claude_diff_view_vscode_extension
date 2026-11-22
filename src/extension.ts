@@ -236,11 +236,17 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
         terminalSessions.setClaudeTitle(request.tabId, request.title);
       } else if (request.kind === 'new') {
         terminalSessions.createClaude(80, 24);
+      } else if (request.kind === 'focus') {
+        terminalSessions.activate(request.tabId);
       }
     }),
     claudeUi.webViews.onTabSession(({ tabId, sessionId }) => terminalSessions.setClaudeSession(tabId, sessionId)),
     terminalSessions.onClosed((id) => claudeUi.webViews.releaseTab(id)),
   );
+  // "Already open in another tab" goes by the store: it keeps a tab's
+  // conversation while the tab's iframe is gone.
+  claudeUi.webViews.setSessionOwnerLookup((sessionId, exceptTabId) =>
+    terminalSessions.claudeTabForSession(sessionId, exceptTabId));
   const terminalPanel = new TerminalPanelProvider(context, diffManager, terminalSessions, claudeUi);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(

@@ -130,7 +130,8 @@ export abstract class BaseTransport {
     thinkingLevel?: string,
     effortLevel?: string,
     additionalDirectories?: string[],
-    resumeSessionAt?: string
+    resumeSessionAt?: string,
+    forkSession?: boolean
   ): AsyncQueue<any> {
     const queue = new AsyncQueue<any>();
     this.streams.set(channelId, queue);
@@ -145,6 +146,7 @@ export abstract class BaseTransport {
       effortLevel,
       additionalDirectories: additionalDirectories?.length ? additionalDirectories : undefined,
       resumeSessionAt,
+      forkSession: forkSession || undefined,
     });
     return queue;
   }
@@ -368,6 +370,17 @@ export abstract class BaseTransport {
   }
   getSession(sessionId: string): Promise<any> {
     return this.sendRequest({ type: "get_session_request", sessionId });
+  }
+  /** Another Claude UI tab already on this conversation, if any */
+  async getSessionOwner(sessionId: string): Promise<{ tabId: string; title: string } | undefined> {
+    const response: any = await this.sendRequest({ type: "get_session_owner", sessionId } as any);
+    return response?.owner;
+  }
+  reportSessionSettings(sessionId: string, settings: Record<string, string | undefined>): Promise<any> {
+    return this.sendRequest({ type: "report_session_settings", sessionId, settings } as any);
+  }
+  focusTab(tabId: string): Promise<any> {
+    return this.sendRequest({ type: "focus_tab", tabId } as any);
   }
   listFiles(pattern?: string, signal?: AbortSignal): Promise<any> {
     return this.sendRequest({ type: "list_files_request", pattern }, undefined, signal);
@@ -642,7 +655,8 @@ export abstract class BaseTransport {
         channelId,
         request.toolName,
         request.inputs,
-        request.suggestions ?? []
+        request.suggestions ?? [],
+        request.context ?? {}
       );
       trackedRequest = permissionRequest;
 

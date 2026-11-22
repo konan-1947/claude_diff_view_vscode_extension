@@ -7,7 +7,7 @@
  * 3. Support reactive tool_result linking via ContentBlockWrapper
  */
 
-import type { ContentBlockType, NoticeBlock } from '../models/ContentBlock';
+import type { ContentBlockType, HookBlock, NoticeBlock } from '../models/ContentBlock';
 import { parseMessageContent } from '../models/contentParsers';
 import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 
@@ -167,6 +167,18 @@ export class Message {
       );
     }
 
+    // A hook worth showing (see hookBlock): live event or a transcript attachment
+    if (raw.type === 'system' && raw.subtype === 'hook_response') {
+      const block = hookBlock(raw);
+      if (!block) return null;
+      return new Message(
+        'tip',
+        { role: 'system', content: [new ContentBlockWrapper(block)] },
+        toEpochMs(raw.timestamp),
+        { subtype: 'hook_response' }
+      );
+    }
+
     // Do not render other system messages (state updates only)
     if (raw.type === 'system') {
       return null;
@@ -202,6 +214,50 @@ function formatTokens(n: number): string {
 }
 
 /** "15.9K → 6.6K tokens", or undefined when the CLI gave no counts */
+/**
+ * What the CLI prints for a hook run: exit code 2 blocks, any other failure
+ * is a non-blocking error, a JSON answer may stop the turn (`continue: false`)
+ * or carry a `systemMessage`. A plain success, a cancelled run (the turn was
+ * stopped) and injected context print nothing. History entries arrive with
+ * `hook_kind` already set by the host.
+ */
+function hookBlock(raw: any): HookBlock | null {
+  const hookName = String(raw.hook_name || raw.hook_event || 'hook');
+  const base = {
+    type: 'hook' as const,
+    hookName,
+    exitCode: typeof raw.exit_code === 'number' ? raw.exit_code : undefined,
+    command: typeof raw.command === 'string' ? raw.command : undefined,
+  };
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  if (typeof raw.hook_kind === 'string') {
+    return { ...base, kind: raw.hook_kind, output: text(raw.output) };
+  }
+  if (raw.outcome === 'cancelled') return null;
+  const errText = text(raw.stderr) || text(raw.output) || text(raw.stdout);
+  if (raw.exit_code === 2) return { ...base, kind: 'blocked', output: errText };
+  if (raw.outcome === 'error' || (typeof raw.exit_code === 'number' && raw.exit_code !== 0)) {
+    return { ...base, kind: 'error', output: errText };
+  }
+  let json: any;
+  try {
+    json = JSON.parse(text(raw.stdout));
+  } catch {
+    return null;
+  }
+  if (!json || typeof json !== 'object') return null;
+  if (json.continue === false) {
+    return { ...base, kind: 'stopped', output: text(json.stopReason) };
+  }
+  if (json.decision === 'block') {
+    return { ...base, kind: 'blocked', output: text(json.reason) };
+  }
+  if (text(json.systemMessage)) {
+    return { ...base, kind: 'message', output: text(json.systemMessage) };
+  }
+  return null;
+}
+
 function formatCompactTokens(meta: any): string | undefined {
   const pre = meta?.pre_tokens;
   const post = meta?.post_tokens;

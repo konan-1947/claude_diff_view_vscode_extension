@@ -68,6 +68,9 @@ export class TerminalSessionStore implements vscode.Disposable {
   readonly onError = this._onError.event;
   private readonly _onTitle = new vscode.EventEmitter<{ id: string; title: string }>();
   readonly onTitle = this._onTitle.event;
+  /** A tab should come to the front (a Claude UI tab asked for another one) */
+  private readonly _onActivate = new vscode.EventEmitter<string>();
+  readonly onActivate = this._onActivate.event;
 
   get size(): number {
     return this.sessions.size;
@@ -204,6 +207,24 @@ export class TerminalSessionStore implements vscode.Disposable {
     this._onTitle.fire({ id, title: next });
   }
 
+  /** Another Claude UI tab (not `exceptId`) on this conversation, with its title */
+  claudeTabForSession(sessionId: string, exceptId?: string): { tabId: string; title: string } | undefined {
+    for (const rec of this.sessions.values()) {
+      if (rec.kind === 'claude' && rec.id !== exceptId && rec.sessionId === sessionId) {
+        return { tabId: rec.id, title: rec.title };
+      }
+    }
+    return undefined;
+  }
+
+  activate(id: string): void {
+    if (!this.sessions.has(id)) {
+      return;
+    }
+    this.activeId = id;
+    this._onActivate.fire(id);
+  }
+
   setClaudeSession(id: string, sessionId: string): void {
     const rec = this.claudeRecord(id);
     if (rec) {
@@ -249,6 +270,7 @@ export class TerminalSessionStore implements vscode.Disposable {
     this._onExit.dispose();
     this._onError.dispose();
     this._onTitle.dispose();
+    this._onActivate.dispose();
   }
 
   // ---- internals -------------------------------------------------------

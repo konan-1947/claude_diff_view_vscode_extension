@@ -2260,6 +2260,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           sessions.forEach((s) => {
             if (s.claude && (!msg.id || msg.id === s.id)) s.claude.post(msg.payload);
           });
+        } else if (msg.type === 'activateSession') {
+          activateTab(msg.id);
         } else if (msg.type === 'sessionTitleChanged') {
           const s = sessions.get(msg.id);
           if (!s) return;

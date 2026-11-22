@@ -129,6 +129,7 @@
     <RewindPanel
       v-else-if="activePanel === 'rewind'"
       :targets="rewindTargets"
+      :initial-target="rewindInitial"
       @restored="restoreRewoundText"
       @notify="notify"
       @close="closePanel"
@@ -622,7 +623,7 @@ function resumeSession(sessionId: string) {
   const store = runtime?.sessionStore
   const target = store?.sessions().find((s) => s.sessionId() === sessionId)
   if (store && target && target !== store.activeSession()) {
-    store.setActiveSession(target)
+    void store.openExisting(target)
   }
 }
 
@@ -964,6 +965,8 @@ const DOUBLE_ESCAPE_MS = 600
 
 /** Messages Rewind can go back to, newest first (fixed while the panel is open) */
 const rewindTargets = shallowRef<Message[]>([])
+/** Message to open Rewind on directly ("Restore checkpoint" on that message) */
+const rewindInitial = shallowRef<Message | undefined>(undefined)
 
 /** Text the user typed in a message (no attachments, selections or injected context) */
 function messageText(message: Message): string {
@@ -983,9 +986,10 @@ function restoreRewoundText(text: string) {
   setTimeout(() => setInputText(text), 0)
 }
 
-function openRewind() {
+function openRewind(target?: Message) {
   const session = runtime?.sessionStore.activeSession()
   if (!session) return
+  rewindInitial.value = target
   if (session.busy()) {
     notify('Wait for the current turn to finish', 'warning')
     return
@@ -1640,6 +1644,10 @@ onUnmounted(() => {
 
 // Exposed methods: let the parent set content and focus
 defineExpose({
+  /** Open Rewind; with a message, straight on its "what to restore" step */
+  openRewind(target?: Message) {
+    openRewind(target)
+  },
   /** Current text of the input */
   getContent(): string {
     return content.value

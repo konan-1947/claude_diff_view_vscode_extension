@@ -45,6 +45,8 @@ export interface LaunchClaudeMessage extends BaseMessage {
     additionalDirectories?: string[]; // `/add-dir` for this session only (absolute paths)
     /** Rewind: resume only up to this transcript entry (with `resume`) */
     resumeSessionAt?: string;
+    /** Resume into a new session (a copy), leaving `resume` to the tab already on it */
+    forkSession?: boolean;
 }
 
 /**
@@ -809,6 +811,60 @@ export interface GetSessionRequest {
 export interface GetSessionResponse {
     type: "get_session_response";
     messages: any[];
+    /** What the conversation last ran with, so a resume continues the same way */
+    settings?: SessionSettings;
+}
+
+/**
+ * Model / effort / permission mode a conversation last used, read from its
+ * transcript (the CLI records `requestedModel` and `effort` on each assistant
+ * entry, `permissionMode` on each user entry). Any field may be missing.
+ */
+export interface SessionSettings {
+    /** Model ID as requested (`claude-opus-5-5`), not the picker alias */
+    model?: string;
+    effort?: string;
+    permissionMode?: string;
+}
+
+/**
+ * Another Claude UI tab already showing this conversation (two CLI processes
+ * must not write one session)
+ */
+export interface GetSessionOwnerRequest {
+    type: "get_session_owner";
+    sessionId: string;
+}
+
+export interface GetSessionOwnerResponse {
+    type: "get_session_owner_response";
+    /** Undefined when no other tab has it */
+    owner?: { tabId: string; title: string };
+}
+
+/**
+ * What a running conversation uses now (model / effort / mode). A mode switch
+ * reaches the transcript only with the next prompt, so a tab rebuilt before
+ * that (Agent mode toggle) would resume with stale values without this.
+ */
+export interface ReportSessionSettingsRequest {
+    type: "report_session_settings";
+    sessionId: string;
+    settings: SessionSettings;
+}
+
+export interface ReportSessionSettingsResponse {
+    type: "report_session_settings_response";
+}
+
+/** Bring another Claude UI tab to the front */
+export interface FocusTabRequest {
+    type: "focus_tab";
+    tabId: string;
+}
+
+export interface FocusTabResponse {
+    type: "focus_tab_response";
 }
 
 /**
@@ -1215,6 +1271,29 @@ export interface ToolPermissionRequest {
     toolName: string;
     inputs: Record<string, unknown>;
     suggestions: PermissionUpdate[];
+    /** What the CLI says about this ask (the `canUseTool` options), for the prompt text */
+    context?: ToolPermissionContext;
+}
+
+/** The display part of the SDK's `canUseTool` options (all optional: older CLIs send less) */
+export interface ToolPermissionContext {
+    /** Full prompt sentence ("Claude wants to read foo.txt") */
+    title?: string;
+    /** Short action name ("Read file") */
+    displayName?: string;
+    /** Subtitle (a Bash command's description, a file name) */
+    description?: string;
+    /** Why the CLI asks ("This command requires approval") */
+    decisionReason?: string;
+    /** Path outside the allowed directories that triggered the ask */
+    blockedPath?: string;
+    /** Start on "No" and offer no one-key approve */
+    defaultToNo?: boolean;
+    /** Offer no "don't ask again" choice */
+    suppressAlwaysAllowRule?: boolean;
+    toolUseID?: string;
+    /** Set when the ask comes from a subagent */
+    agentID?: string;
 }
 
 export interface ToolPermissionResponse {
@@ -1314,6 +1393,9 @@ export type WebViewRequest =
     | GetCurrentSelectionRequest
     | ShowNotificationRequest
     | NewConversationTabRequest
+    | GetSessionOwnerRequest
+    | ReportSessionSettingsRequest
+    | FocusTabRequest
     | RenameTabRequest
     | GetClaudeStateRequest
     | SdkProbeRequest
@@ -1381,6 +1463,9 @@ export type WebViewRequestResponse =
     | GetCurrentSelectionResponse
     | ShowNotificationResponse
     | NewConversationTabResponse
+    | GetSessionOwnerResponse
+    | ReportSessionSettingsResponse
+    | FocusTabResponse
     | RenameTabResponse
     | GetClaudeStateResponse
     | SdkProbeResponse

@@ -234,8 +234,10 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
       checkpoints`); file khôi phục được watcher mở thành diff để review. Hội thoại: đọc
       `parentUuid` của tin đó trong transcript rồi relaunch với `resumeSessionAt` (cùng
       session id, không fork); tin nhắn quay lại ô nhập như CLI. Mỗi tin gửi đi mang `uuid`
-      do UI gán, CLI giữ nguyên làm uuid trong transcript. Còn lại: nút "Restore checkpoint"
-      trong `UserMessage.vue` vẫn là TODO (có thể nối vào cùng panel).
+      do UI gán, CLI giữ nguyên làm uuid trong transcript. Nút "Restore checkpoint" (hover
+      trên tin nhắn đã gửi, `UserMessage.vue`) mở cùng panel, thẳng vào bước chọn cách khôi
+      phục cho tin đó (`RewindPanel` prop `initialTarget`, qua `RestoreCheckpointKey`); chỉ
+      hiện khi tin có `uuid` (chờ test tay).
 - [x] Tiền tố `!` → bash mode: viền ô nhập đổi màu; lệnh chạy ở host (bash/`$SHELL`, Windows:
       `CLAUDE_CODE_GIT_BASH_PATH` hoặc PowerShell), timeout `BASH_DEFAULT_TIMEOUT_MS` (2 phút),
       `Esc` dừng cả process group. Lệnh + output gửi vào transcript bằng một tin
@@ -258,14 +260,46 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
 
 ## 7. Luồng xin quyền và tương tác của tool
 
-- [x] Hộp xin quyền tool (`PermissionRequestModal` / `ToolPermissionView`).
-- [ ] Các lựa chọn giống CLI: "Yes", "Yes, and don't ask again for <rule>" (ghi rule vào
-      settings), "No, and tell Claude what to do differently" (kèm ô nhập lý do).
-- [ ] `AskUserQuestion`: chưa có renderer riêng → dựng UI chọn đáp án (single /
-      multi-select, ô "Other"), trả kết quả qua `canUseTool` `updatedInput`.
-- [~] `ExitPlanMode`: đã có renderer; cần nút duyệt kế hoạch + chọn chế độ tiếp theo
-      (auto-accept edits / manual) như CLI.
-- [ ] Hiển thị hook bị chặn / output của hook (CLI in ra dòng hook).
+- [x] Hộp xin quyền tool: `PermissionRequestModal.vue` chỉ chọn prompt theo tool; các
+      prompt nằm trong `components/Permission/` (khung `PromptFrame`, danh sách đánh số
+      `PromptOptions`: ↑/↓, số, Enter, Esc; tự lấy focus khi hiện).
+- [~] Các lựa chọn giống CLI (đã làm, chờ test tay): `ToolPermissionPrompt.vue` —
+      "Yes" (chỉ lần này: `updatedPermissions: []`; trước đây "Yes" ghi luôn suggestions,
+      tức là thành "don't ask again"), "Yes, and don't ask again for …" (gửi nguyên
+      `suggestions` của CLI; nhãn ghép từ chúng trong `utils/permissionSuggestions.ts`:
+      `addRules` → "`touch a.txt` commands in this project", `setMode acceptEdits` →
+      "allow all edits during this session", `addDirectories` → "allow access to ws/"),
+      "No, and tell Claude what to do differently" (dòng nhập; có chữ → deny
+      `interrupt: false`, Claude đọc phản hồi và làm tiếp; trống/Esc → deny + dừng lượt).
+      Host chuyển thêm phần hiển thị của options `canUseTool` (`ToolPermissionContext`
+      trong `shared/messages.ts`: `title`, `description`, `decisionReason`, `blockedPath`,
+      `defaultToNo` → con trỏ ở "No" và tắt phím số, `suppressAlwaysAllowRule` → ẩn lựa
+      chọn 2, `agentID` → nhãn "subagent"). Bash hiện lệnh + mô tả, Edit/Write hiện path
+      (bấm để mở), tool khác hiện "Details" JSON.
+- [~] `AskUserQuestion` (đã làm, chờ test tay): `AskUserQuestionPrompt.vue`. Một câu mỗi
+      lần, nhiều câu → tab (←/→) + bước "Review your answers" trước khi gửi; single-select
+      chọn là sang câu tiếp, multi-select dùng checkbox (Enter/Space) + dòng Next/Submit;
+      dòng "Other" nhập tự do; option có `preview` hiện preview của dòng đang trỏ. Trả
+      `updatedInput = { ...input, answers: { [question]: "a, b" }, annotations? }` (khảo
+      sát: CLI nhận và trả tool_result "Your questions have been answered: …"). Esc → deny.
+- [~] `ExitPlanMode` (đã làm, chờ test tay): `PlanApprovalPrompt.vue` — "Yes, and use
+      auto mode" (khi model hỗ trợ), "Yes, and bypass permissions" (khi được bật), "Yes,
+      and auto-accept edits", "Yes, and manually approve edits" → allow +
+      `updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }]` (khảo sát:
+      CLI phát `system/status` với `permissionMode` mới, mode picker tự theo); "No, keep
+      planning" + phản hồi → deny. Input có `plan` và `planFilePath` (link "Open plan
+      file"). Thẻ Plan trong transcript tự mở khi đang chờ duyệt, và transcript không bị
+      làm mờ khi đang hỏi plan / AskUserQuestion (vẫn mờ với hộp quyền thường).
+- [~] Hook (đã làm, chờ test tay): `includeHookEvents: true` trong `ClaudeSdkService` →
+      `system/hook_started|hook_response` cho command hook của user (callback hook của
+      extension không phát event). `Message.fromRaw` → block `hook` (`HookBlock.vue`, nằm
+      trong lượt đang chạy, không tách lượt): exit 2 → "hook blocked", lỗi khác → "hook
+      error" + exit code, JSON `continue: false` → "hook stopped the turn", `decision:
+      block` → blocked, `systemMessage` → "says"; chạy thành công / bị huỷ thì không hiện
+      (như CLI). Lịch sử: CLI lưu attachment `hook_non_blocking_error`,
+      `hook_error_during_execution`, `hook_blocking_error`, `hook_stopped_continuation`,
+      `hook_system_message`; `ClaudeSessionService.hookAttachment` đổi sang cùng dạng.
+      PreToolUse chặn tool không có attachment: lỗi nằm ở tool_result (thẻ tool đã hiện).
 
 ## 8. Hiển thị trong lúc chạy
 
@@ -304,11 +338,28 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
 ## 9. Session và nhiều tab
 
 - [x] Tab do terminal tab strip quản lý; store giữ `{ title, sessionId }` để resume.
-- [ ] Resume giữ nguyên model / effort / permission mode của session (hiện chỉ giữ
-      sessionId, xem mục 1).
-- [ ] `claude --continue` tương đương: nút "tiếp tục hội thoại gần nhất" khi mở tab mới.
-- [ ] Hai tab cùng resume một session → cảnh báo (CLI không cho hai tiến trình ghi cùng
-      session).
+- [~] Resume giữ nguyên model / effort / permission mode (đã làm, chờ test tay). Transcript
+      của CLI có sẵn: `requestedModel` + `effort` trên mỗi entry assistant, `permissionMode`
+      trên mỗi entry user (bỏ qua sidechain). `ClaudeSessionService.getSessionSettings` đọc
+      giá trị cuối, trả kèm `get_session_response.settings`; `Session.applyResumedSettings`
+      áp trước `launchClaude` (chỉ giá trị chưa ai chọn trong tab; Auto mặc định của UI
+      không tính là "đã chọn"; bypass chỉ khi được bật). Model về dạng ID → ChatPage đổi
+      sang mục picker có `resolvedModel` trùng. Đổi mode / model giữa chừng **không** vào
+      transcript cho tới prompt kế tiếp (khảo sát: duyệt plan → acceptEdits, transcript vẫn
+      `plan`), nên tab đang chạy còn báo settings hiện tại về host
+      (`report_session_settings`, map trong bộ nhớ của `WebViewService`) và host ưu tiên
+      map đó → tab dựng lại (bật/tắt Agent mode) resume đúng mode.
+- [~] `claude --continue` (đã làm, chờ test tay): tab còn trống hiện nút "Continue last
+      conversation" (tên + thời gian) dưới ô nhập — dưới để ô nhập căn giữa không nhảy khi
+      nút hiện muộn. Lấy hội thoại mới nhất **không** đang mở ở tab khác (thường cái mới
+      nhất là cái đang làm ở tab bên cạnh).
+- [~] Hai tab cùng một session (đã làm, chờ test tay): mọi đường mở hội thoại cũ (`/resume`,
+      trang lịch sử, Continue) đi qua `SessionStore.openExisting` → hỏi host
+      `get_session_owner` (tra `TerminalSessionStore`, giữ sessionId của tab cả khi iframe
+      bị huỷ; tab nhận session ngay lúc `launch_claude` có `resume`). Trùng → prompt
+      `SessionConflictPrompt.vue`: "Switch to that tab" (`focus_tab` → tab strip chuyển
+      tab), "Open a fork here" (`forkSession: true` khi resume: cùng lịch sử, session id
+      mới, file gốc không bị ghi — đã khảo sát với CLI), "Cancel".
 
 ## 10. Cách kiểm thử lại
 
