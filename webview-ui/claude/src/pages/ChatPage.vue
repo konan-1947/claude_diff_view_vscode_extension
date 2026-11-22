@@ -42,7 +42,13 @@
               </template>
             <!-- </div> -->
             <div v-if="isBusy || shellRunning" class="spinnerRow">
-              <Spinner :size="16" :permission-mode="permissionMode" />
+              <Spinner
+                :size="16"
+                :permission-mode="permissionMode"
+                :started-at="isBusy ? turnStartedAt : undefined"
+                :tokens="isBusy ? activity.turnTokens.value : 0"
+                :retry="isBusy ? activity.apiRetry.value : undefined"
+              />
             </div>
             <div ref="endEl" />
           </template>
@@ -56,7 +62,22 @@
             :on-resolve="handleResolvePermission"
             data-permission-panel="1"
           />
+          <RateLimitBanner :info="activity.rateLimit.value" />
+          <BackgroundTasksList
+            :tasks="activity.backgroundTasks.value"
+            :task-info="activity.tasks.value"
+            :stop-task="activity.stopTask"
+            :subagent-messages="activity.subagentMessages.value"
+          />
+          <MessageQueueList
+            :queued-messages="queuedMessages"
+            :visible="queuedMessages.length > 0"
+            class="queueList"
+            @remove="handleQueueRemove"
+            @send-now="handleQueueSendNow"
+          />
           <ChatInputBox
+            ref="chatInputRef"
             :show-progress="true"
             :progress-percentage="progressPercentage"
             :context-tooltip="contextTooltip"
@@ -72,6 +93,7 @@
             :effort-levels="effortLevels"
             @command-panel-open="() => session?.refreshAppliedEffort()"
             @submit="handleSubmit"
+            @queue-message="handleQueueMessage"
             @bash="handleBash"
             @run-commands="handleRunCommands"
             @open-history="$emit('switchToSessions')"
@@ -99,6 +121,11 @@
   import type { AttachmentItem } from '../types/attachment';
   import { convertFileToAttachment } from '../types/attachment';
   import ChatInputBox from '../components/ChatInputBox.vue';
+  import MessageQueueList from '../components/MessageQueueList.vue';
+  import BackgroundTasksList from '../components/BackgroundTasksList.vue';
+  import RateLimitBanner from '../components/RateLimitBanner.vue';
+  import { useLiveActivity } from '../composables/useLiveActivity';
+  import type { QueuedMessage } from '../types/queue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import Spinner from '../components/Messages/WaitingIndicator.vue';
   import MessageRenderer from '../components/Messages/MessageRenderer.vue';
@@ -155,8 +182,15 @@
   // The turn worked on while this page was open keeps its steps unfolded (Cursor
   // does the same); turns loaded from history start folded under "Worked for Ns".
   const liveTurnKey = ref(-1);
+  // Spinner line: time and tokens of the turn running now
+  const activity = useLiveActivity();
+  const turnStartedAt = ref<number | undefined>(undefined);
   watch(isBusy, (busy) => {
-    if (busy) liveTurnKey.value = lastTurnKey.value;
+    if (busy) {
+      liveTurnKey.value = lastTurnKey.value;
+      turnStartedAt.value = Date.now();
+      activity.beginTurn();
+    }
   });
   const permissionMode = computed(
     () => session.value?.permissionMode.value ?? 'default'
@@ -333,6 +367,85 @@
     }
   }
 
+  // Typed while Claude is working: held here (listed above the input, can be
+  // removed or sent at once) and sent when the turn ends, like the CLI's queue.
+  // Consecutive prompts go out as one message (the CLI joins them too); a
+  // `/command` always goes on its own.
+  type QueuedEntry = QueuedMessage & { attachments: AttachmentItem[] };
+  const queuedMessages = ref<QueuedEntry[]>([]);
+  const chatInputRef = ref<InstanceType<typeof ChatInputBox> | null>(null);
+  let queueSeq = 0;
+  let flushingQueue = false;
+
+  function handleQueueMessage(content: string) {
+    const trimmed = (content || '').trim();
+    if (!trimmed && attachments.value.length === 0) return;
+    queuedMessages.value = [
+      ...queuedMessages.value,
+      {
+        id: `queued-${++queueSeq}`,
+        content: trimmed,
+        timestamp: Date.now(),
+        attachments: attachments.value,
+      },
+    ];
+    attachments.value = [];
+    // The turn may have ended between the keypress and here
+    if (!isBusy.value) void flushQueue();
+  }
+
+  function handleQueueRemove(id: string) {
+    queuedMessages.value = queuedMessages.value.filter((m) => m.id !== id);
+  }
+
+  // "Send immediately": straight to the CLI, which takes it in during the turn
+  async function handleQueueSendNow(id: string) {
+    const s = session.value;
+    const entry = queuedMessages.value.find((m) => m.id === id);
+    if (!s || !entry) return;
+    handleQueueRemove(id);
+    try {
+      await s.send(entry.content || ' ', entry.attachments);
+    } catch (e) {
+      console.error('[ChatPage] send failed', e);
+    }
+  }
+
+  async function flushQueue() {
+    const s = session.value;
+    if (!s || flushingQueue || isBusy.value || queuedMessages.value.length === 0) return;
+    const queue = queuedMessages.value;
+    const isCommand = (m: QueuedEntry) => m.content.startsWith('/');
+    let count = 1;
+    if (!isCommand(queue[0])) {
+      while (count < queue.length && !isCommand(queue[count])) count++;
+    }
+    const batch = queue.slice(0, count);
+    queuedMessages.value = queue.slice(count);
+    flushingQueue = true;
+    try {
+      await s.send(
+        batch.map((m) => m.content).filter(Boolean).join('\n') || ' ',
+        batch.flatMap((m) => m.attachments)
+      );
+    } catch (e) {
+      console.error('[ChatPage] send failed', e);
+      // Not sent: back at the head of the queue
+      queuedMessages.value = [...batch, ...queuedMessages.value];
+    } finally {
+      flushingQueue = false;
+    }
+  }
+
+  watch(isBusy, (busy) => {
+    if (!busy) void flushQueue();
+  });
+
+  // A conversation switch (/resume, /clear in a new tab...) does not carry the queue over
+  watch(activeSessionRaw, () => {
+    queuedMessages.value = [];
+  });
+
   // `!command` (bash mode): runs outside the model, even while a turn runs
   async function handleBash(command: string) {
     const s = session.value;
@@ -459,6 +572,16 @@
 
   function handleStop() {
     const s = session.value;
+    // Interrupting gives the queued prompts back to the input (as the CLI
+    // does), instead of sending them as soon as the turn stops.
+    if (queuedMessages.value.length > 0) {
+      const queued = queuedMessages.value;
+      queuedMessages.value = [];
+      const typed = chatInputRef.value?.getContent() ?? '';
+      const text = [...queued.map((m) => m.content), typed].filter((t) => t.trim()).join('\n');
+      chatInputRef.value?.setContent(text);
+      attachments.value = [...queued.flatMap((m) => m.attachments), ...attachments.value];
+    }
     if (s) {
       // Methods are already bound in useSession and can be called directly
       void s.interrupt();
@@ -626,6 +749,10 @@
   /* Input area container */
   .inputContainer {
     padding: 0 var(--cs-edge) 10px;
+  }
+
+  .queueList {
+    margin-bottom: 4px;
   }
 
   /* Empty chat: the input sits in the middle of the pane, its top edge fixed

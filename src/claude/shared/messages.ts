@@ -890,6 +890,17 @@ export interface RewindFilesResponse {
     deletions?: number;
 }
 
+/** Stop a background task (bash run in the background, background subagent): `Query.stopTask` */
+export interface StopTaskRequest {
+    type: "stop_task";
+    taskId: string;
+}
+
+export interface StopTaskResponse {
+    type: "stop_task_response";
+    error?: string;
+}
+
 /**
  * Rewind conversation: the transcript entry just before a user message, to
  * resume at (`resumeSessionAt`). null = it was the first message.
@@ -1338,6 +1349,7 @@ export type WebViewRequest =
     | AddPromptHistoryRequest
     | RunShellCommandRequest
     | RewindFilesRequest
+    | StopTaskRequest
     | GetRewindPointRequest
     | ListFilesRequest
     | OpenURLRequest
@@ -1396,6 +1408,7 @@ export type WebViewRequestResponse =
     | AddPromptHistoryResponse
     | RunShellCommandResponse
     | RewindFilesResponse
+    | StopTaskResponse
     | GetRewindPointResponse
     | ListFilesResponse
     | OpenURLResponse

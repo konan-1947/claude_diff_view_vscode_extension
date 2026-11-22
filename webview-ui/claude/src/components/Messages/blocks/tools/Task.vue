@@ -1,24 +1,36 @@
 <template>
   <ToolMessageWrapper
-    tool-icon="codicon-tasklist"
+    tool-icon="codicon-hubot"
+    tool-name="Agent"
     :tool-result="toolResult"
     :default-expanded="shouldExpand"
   >
+    <!-- Same icon as the terminal's "view diff" button -->
+    <template #icon>
+      <img :src="agentIcon" class="agent-icon" alt="" aria-hidden="true" />
+    </template>
+
     <template #main>
-      <span class="tool-label">Task</span>
+      <span class="tool-label">Agent</span>
       <span v-if="subagentType" class="agent-badge">{{ subagentType }}</span>
       <span v-if="description" class="description-text">{{ description }}</span>
+      <span v-if="running" class="codicon codicon-loading codicon-modifier-spin running-icon"></span>
+    </template>
+
+    <!-- One live line like the CLI: what it is doing and how much it did -->
+    <template v-if="status" #preview>
+      <SubagentStatusLine :status="status" :failed="failed" />
     </template>
 
     <template #expandable>
-      <!-- Prompt content -->
-      <div v-if="prompt" class="prompt-section">
-        <div class="section-header">
-          <span class="codicon codicon-comment-discussion"></span>
-          <span>Prompt</span>
-        </div>
-        <pre class="prompt-content">{{ prompt }}</pre>
-      </div>
+      <SubagentDetail
+        :task="task"
+        :messages="children"
+        :prompt="prompt"
+        :status="status"
+        :running="running"
+        :failed="failed"
+      />
 
       <!-- Error content -->
       <ToolError :tool-result="toolResult" />
@@ -27,9 +39,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import ToolMessageWrapper from './common/ToolMessageWrapper.vue';
 import ToolError from './common/ToolError.vue';
+import SubagentDetail from '../../SubagentDetail.vue';
+import SubagentStatusLine from '../../SubagentStatusLine.vue';
+import { subagentCalls, subagentStatus } from '../../../../utils/subagentCalls';
+import agentIcon from '../../../../../../../media/icons/view-diff.png';
+import { useLiveActivity } from '../../../../composables/useLiveActivity';
+import { taskForToolUse } from '../../../../core/LiveActivity';
 
 interface Props {
   toolUse?: any;
@@ -38,6 +56,7 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+const activity = useLiveActivity();
 
 // Subagent type
 const subagentType = computed(() => {
@@ -54,11 +73,41 @@ const prompt = computed(() => {
   return props.toolUse?.input?.prompt || props.toolUseResult?.prompt;
 });
 
+// The CLI's task for this call (system/task_*); absent for history
+const task = computed(() => taskForToolUse(activity.tasks.value, props.toolUse?.id));
+
+// A background agent's tool_result arrives at once ("launched"): its task says
+// when it is really done
+const running = computed(() => {
+  if (task.value) return task.value.status === 'running' || task.value.status === 'pending';
+  return !props.toolResult && !props.toolUseResult;
+});
+const failed = computed(() => task.value?.status === 'failed' || !!props.toolResult?.is_error);
+
+// Ticks once a second while running, for the elapsed time
+const now = ref(Date.now());
+let timer: ReturnType<typeof setInterval> | undefined;
+watch(running, (isRunning) => {
+  if (isRunning && !timer) {
+    timer = setInterval(() => { now.value = Date.now(); }, 1000);
+  } else if (!isRunning && timer) {
+    clearInterval(timer);
+    timer = undefined;
+  }
+}, { immediate: true });
+onBeforeUnmount(() => { if (timer) clearInterval(timer); });
+
+const children = computed(() => activity.subagentMessages.value[props.toolUse?.id] ?? []);
+
+const childCalls = computed(() => subagentCalls(children.value as any[]));
+
+const status = computed(() => subagentStatus(task.value, childCalls.value, running.value, now.value));
+
 // Whether this is the permission request phase
 const isPermissionRequest = computed(() => {
   const hasToolUseResult = !!props.toolUseResult;
   const hasToolResult = !!props.toolResult && !props.toolResult.is_error;
-  return !hasToolUseResult && !hasToolResult;
+  return !hasToolUseResult && !hasToolResult && !task.value;
 });
 
 // Expanded by default during the permission request phase, collapsed once done
@@ -80,57 +129,28 @@ const shouldExpand = computed(() => {
   font-size: 0.9em;
 }
 
+.agent-icon {
+  display: block;
+  height: 14px;
+  width: auto;
+}
+
 .agent-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 6px;
-  background-color: color-mix(in srgb, var(--vscode-charts-orange) 20%, transparent);
   color: var(--vscode-charts-orange);
-  border-radius: 3px;
   font-size: 0.75em;
   font-weight: 600;
-  font-family: var(--vscode-editor-font-family);
 }
 
 .description-text {
-  font-family: var(--vscode-editor-font-family);
   font-size: 0.85em;
   color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
-  font-style: italic;
 }
 
-.prompt-section {
-  margin-bottom: 12px;
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-  font-size: 0.85em;
-  font-weight: 600;
-  color: color-mix(in srgb, var(--vscode-foreground) 80%, transparent);
-}
-
-.section-header .codicon {
-  font-size: 14px;
-}
-
-.prompt-content {
-  background-color: color-mix(in srgb, var(--vscode-editor-background) 80%, transparent);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  padding: 8px;
-  margin: 0;
-  font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-editor-foreground);
-  overflow-x: auto;
-  max-height: 400px;
-  overflow-y: auto;
-  font-size: 0.85em;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+.running-icon {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-left: auto;
 }
 </style>

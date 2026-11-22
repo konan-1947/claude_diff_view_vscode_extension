@@ -96,6 +96,7 @@ const toolComponent = computed(() => {
     case 'SlashCommand':
       return SlashCommandTool;
     case 'Task':
+    case 'Agent':  // the CLI's current name for Task
       return TaskTool;
     case 'TodoWrite':
       return TodoWriteTool;

@@ -4,21 +4,61 @@
       {{ currentIcon }}
     </span>
     <span class="text">{{ animatedText }}</span>
+    <!-- Like the CLI's status line: time spent and tokens of this turn, or the API retry -->
+    <span v-if="retryText" class="stats retry">{{ retryText }}</span>
+    <span v-else-if="statsText" class="stats">{{ statsText }}</span>
   </div>
 </template>
 
 <script setup lang="ts">
   import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+  import type { ApiRetryInfo } from '../../core/LiveActivity';
+  import { formatDuration, formatTokenCount } from '../../core/LiveActivity';
 
   interface Props {
     size?: number;
     permissionMode?: PermissionMode;
+    /** When the turn started (epoch ms); shows the time spent */
+    startedAt?: number;
+    /** Output tokens of the turn so far */
+    tokens?: number;
+    /** The CLI is waiting to retry a failed API request */
+    retry?: ApiRetryInfo;
   }
 
   const props = withDefaults(defineProps<Props>(), {
     size: 16,
     permissionMode: undefined,
+    startedAt: undefined,
+    tokens: 0,
+    retry: undefined,
+  });
+
+  const now = ref(Date.now());
+  let clockTimer: any;
+  onMounted(() => {
+    clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
+  });
+  onBeforeUnmount(() => {
+    if (clockTimer) clearInterval(clockTimer);
+  });
+
+  const statsText = computed(() => {
+    const parts: string[] = [];
+    if (props.startedAt) parts.push(formatDuration(now.value - props.startedAt));
+    if (props.tokens > 0) parts.push(`↓ ${formatTokenCount(props.tokens)} tokens`);
+    if (parts.length > 0) parts.push('esc to interrupt');
+    return parts.join('   ');
+  });
+
+  const retryText = computed(() => {
+    const r = props.retry;
+    if (!r) return '';
+    const wait = Math.max(0, Math.ceil((r.retryAt - now.value) / 1000));
+    const status = r.errorStatus ? ` (${r.errorStatus})` : '';
+    const when = wait > 0 ? `retrying in ${wait}s` : 'retrying';
+    return `API error${status}, ${when}   attempt ${r.attempt}/${r.maxRetries}`;
   });
 
   const SPINNER_ICONS = ['·', '✢', '*', '✶', '✻', '✽'];
@@ -208,5 +248,16 @@
     font-weight: 500;
     font-size: 12px;
     color: var(--vscode-descriptionForeground);
+  }
+  .stats {
+    margin-left: 6px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.75;
+    white-space: pre;
+  }
+  .stats.retry {
+    color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+    opacity: 1;
   }
 </style>

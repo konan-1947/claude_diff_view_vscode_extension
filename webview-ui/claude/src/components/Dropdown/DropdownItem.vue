@@ -25,13 +25,20 @@
           <!-- Text area -->
           <div class="menu-item-text-section">
             <!-- Main content -->
-            <div class="file-info-container">
+            <div class="file-info-container" :class="{ 'has-hint': item.hint || item.badge }">
               <span class="monaco-highlighted-label">{{ item.label || item.name }}</span>
+              <!-- Arguments / aliases (`/model <model>`) and where it comes from (`user`) -->
+              <span v-if="item.hint" class="menu-item-hint">{{ item.hint }}</span>
+              <span v-if="item.badge" class="menu-item-badge">({{ item.badge }})</span>
             </div>
             <!-- Secondary info (e.g. file path, description) -->
             <span
               v-if="item.detail"
-              :class="item.type === 'command' || stacked ? 'description-container' : 'file-path-container'"
+              :class="[
+                item.type === 'command' || stacked ? 'description-container' : 'file-path-container',
+                { 'one-line': clampDetail }
+              ]"
+              :title="clampDetail ? item.detail : undefined"
             >
               <span class="monaco-highlighted-label file-path-text">{{ item.detail }}</span>
             </span>
@@ -58,6 +65,8 @@ interface Props {
   index: number
   /** Name on its own line with the full description wrapped below (pickers) */
   stacked?: boolean
+  /** Stacked, but the description cut to one line (full text on hover) */
+  clampDetail?: boolean
 }
 
 interface Emits {
@@ -67,7 +76,8 @@ interface Emits {
 
 const props = withDefaults(defineProps<Props>(), {
   isSelected: false,
-  stacked: false
+  stacked: false,
+  clampDetail: false
 })
 
 const emit = defineEmits<Emits>()
@@ -370,6 +380,55 @@ function handleMouseEnter() {
   font-size: 11px;
   line-height: 14px;
   white-space: normal;
+}
+
+/* Name line with an argument hint / source: the name stays whole, the hint
+   gives way (ellipsis) when the row is narrow */
+.file-info-container.has-hint {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.file-info-container.has-hint .monaco-highlighted-label {
+  flex-shrink: 0;
+  width: auto;
+}
+
+.menu-item-hint,
+.menu-item-badge {
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+  opacity: 0.6;
+}
+
+.menu-item-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.menu-item-badge {
+  flex-shrink: 0;
+}
+
+/* Long skill descriptions (hundreds of characters): one line, not a wall of text */
+.stacked .description-container.one-line {
+  flex-shrink: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stacked .description-container.one-line .file-path-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .codicon:not(.bg-codicon-icon) {

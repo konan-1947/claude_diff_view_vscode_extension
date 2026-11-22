@@ -13,18 +13,23 @@ import type { DropdownItemType } from '../types/dropdown'
  * environment"): this UI handles them itself with a panel, so they are listed
  * in the `/` suggestions next to the CLI's own (marked with another icon).
  */
-export const UI_SLASH_COMMANDS: { name: string; description: string }[] = [
-  { name: 'resume', description: 'Resume a previous conversation' },
+export const UI_SLASH_COMMANDS: {
+  name: string
+  description: string
+  argumentHint?: string
+  aliases?: string[]
+}[] = [
+  { name: 'resume', description: 'Resume a previous conversation', argumentHint: '[conversation id or name]' },
   { name: 'help', description: 'Show shortcuts and all commands' },
   { name: 'memory', description: 'Open a CLAUDE.md memory file in the editor' },
   { name: 'status', description: 'Show version, model, account, MCP servers and settings files' },
-  { name: 'export', description: 'Export the conversation to a markdown file or the clipboard' },
+  { name: 'export', description: 'Export the conversation to a markdown file or the clipboard', argumentHint: '[filename]' },
   { name: 'hooks', description: 'Show the hooks in your settings files' },
-  { name: 'permissions', description: 'Manage allow, ask and deny tool permission rules' },
-  { name: 'add-dir', description: 'Add a new working directory' },
-  { name: 'plugin', description: 'Enable or disable installed plugins' },
+  { name: 'permissions', description: 'Manage allow, ask and deny tool permission rules', aliases: ['allowed-tools'] },
+  { name: 'add-dir', description: 'Add a new working directory', argumentHint: '[path]' },
+  { name: 'plugin', description: 'Enable or disable installed plugins', aliases: ['plugins'] },
   { name: 'release-notes', description: 'View release notes' },
-  { name: 'rewind', description: 'Restore the code and/or conversation to a previous point' },
+  { name: 'rewind', description: 'Restore the code and/or conversation to a previous point', aliases: ['undo', 'checkpoint'] },
   { name: 'login', description: 'Sign in with your Anthropic account' },
   { name: 'logout', description: 'Sign out from your Anthropic account' },
 ]
@@ -67,14 +72,18 @@ export function getSlashCommands(
 
   // Match on the command name (the label starts with "/"); names starting with
   // the query rank first. Descriptions are only searched when no name matches.
+  // An alias counts as a name (`/cost` finds `/usage`), as in the CLI.
   const q = query.trim().toLowerCase().replace(/^\//, '')
+  const names = (cmd: CommandAction) => [cmd.label.slice(1), ...(cmd.aliases ?? [])].map(n => n.toLowerCase())
+  const rank = (cmd: CommandAction) => {
+    const all = names(cmd)
+    if (all[0].startsWith(q)) return 0
+    if (all.some(n => n.startsWith(q))) return 1
+    return 2
+  }
   const byName = allCommands
-    .filter(cmd => cmd.label.toLowerCase().slice(1).includes(q))
-    .sort((a, b) => {
-      const pa = a.label.toLowerCase().slice(1).startsWith(q) ? 0 : 1
-      const pb = b.label.toLowerCase().slice(1).startsWith(q) ? 0 : 1
-      return pa - pb
-    })
+    .filter(cmd => names(cmd).some(n => n.includes(q)))
+    .sort((a, b) => rank(a) - rank(b))
   if (byName.length > 0) return byName
 
   return allCommands.filter(cmd => cmd.description?.toLowerCase().includes(q))
@@ -135,6 +144,12 @@ export function commandToDropdownItem(command: CommandAction): DropdownItemType 
     id: command.id,
     label: command.label,
     detail: command.description,
+    // Shown on the name line, dimmed, like the CLI's `/model <model>  (user)`
+    hint: [
+      command.aliases?.length ? `(${command.aliases.join(', ')})` : '',
+      command.argumentHint ?? '',
+    ].filter(Boolean).join(' ') || undefined,
+    badge: command.source,
     icon: isUiCommand(command) ? 'codicon-window' : 'codicon-symbol-method',
     type: 'command',
     data: { commandId: command.id, command }

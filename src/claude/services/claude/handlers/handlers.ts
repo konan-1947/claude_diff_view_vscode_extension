@@ -1255,6 +1255,37 @@ export async function handleOpenClaudeInTerminal(
 // ============================================================================
 
 /**
+ * Where a `/` command comes from, shown next to it in the suggestions like the
+ * CLI does. The SDK only marks Claude Code's own commands (`builtin`); a
+ * plugin's command carries a `plugin:name` alias; the rest are found on disk
+ * (`.claude/skills/<name>/` or `.claude/commands/<a>/<b>.md` for `a:b`).
+ */
+function withCommandSource(commands: any[], cwd: string): any[] {
+    const userDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    const projectDir = path.join(cwd, '.claude');
+    const definedIn = (dir: string, name: string) =>
+        fs.existsSync(path.join(dir, 'skills', name, 'SKILL.md'))
+        || fs.existsSync(path.join(dir, 'commands', ...name.split(':')) + '.md');
+
+    return commands.map((cmd) => {
+        if (!cmd || typeof cmd.name !== 'string' || cmd.builtin) return cmd;
+        let source: string | undefined;
+        const pluginAlias = (Array.isArray(cmd.aliases) ? cmd.aliases : [])
+            .find((alias: unknown) => typeof alias === 'string' && alias.endsWith(`:${cmd.name}`));
+        if (pluginAlias) {
+            source = pluginAlias.slice(0, -(cmd.name.length + 1));
+        } else if (projectDir !== userDir && definedIn(projectDir, cmd.name)) {
+            source = 'project';
+        } else if (definedIn(userDir, cmd.name)) {
+            source = 'user';
+        } else if (cmd.name.includes(':')) {
+            source = cmd.name.split(':')[0];
+        }
+        return source ? { ...cmd, source } : cmd;
+    });
+}
+
+/**
  * Load the config cache
  */
 async function loadConfig(context: HandlerContext): Promise<any> {
@@ -1279,8 +1310,9 @@ async function loadConfig(context: HandlerContext): Promise<any> {
 
     inputStream.done();
 
+    const commands = await (query as any).supportedCommands?.() || [];
     const config = {
-        slashCommands: await (query as any).supportedCommands?.() || [],
+        slashCommands: withCommandSource(commands, cwd),
         models: await (query as any).supportedModels?.() || [],
         accountInfo: await (query as any).accountInfo?.() || null
     };

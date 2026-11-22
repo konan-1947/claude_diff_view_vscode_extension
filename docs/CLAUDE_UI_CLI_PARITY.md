@@ -203,16 +203,24 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
       định dạng.
 - [x] Lệnh dạng prompt / skill (`/init`, `/debug`, `/code-review`, `/simplify`,
       `/security-review`, `/batch`, skill của user…): chạy như một lượt chat bình thường.
-- [ ] Gợi ý `/`: hiện `argumentHint` (SDK có trả, ví dụ `/model <model>`,
-      `/effort <low|…|auto>`) giống CLI; hiện nguồn của lệnh (user / project / plugin).
-- [ ] Mô tả skill rất dài (vài trăm ký tự) → cắt 1 dòng trong dropdown, xem đầy đủ khi hover.
+- [~] Gợi ý `/` (đã làm, chờ test tay): dòng tên hiện alias + `argumentHint` mờ
+      (`/usage (cost, stats)`, `/model <model>`) và nguồn `(user)` / `(project)` /
+      `(<plugin>)`. SDK chỉ đánh dấu `builtin`; host (`withCommandSource` trong
+      `handlers.ts`) suy nguồn: alias `plugin:name` → plugin, có
+      `.claude/skills/<name>/SKILL.md` hoặc `.claude/commands/<a>/<b>.md` ở workspace →
+      project, ở `~/.claude` (hoặc `CLAUDE_CONFIG_DIR`) → user. Gõ alias cũng tìm ra lệnh
+      (`/cost` → `/usage`). Lệnh UI tự dựng cũng có hint / alias (`/add-dir [path]`,
+      `/rewind (undo, checkpoint)`).
+- [~] Mô tả skill rất dài (vài trăm ký tự) → cắt 1 dòng trong dropdown, xem đầy đủ khi hover
+      (đã làm, chờ test tay: prop `clampDetail` của `DropdownItem`, `title` = mô tả đầy đủ).
 
 ## 6. Cách nhập liệu và phím tắt như CLI
 
 - [x] `Enter` gửi, `Shift+Enter` xuống dòng.
 - [x] `Esc` dừng lượt đang chạy.
 - [x] `Shift+Tab` đổi permission mode.
-- [x] Gõ tin khi đang bận → vào hàng đợi (`MessageQueueList`).
+- [~] Gõ tin khi đang bận → vào hàng đợi (`MessageQueueList`, đã sửa, chờ test tay): xem
+      mục bug bên dưới.
 - [x] `@` gợi ý file, `/` gợi ý lệnh.
 - [x] `↑` / `↓` → gọi lại các prompt đã gửi khi caret ở dòng đầu / dòng cuối (đi trong
       prompt nhiều dòng vẫn bình thường; bản nháp đang gõ quay lại khi `↓` hết lịch sử).
@@ -241,10 +249,12 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
 - [~] Dán ảnh (`Ctrl+V`) và kéo thả file: đã có `handlePaste` / Shift+drop, cần kiểm tra
       với ảnh chụp màn hình.
 - [x] `Ctrl+C` khi ô nhập có chữ và không có vùng chọn → xoá ô nhập; có vùng chọn → copy.
-- [ ] Bug thấy khi làm mục này: `ChatInputBox` emit `queueMessage` khi đang bận nhưng
-      `ChatPage` không nghe (và `handleSubmit` bỏ qua khi bận) → tin gõ lúc Claude đang chạy
-      bị xoá khỏi ô mà không được gửi. Dòng "Gõ tin khi đang bận → vào hàng đợi" ở trên
-      cần kiểm tra lại.
+- [~] Bug (đã sửa, chờ test tay): `ChatInputBox` emit `queueMessage` khi đang bận nhưng
+      `ChatPage` không nghe → tin gõ lúc Claude đang chạy bị mất. Giờ `ChatPage` giữ hàng
+      đợi (kèm attachment), hiện `MessageQueueList` trên ô nhập (xoá / "Send immediately"
+      gửi thẳng cho CLI giữa lượt), gửi khi lượt xong: các prompt liền nhau gộp thành một
+      tin (nối `\n`, như CLI), lệnh `/` luôn gửi riêng. `Esc` dừng lượt → prompt trong
+      hàng đợi quay lại ô nhập thay vì tự gửi. Đổi session → bỏ hàng đợi.
 
 ## 7. Luồng xin quyền và tương tác của tool
 
@@ -261,14 +271,35 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
 
 - [x] Renderer cho Bash, Read, Edit, Write, MultiEdit, Grep, Glob, Task, TodoWrite,
       WebFetch, WebSearch, NotebookEdit, MCP tool, KillShell, BashOutput.
-- [ ] Subagent (`Task`): hiện tiến trình lồng nhau của subagent như CLI (tool call con).
-- [ ] Tác vụ nền (bash chạy nền, `system/background_tasks_changed`): danh sách + nút kill.
+- [~] Subagent (đã làm, chờ test tay). CLI hiện gọi tool là **`Agent`** (không còn `Task`),
+      và mặc định chạy subagent **nền** (`is_backgrounded: true`): tool_result về ngay
+      ("launched"), task chạy tiếp cả sau `result` của lượt chính. Message của subagent có
+      `parent_tool_use_id` = id của tool_use `Agent`; giờ được tách khỏi transcript chính
+      (`core/LiveActivity.ts`) và gom theo id đó. Thẻ Agent (`tools/Task.vue`, khớp cả
+      `Task` lẫn `Agent`): một dòng live kiểu CLI (tool đang chạy, số tool, token, thời
+      gian, lấy từ `system/task_started|task_progress|task_updated|task_notification`), mở
+      ra thấy prompt, danh sách tool call con và kết quả. Session mở lại từ lịch sử không có
+      tool call con (transcript sidechain nằm ở file riêng).
+- [~] Tác vụ nền (đã làm, chờ test tay): `BackgroundTasksList.vue` trên ô nhập, lấy từ
+      `system/background_tasks_changed` (cả `local_bash` và `local_agent`), mỗi task có
+      thời gian / token và nút stop → `stop_task` → `Query.stopTask(id)` ở host. Task đã báo
+      xong qua `task_*` bị ẩn ngay dù CLI chưa gửi danh sách mới (chưa xác nhận CLI có gửi
+      lại danh sách khi task xong).
 - [~] Thinking: đã có `ThinkingBlock`; kiểm tra khi CLI trả thinking rỗng có chữ ký
       (thinking bị ẩn).
-- [ ] Spinner kèm thời gian chạy + số token của lượt hiện tại (như dòng trạng thái CLI).
+- [~] Spinner kèm thời gian chạy + số token của lượt hiện tại (đã làm, chờ test tay):
+      `↓ N tokens` = `output_tokens` của các response đã xong (`stream_event`
+      `message_delta`) + ước lượng response đang stream (4 ký tự ≈ 1 token, thinking lấy max
+      với `system/thinking_tokens`), chỉ tính hội thoại chính.
 - [~] Context usage (`TokenIndicator`): kiểm tra sau `/compact`, `/clear`, đổi model
       (context window khác nhau, ví dụ `[1m]`).
-- [ ] Lỗi API / rate limit / hết quota: hiện thông báo và thời điểm reset như CLI.
+- [~] Lỗi API / rate limit / hết quota (đã làm, chờ test tay): `rate_limit_event` đến ở
+      mỗi request (cả `allowed`, kèm `utilization` / `resetsAt`, có khi chỉ trong
+      `unifiedWindows[<type>]`). `RateLimitBanner.vue` trên ô nhập: `allowed_warning` →
+      "You've used N% of your 5-hour limit, resets …" (tắt được, hiện lại khi đổi cửa sổ);
+      `rejected` → "You've hit your … limit, resets …". `system/api_retry` → spinner hiện
+      "API error (529), retrying in Ns   attempt x/y". Chưa thấy được `allowed_warning` /
+      `rejected` thật.
 
 ## 9. Session và nhiều tab
 

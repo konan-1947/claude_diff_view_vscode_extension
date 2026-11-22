@@ -1,45 +1,28 @@
 <template>
   <div class="user-message">
     <div class="message-wrapper">
-      <div
-        ref="containerRef"
-        class="message-content"
-        :class="{ editing: isEditing }"
-      >
-        <!-- Normal display mode -->
-        <div
-          v-if="!isEditing"
-          class="message-view"
-          role="button"
-          tabindex="0"
-          @click.stop="startEditing"
-          @keydown.enter.prevent="startEditing"
-          @keydown.space.prevent="startEditing"
-        >
+      <!-- Not editable in place, like the CLI: an earlier prompt is changed with
+           Esc Esc / /rewind (the message comes back to the input) -->
+      <div class="message-content">
+        <div class="message-view">
           <div class="message-text">
             <div>{{ displayContent }}</div>
-            <Tooltip content="Restore checkpoint">
-              <button
-                class="restore-button"
-                @click.stop="handleRestore"
-              >
-                <span class="codicon codicon-restore"></span>
-              </button>
-            </Tooltip>
+            <div class="message-actions">
+              <Tooltip :content="copied ? 'Copied' : 'Copy message'">
+                <button class="restore-button" :class="{ copied }" @click.stop="copy">
+                  <span class="codicon" :class="copied ? 'codicon-check' : 'codicon-copy'"></span>
+                </button>
+              </Tooltip>
+              <Tooltip content="Restore checkpoint">
+                <button
+                  class="restore-button"
+                  @click.stop="handleRestore"
+                >
+                  <span class="codicon codicon-restore"></span>
+                </button>
+              </Tooltip>
+            </div>
           </div>
-        </div>
-
-        <!-- Edit mode -->
-        <div v-else class="edit-mode">
-          <ChatInputBox
-            :show-progress="false"
-            :conversation-working="false"
-            :attachments="attachments"
-            ref="chatInputRef"
-            @submit="handleSaveEdit"
-            @stop="cancelEdit"
-            @remove-attachment="handleRemoveAttachment"
-          />
         </div>
       </div>
     </div>
@@ -47,13 +30,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
+import { ref, computed } from 'vue';
 import type { Message } from '../../models/Message';
 import type { ToolContext } from '../../types/tool';
-import type { AttachmentItem } from '../../types/attachment';
 import Tooltip from '../Common/Tooltip.vue';
-import ChatInputBox from '../ChatInputBox.vue';
-import FileIcon from '../FileIcon.vue';
 
 interface Props {
   message: Message;
@@ -61,11 +41,6 @@ interface Props {
 }
 
 const props = defineProps<Props>();
-
-const isEditing = ref(false);
-const chatInputRef = ref<InstanceType<typeof ChatInputBox>>();
-const containerRef = ref<HTMLElement>();
-const attachments = ref<AttachmentItem[]>([]);
 
 // Display content (plain text)
 const displayContent = computed(() => {
@@ -87,116 +62,28 @@ const displayContent = computed(() => {
   return '';
 });
 
-// Extract attachments from the message content (image and document blocks)
-function extractAttachments(): AttachmentItem[] {
-  if (typeof props.message.message.content === 'string') {
-    return [];
+// Copy the prompt (same fallback as the copy button under Claude's reply)
+const copied = ref(false);
+async function copy() {
+  const text = displayContent.value;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
   }
-
-  if (!Array.isArray(props.message.message.content)) {
-    return [];
-  }
-
-  const extracted: AttachmentItem[] = [];
-  let index = 0;
-
-  for (const wrapper of props.message.message.content) {
-    const block = wrapper.content;
-
-    if (block.type === 'image' && block.source?.type === 'base64') {
-      const ext = block.source.media_type?.split('/')[1] || 'png';
-      extracted.push({
-        id: `image-${index++}`,
-        fileName: `image.${ext}`,
-        mediaType: block.source.media_type || 'image/png',
-        data: block.source.data,
-        fileSize: 0, // the original size is unavailable for history messages
-      });
-    } else if (block.type === 'document' && block.source) {
-      const title = block.title || 'document';
-      extracted.push({
-        id: `document-${index++}`,
-        fileName: title,
-        mediaType: block.source.media_type || 'application/octet-stream',
-        data: block.source.data,
-        fileSize: 0,
-      });
-    }
-  }
-
-  return extracted;
-}
-
-async function startEditing() {
-  isEditing.value = true;
-
-  // Extract attachments
-  attachments.value = extractAttachments();
-
-  // Set the input content and focus after the DOM updates
-  await nextTick();
-  if (chatInputRef.value) {
-    chatInputRef.value.setContent?.(displayContent.value || '');
-    chatInputRef.value.focus?.();
-  }
-}
-
-function handleRemoveAttachment(id: string) {
-  attachments.value = attachments.value.filter(a => a.id !== id);
-}
-
-function cancelEdit() {
-  isEditing.value = false;
-  attachments.value = []; // clear the attachment list
-}
-
-function handleSaveEdit(content?: string) {
-  const finalContent = content || displayContent.value;
-
-  if (finalContent.trim() && finalContent !== displayContent.value) {
-    // TODO: call session.send() to send the edited message
-    console.log('[UserMessage] Save edit:', finalContent.trim());
-  }
-
-  cancelEdit();
+  copied.value = true;
+  setTimeout(() => (copied.value = false), 1200);
 }
 
 function handleRestore() {
   // TODO: implement restore checkpoint
   console.log('[UserMessage] Restore checkpoint clicked');
 }
-
-// Listen for keyboard events
-function handleKeydown(event: KeyboardEvent) {
-  if (isEditing.value && event.key === 'Escape') {
-    event.preventDefault();
-    cancelEdit();
-  }
-}
-
-// Cancel editing on outside click
-function handleClickOutside(event: MouseEvent) {
-  if (!isEditing.value) return;
-
-  const target = event.target as HTMLElement;
-
-  // Check whether the click was inside the component
-  if (containerRef.value?.contains(target)) return;
-
-  // Outside click: cancel editing
-  cancelEdit();
-}
-
-// Lifecycle management
-onMounted(() => {
-  document.addEventListener('keydown', handleKeydown);
-  document.addEventListener('click', handleClickOutside);
-});
-
-onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown);
-  document.removeEventListener('click', handleClickOutside);
-});
 </script>
 
 <style scoped>
@@ -224,21 +111,15 @@ onUnmounted(() => {
   position: relative;
 }
 
-.message-content.editing {
-  z-index: 200;
-}
-
 /* Normal display mode */
 .message-view {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   width: 100%;
-  cursor: pointer;
 }
 
 .message-view .message-text {
-  cursor: pointer;
   background-color: var(--vscode-editor-background);
   border: 1px solid var(--cs-fg-20);
   outline: none;
@@ -280,7 +161,15 @@ onUnmounted(() => {
   flex: 1;
 }
 
-/* restore checkpoint button */
+/* copy / restore checkpoint buttons, shown on hover */
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  align-self: flex-end;
+  flex-shrink: 0;
+}
+
 .restore-button {
   background: transparent;
   border: none;
@@ -291,7 +180,6 @@ onUnmounted(() => {
   justify-content: center;
   line-height: 17px;
   padding: 0 2px;
-  align-self: flex-end;
   height: 20px;
   box-sizing: border-box;
   flex-shrink: 0;
@@ -302,7 +190,8 @@ onUnmounted(() => {
 }
 
 .message-text:hover .restore-button,
-.restore-button:focus-visible {
+.restore-button:focus-visible,
+.restore-button.copied {
   opacity: 1;
 }
 
@@ -313,26 +202,5 @@ onUnmounted(() => {
 .restore-button .codicon {
   font-size: 12px;
   color: var(--vscode-foreground);
-}
-
-/* Edit mode */
-.edit-mode {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-  position: relative;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-/* Style overrides specific to edit mode */
-.edit-mode :deep(.full-input-box) {
-  background: var(--vscode-input-background);
-}
-
-.edit-mode :deep(.full-input-box:focus-within) {
-  box-shadow: 0 0 8px 2px
-    color-mix(in srgb, var(--vscode-input-background) 30%, transparent);
 }
 </style>

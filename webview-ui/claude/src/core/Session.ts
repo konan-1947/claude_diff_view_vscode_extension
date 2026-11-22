@@ -5,6 +5,7 @@ import type { GetConfigOptionsResponse, McpServerInfo, ModelOption, StatusInfo }
 import type { SessionSummary } from './types';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
+import { LiveActivity } from './LiveActivity';
 import { Message as MessageModel } from '../models/Message';
 import type { Message } from '../models/Message';
 
@@ -106,6 +107,8 @@ export class Session {
   readonly connection = signal<BaseTransport | undefined>(undefined);
 
   readonly busy = signal(false);
+  /** Subagents, background tasks, turn size, rate limits: what the CLI reports besides the transcript */
+  readonly activity = new LiveActivity();
   readonly shellRunning = signal(false);
   readonly isLoading = signal(false);
   readonly error = signal<string | undefined>(undefined);
@@ -342,6 +345,15 @@ export class Session {
 
     void this.readMessages(stream, channelId);
     return channelId;
+  }
+
+  /** Kill a background task (bash run in the background, background subagent) */
+  async stopTask(taskId: string): Promise<void> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) throw new Error('No running session');
+    const connection = await this.getConnection();
+    const { error } = await connection.stopTask(channelId, taskId);
+    if (error) throw new Error(error);
   }
 
   async interrupt(): Promise<void> {
@@ -718,6 +730,12 @@ export class Session {
       return;
     }
 
+    // Subagent messages (shown inside their Agent card) and stream events
+    // (turn size) stay out of the transcript
+    if (this.activity.handle(event)) {
+      return;
+    }
+
     // 🔥 Use the full message processing pipeline
 
     // 1. Get the current message array (as a mutable array)
@@ -809,6 +827,7 @@ export class Session {
   /** Forget the shown conversation after the CLI reset it (see conversation_reset). */
   private resetConversation(): void {
     this.messages([]);
+    this.activity.resetConversation();
     this.todos([]);
     this.summary(undefined);
     this.lastSentSelection = undefined;

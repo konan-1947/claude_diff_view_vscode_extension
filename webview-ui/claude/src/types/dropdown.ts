@@ -4,6 +4,8 @@ export interface DropdownItemData {
   label?: string        // display text
   name?: string         // fallback display text
   detail?: string       // secondary info (e.g. file path, description)
+  hint?: string         // dimmed text after the label (e.g. a command's arguments)
+  badge?: string        // where it comes from, shown as "(badge)" (e.g. user, project, plugin)
   icon?: string         // left icon CSS class
   rightIcon?: string    // right icon CSS class (e.g. an arrow)
   checked?: boolean     // whether checked

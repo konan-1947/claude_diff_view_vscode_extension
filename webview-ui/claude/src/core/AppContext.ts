@@ -8,6 +8,12 @@ export interface CommandAction {
   label: string;
   description?: string;
   hasChevron?: boolean;
+  /** Arguments the command takes, e.g. `<model>` (from the SDK) */
+  argumentHint?: string;
+  /** Other names that run it, e.g. `cost` for `/usage` */
+  aliases?: string[];
+  /** `user`, `project` or a plugin name; absent for the CLI's own commands */
+  source?: string;
 }
 
 interface RegisteredCommand {

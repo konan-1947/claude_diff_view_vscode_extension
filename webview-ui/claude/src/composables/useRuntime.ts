@@ -62,7 +62,13 @@ export function useRuntime(): RuntimeInstance {
   const UI_COMMAND_NAMES = new Set(UI_SLASH_COMMANDS.map((cmd) => cmd.name));
   const uiCommandDisposers = UI_SLASH_COMMANDS.map((cmd) =>
     appContext.commandRegistry.registerAction(
-      { id: uiCommandId(cmd.name), label: `/${cmd.name}`, description: cmd.description },
+      {
+        id: uiCommandId(cmd.name),
+        label: `/${cmd.name}`,
+        description: cmd.description,
+        argumentHint: cmd.argumentHint,
+        aliases: cmd.aliases
+      },
       'Slash Commands',
       () => {}
     )
@@ -88,7 +94,13 @@ export function useRuntime(): RuntimeInstance {
             {
               id: `slash-command-${cmd.name}`,
               label: `/${cmd.name}`,
-              description: typeof cmd?.description === 'string' ? cmd.description : undefined
+              description: typeof cmd?.description === 'string' ? cmd.description : undefined,
+              argumentHint: typeof cmd?.argumentHint === 'string' && cmd.argumentHint.trim() ? cmd.argumentHint.trim() : undefined,
+              // A plugin's `plugin:name` alias is its source, not another name
+              aliases: Array.isArray(cmd?.aliases)
+                ? cmd.aliases.filter((a: unknown): a is string => typeof a === 'string' && !!a && !a.includes(':'))
+                : undefined,
+              source: typeof cmd?.source === 'string' && cmd.source ? cmd.source : undefined
             },
             'Slash Commands',
             () => {

@@ -36,6 +36,7 @@ import type {
   PromptHistoryEntry,
   RunShellCommandResponse,
   RewindFilesResponse,
+  StopTaskResponse,
 } from "@shared/messages";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -416,6 +417,10 @@ export abstract class BaseTransport {
       insertions: response?.insertions,
       deletions: response?.deletions,
     };
+  }
+  async stopTask(channelId: string, taskId: string): Promise<{ error?: string }> {
+    const response = (await this.sendRequest({ type: "stop_task", taskId }, channelId)) as StopTaskResponse;
+    return { error: response?.error };
   }
   async getRewindPoint(sessionId: string, userMessageId: string, cwd?: string): Promise<{ found: boolean; parentUuid: string | null }> {
     const response = await this.sendRequest({ type: "get_rewind_point", sessionId, userMessageId, cwd });

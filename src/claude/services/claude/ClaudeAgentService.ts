@@ -51,6 +51,8 @@ import type {
     GetStatusResponse,
     RewindFilesRequest,
     RewindFilesResponse,
+    StopTaskRequest,
+    StopTaskResponse,
 } from '../../shared/messages';
 
 // SDK type imports
@@ -997,6 +999,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "rewind_files":
                 return this.rewindFiles(channelId, request as RewindFilesRequest);
 
+            case "stop_task":
+                return this.stopTask(channelId, request as StopTaskRequest);
+
             // case "open_claude_in_terminal":
             //     return handleOpenClaudeInTerminal(request, this.handlerContext);
 
@@ -1390,6 +1395,22 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 memoryFiles: memoryFiles(cwd).filter((f) => f.exists)
             }
         };
+    }
+
+    /** Kill a background task from the UI's task list (like the CLI's task panel) */
+    async stopTask(channelId: string | undefined, request: StopTaskRequest): Promise<StopTaskResponse> {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        if (!channel?.query) {
+            return { type: "stop_task_response", error: 'No running session' };
+        }
+        try {
+            await channel.query.stopTask(request.taskId);
+            return { type: "stop_task_response" };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logService.warn(`[stopTask] ${message}`);
+            return { type: "stop_task_response", error: message };
+        }
     }
 
     /**

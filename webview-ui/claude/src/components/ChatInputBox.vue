@@ -232,6 +232,7 @@
                 :index="index"
                 :is-selected="index === slashCompletion.activeIndex.value"
                 stacked
+                clamp-detail
                 @click="slashCompletion.selectActive()"
                 @mouseenter="slashCompletion.handleMouseEnter(index)"
               />
@@ -1639,6 +1640,10 @@ onUnmounted(() => {
 
 // Exposed methods: let the parent set content and focus
 defineExpose({
+  /** Current text of the input */
+  getContent(): string {
+    return content.value
+  },
   /** Set the input content and sync internal state */
   setContent(text: string) {
     content.value = text || ''
