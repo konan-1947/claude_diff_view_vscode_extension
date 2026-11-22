@@ -1,6 +1,6 @@
 <template>
   <div class="text-block">
-    <div :class="markdownClasses" v-html="renderedMarkdown"></div>
+    <div :class="markdownClasses" v-html="renderedMarkdown" @click="onClick"></div>
   </div>
 </template>
 
@@ -8,8 +8,26 @@
 import { computed } from 'vue';
 import type { TextBlock as TextBlockType } from '../../../models/ContentBlock';
 import type { ToolContext } from '../../../types/tool';
-import { marked } from 'marked';
+import { Marked } from 'marked';
 // import DOMPurify from 'dompurify'; // TODO: enable once installed
+
+// Own instance: the renderer overrides below need this component's CSS, so
+// they must not leak into the other places that use the global `marked`.
+const md = new Marked({
+  gfm: true,
+  breaks: true,
+  renderer: {
+    // A single newline is a line break (breaks: true), which the model uses
+    // between sentences it means as separate lines: a block spacer gives them
+    // a small gap instead of sitting flush like wrapped lines of one sentence.
+    br() {
+      return '<span class="md-br"></span>';
+    },
+  },
+});
+
+const COPY_BUTTON =
+  '<button type="button" class="code-copy" title="Copy"><span class="codicon codicon-copy"></span></button>';
 
 interface Props {
   block: TextBlockType;
@@ -27,18 +45,39 @@ const markdownClasses = computed(() => {
   return classes;
 });
 
-// Configure marked
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-});
-
-// Render Markdown
+// Render Markdown; every code block gets a wrapper holding its copy button
 const renderedMarkdown = computed(() => {
-  const rawHtml = marked.parse(props.block.text) as string;
+  const rawHtml = (md.parse(props.block.text) as string)
+    .replace(/<pre>/g, `<div class="code-block">${COPY_BUTTON}<pre>`)
+    .replace(/<\/pre>/g, '</pre></div>');
   // TODO: sanitize with DOMPurify.sanitize(rawHtml)
   return rawHtml;
 });
+
+// Delegated: the buttons live in v-html, and are rebuilt while text streams
+async function onClick(event: MouseEvent) {
+  const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('.code-copy');
+  // marked keeps the fence's last newline; pasted into a shell it would run the command
+  const text = button?.parentElement?.querySelector('pre')?.textContent?.replace(/\n$/, '');
+  if (!button || text == null) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  const icon = button.querySelector('.codicon');
+  icon?.classList.replace('codicon-copy', 'codicon-check');
+  button.title = 'Copied';
+  setTimeout(() => {
+    icon?.classList.replace('codicon-check', 'codicon-copy');
+    button.title = 'Copy';
+  }, 1200);
+}
 </script>
 
 <style scoped>
@@ -67,7 +106,10 @@ const renderedMarkdown = computed(() => {
   line-height: 22px;
 }
 
-.markdown-content > :deep(* + *) {
+/* Class doubled on purpose: the element rules below (`p`, `ul`, `h1`...)
+   reset margin to 0 with a higher specificity (0,2,1 vs 0,2,0), which used to
+   cancel this spacing for every block except code. */
+.markdown-content.markdown-content > :deep(* + *) {
   margin-top: 16px;
 }
 
@@ -81,11 +123,59 @@ const renderedMarkdown = computed(() => {
   background-color: var(--cs-fg-8);
   border: 1px solid var(--cs-fg-12);
   border-radius: var(--cs-radius-lg);
-  padding: 8px 10px;
+  /* right: room for the copy button, so wrapped text never runs under it */
+  padding: 8px 34px 8px 10px;
   margin: 0;
-  overflow-x: auto;
+  /* wrap long lines (commands, paths) instead of scrolling sideways */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 20px;
+}
+
+.markdown-content :deep(.md-br) {
+  display: block;
+  height: 6px;
+}
+
+.markdown-content :deep(.code-block) {
+  position: relative;
+}
+
+/* Inside a list item or quote the block sits between lines of text, where
+   the top-level 16px spacing does not reach */
+.markdown-content :deep(li .code-block),
+.markdown-content :deep(blockquote .code-block) {
+  margin: 8px 0;
+}
+
+.markdown-content :deep(.code-copy) {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--cs-fg-52);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.markdown-content :deep(.code-block:hover .code-copy),
+.markdown-content :deep(.code-copy:focus-visible) {
+  opacity: 1;
+}
+
+.markdown-content :deep(.code-copy:hover) {
+  background-color: var(--cs-fg-12);
+  color: var(--vscode-foreground);
 }
 
 .markdown-content :deep(pre code) {
