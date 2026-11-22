@@ -135,7 +135,7 @@ export class Message {
           role: raw.message?.role ?? raw.type,
           content: wrappedContent,
         },
-        raw.timestamp || Date.now()
+        toEpochMs(raw.timestamp)
       );
     }
 
@@ -152,6 +152,20 @@ export class Message {
     // stream_event and similar do not create messages
     return null;
   }
+}
+
+/**
+ * Epoch ms from a raw timestamp: a number, an ISO string (the CLI/SDK sends
+ * these), or nothing. Anything unparsable falls back to now, so turn
+ * durations and "ago" labels never become NaN.
+ */
+function toEpochMs(ts: unknown): number {
+  if (typeof ts === 'number' && Number.isFinite(ts)) return ts;
+  if (typeof ts === 'string') {
+    const parsed = Date.parse(ts);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
 }
 
 /**

@@ -535,6 +535,10 @@
   .spinnerRow {
     padding: 0 calc(var(--cs-edge) + var(--cs-row-inset));
   }
+  /* The row already insets it to the text column; drop the spinner's own indent */
+  .spinnerRow :deep(.spinner) {
+    padding-left: 0;
+  }
   .messagesContainer.dimmed {
     filter: blur(1px);
     opacity: 0.5;
@@ -582,20 +586,18 @@
     padding: 0 var(--cs-edge) 10px;
   }
 
-  /* Empty chat: Cursor puts the input at the top of the pane and leaves the rest blank */
-  .main.is-empty > .inputContainer {
-    order: -1;
-    padding-top: 10px;
+  /* Empty chat: the input sits in the middle of the pane */
+  .main.is-empty {
+    justify-content: center;
+  }
+  .main.is-empty > .messagesContainer {
+    display: none;
   }
 
-  /* Pin the bottom dialog area to the bottom */
+  /* Pin the bottom dialog area to the bottom, full pane width */
   .main > :last-child {
     flex-shrink: 0;
-    background-color: var(--vscode-sideBar-background);
-    /* border-top: 1px solid var(--vscode-panel-border); */
-    max-width: 1200px;
     width: 100%;
-    align-self: center;
   }
 
   /* Empty state styles */

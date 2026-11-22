@@ -209,8 +209,8 @@ const emit = defineEmits<Emits>()
 const runtime = inject(RuntimeKey)
 
 // Empty input is three 22px lines tall (Cursor-like), grows up to the max
-const INPUT_MIN_HEIGHT = 66
-const INPUT_MAX_HEIGHT = 240
+const INPUT_MIN_HEIGHT = 110
+const INPUT_MAX_HEIGHT = 360
 
 const content = ref('')
 const isLoading = ref(false)
@@ -773,7 +773,7 @@ defineExpose({
 /* Base input styles - fixed line height for stable caret positioning */
 .aislash-editor-input {
   line-height: 22px;
-  max-height: 240px;
+  max-height: 360px;
   resize: none;
   overflow-y: hidden;
   word-wrap: break-word;
