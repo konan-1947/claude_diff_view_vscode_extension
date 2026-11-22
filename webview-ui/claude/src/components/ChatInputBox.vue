@@ -1665,8 +1665,59 @@ function handleSelectionChange() {
   }
 }
 
+// ---- keep the caret in the chat input ------------------------------------
+// The host only focuses the iframe (tab switch, view focus); without this the
+// user had to click the input again every time they came back to the chat.
+
+/** Focus the input with the caret at the end (a bare focus() on a
+ *  contenteditable puts it at the start) */
+function focusInputAtEnd() {
+  const el = textareaRef.value
+  if (!el || activePanel.value) return
+  el.focus()
+  const sel = window.getSelection()
+  if (!sel || el.contains(sel.anchorNode)) return
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(false)
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+/** A permission / question / plan prompt is waiting: it owns the keyboard */
+function promptOpen() {
+  return !!document.querySelector('[data-permission-panel]')
+}
+
+function onWindowFocus() {
+  // Let the browser restore the previously focused element first
+  setTimeout(() => {
+    const active = document.activeElement
+    if (active && active !== document.body && active !== document.documentElement) return
+    if (promptOpen()) {
+      document.querySelector<HTMLElement>('[data-permission-panel] [tabindex="0"]')?.focus()
+      return
+    }
+    focusInputAtEnd()
+  }, 0)
+}
+
+const INTERACTIVE = 'input, textarea, select, button, a, [contenteditable="true"], [tabindex], [role="button"], [role="option"], [role="dialog"], label, summary'
+
+function onDocumentMouseUp(event: MouseEvent) {
+  if (event.button !== 0 || promptOpen()) return
+  const target = event.target as Element | null
+  if (!target || target.closest(INTERACTIVE)) return
+  // Selecting text in a message must keep the selection
+  const sel = window.getSelection()
+  if (sel && !sel.isCollapsed && sel.toString().length > 0) return
+  focusInputAtEnd()
+}
+
 // Add/remove the selectionchange listener
 onMounted(() => {
+  window.addEventListener('focus', onWindowFocus)
+  document.addEventListener('mouseup', onDocumentMouseUp)
   document.addEventListener('selectionchange', handleSelectionChange)
   textareaRef.value?.addEventListener('focus', refreshHistory)
   void promptHistory.refresh(true)
@@ -1677,6 +1728,8 @@ function refreshHistory() {
 }
 
 onUnmounted(() => {
+  window.removeEventListener('focus', onWindowFocus)
+  document.removeEventListener('mouseup', onDocumentMouseUp)
   document.removeEventListener('selectionchange', handleSelectionChange)
   textareaRef.value?.removeEventListener('focus', refreshHistory)
 })
@@ -1701,7 +1754,7 @@ defineExpose({
   },
   /** Focus the input box */
   focus() {
-    nextTick(() => textareaRef.value?.focus())
+    nextTick(() => focusInputAtEnd())
   }
 })
 

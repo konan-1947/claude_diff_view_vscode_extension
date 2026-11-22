@@ -5,7 +5,7 @@
        picks it with the typed text, ↑/↓ leave it. -->
   <div
     ref="rootRef"
-    :class="['prompt-options', { grid: layout === 'grid' }]"
+    :class="['prompt-options', { inline: layout === 'inline' }]"
     role="listbox"
     tabindex="0"
     @keydown="onKeydown"
@@ -16,7 +16,6 @@
       role="option"
       :aria-selected="i === index"
       :class="['po-row', { active: i === index, checked: option.checked, muted: option.muted }]"
-      :title="layout === 'grid' && !option.input ? [option.label, option.detail].filter(Boolean).join(' - ') : undefined"
       @mouseenter="hover(i)"
       @mousedown="onRowMouseDown($event, option)"
       @click="clickRow(i)"
@@ -74,9 +73,8 @@ interface Props {
   digits?: boolean
   /** Take the keyboard focus when shown (the CLI's dialog replaces the prompt) */
   autofocus?: boolean
-  /** `grid`: options side by side as wrapping cells (←/→ move between them,
-   *  Tab / Shift+Tab emit `side`) instead of one row each */
-  layout?: 'list' | 'grid'
+  /** `inline`: an option's detail sits beside its label, so each option is one line */
+  layout?: 'list' | 'inline'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -171,11 +169,7 @@ function onKeydown(event: KeyboardEvent) {
   if (event.target instanceof HTMLInputElement) return
   const key = event.key
   let handled = true
-  const grid = props.layout === 'grid'
-  if (grid && (key === 'ArrowRight' || key === 'ArrowDown')) move(1)
-  else if (grid && (key === 'ArrowLeft' || key === 'ArrowUp')) move(-1)
-  else if (grid && key === 'Tab') emit('side', event.shiftKey ? -1 : 1)
-  else if (key === 'ArrowDown' || (key === 'Tab' && !event.shiftKey)) move(1)
+  if (key === 'ArrowDown' || (key === 'Tab' && !event.shiftKey)) move(1)
   else if (key === 'ArrowUp') move(-1)
   else if (key === 'ArrowRight') emit('side', 1)
   else if (key === 'ArrowLeft') emit('side', -1)
@@ -200,7 +194,6 @@ function onInputKeydown(event: KeyboardEvent, i: number) {
   else if (key === 'Escape') emit('cancel')
   else if (key === 'ArrowUp') move(-1)
   else if (key === 'ArrowDown') move(1)
-  else if (key === 'Tab' && props.layout === 'grid') emit('side', event.shiftKey ? -1 : 1)
   else handled = false
   if (handled) {
     event.preventDefault()
@@ -309,44 +302,21 @@ defineExpose({ focus, setIndex: (i: number) => (index.value = clampIndex(i)) })
   font: inherit;
 }
 
-/* Grid: wrapping cells, a row stays as short as one option */
-.prompt-options.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 4px;
+/* Inline: label and detail on one line, one row per option */
+.prompt-options.inline .po-row {
+  align-items: baseline;
+  padding: 2px 6px;
 }
 
-.prompt-options.grid .po-row {
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border: 1px solid var(--cs-fg-14);
-  min-width: 0;
+.prompt-options.inline .po-main {
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 8px;
 }
 
-.prompt-options.grid .po-row.active {
-  border-color: var(--vscode-focusBorder);
-}
-
-.prompt-options.grid .po-row.checked {
-  border-color: color-mix(in srgb, var(--vscode-charts-green, var(--cs-fg)) 60%, transparent);
-}
-
-.prompt-options.grid .po-pointer {
-  display: none;
-}
-
-.prompt-options.grid .po-num {
-  width: auto;
-  text-align: left;
-}
-
-.prompt-options.grid .po-label,
-.prompt-options.grid .po-detail {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow-wrap: normal;
+.prompt-options.inline .po-num {
+  line-height: inherit;
 }
 
 .po-input::placeholder {

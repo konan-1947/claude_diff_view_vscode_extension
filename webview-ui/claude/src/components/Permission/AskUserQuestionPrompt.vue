@@ -42,7 +42,7 @@
       <PromptOptions
         :key="step"
         ref="optionsRef"
-        layout="grid"
+        layout="inline"
         :options="questionOptions"
         @pick="onPick"
         @move="focused = $event"
@@ -64,7 +64,7 @@
       </div>
       <PromptOptions
         :key="'review'"
-        layout="grid"
+        layout="inline"
         :options="reviewOptions"
         @pick="onReviewPick"
         @side="moveStep"
@@ -149,8 +149,8 @@ const previewText = computed(() => {
 })
 
 const hint = computed(() => {
-  const keys = ['←/→ to select', current.value?.multiSelect ? 'Enter to toggle' : 'Enter to confirm']
-  if (questions.value.length > 1) keys.push('Tab to switch question')
+  const keys = ['↑/↓ to select', current.value?.multiSelect ? 'Enter to toggle' : 'Enter to confirm']
+  if (questions.value.length > 1) keys.push('←/→ to switch question')
   keys.push('Esc to decline')
   return keys
 })
