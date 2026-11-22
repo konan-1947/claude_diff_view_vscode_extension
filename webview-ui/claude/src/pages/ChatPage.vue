@@ -637,6 +637,35 @@
       !document.querySelector('.command-panel'),
   });
 
+  let forwardingEscape = false;
+  // Esc with a prompt open (question, tool permission, plan) but the focus
+  // outside it (a click on the question text, the chat input): cancel the
+  // prompt as its own Esc would, instead of doing nothing.
+  useKeybinding({
+    keys: 'escape',
+    handler: () => {
+      const list = document.querySelector<HTMLElement>('[data-permission-panel] .prompt-options');
+      if (!list || forwardingEscape) return;
+      list.focus();
+      // The synthetic event passes this keybinding again (capture phase): the flag
+      // keeps it from forwarding twice if the list could not take the focus.
+      forwardingEscape = true;
+      try {
+        list.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      } finally {
+        forwardingEscape = false;
+      }
+    },
+    allowInEditable: true,
+    priority: 60,
+    when: () => {
+      if (!pendingPermission.value || forwardingEscape) return false;
+      if (document.querySelector('.dropdown-popover') || document.querySelector('.command-panel')) return false;
+      const panel = document.querySelector('[data-permission-panel]');
+      return !!panel && !panel.contains(document.activeElement);
+    },
+  });
+
   // The CLI can switch model by itself (`/model <name>` typed in the chat);
   // follow it so the picker shows, and the next launch sends, what is really
   // running. The CLI reports a model ID, so pick the picker entry resolving to
