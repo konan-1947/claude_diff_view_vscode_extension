@@ -130,6 +130,19 @@ import {
     handleOpenClaudeFile,
     handleGetHooks,
     handleExportConversation,
+    handleGetPermissions,
+    handleUpdatePermission,
+    handleResolveDirectory,
+    handleGetPlugins,
+    handlePluginAction,
+    handleGetAvailablePlugins,
+    handleGetMarketplaces,
+    handleMarketplaceAction,
+    handleOpenReleaseNotes,
+    handleGetAuthStatus,
+    handleAuthLogin,
+    handleAuthLoginAction,
+    handleAuthLogout,
 } from './handlers/handlers';
 
 export const IClaudeAgentService = createDecorator<IClaudeAgentService>('claudeAgentService');
@@ -188,8 +201,12 @@ export interface IClaudeAgentService {
         model: string | null,
         permissionMode: string | undefined,
         thinkingLevel: string | null,
-        effortLevel?: string | null
+        effortLevel?: string | null,
+        additionalDirectories?: string[]
     ): Promise<void>;
+
+    /** Reload plugins in every open session (after `/plugin` enabled or disabled one) */
+    reloadPlugins(): Promise<void>;
 
     /**
      * Interrupt a Claude session
@@ -353,7 +370,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                                 // `permissions.defaultMode` and reports it in system/init.
                                 message.permissionMode || undefined,
                                 message.thinkingLevel || null,
-                                message.effortLevel ?? null
+                                message.effortLevel ?? null,
+                                message.additionalDirectories
                             );
                         } catch (error) {
                             this.logService.error(`[ClaudeAgentService] launch_claude failed for ${message.channelId}: ${error}`);
@@ -411,7 +429,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         model: string | null,
         permissionMode: string | undefined,
         thinkingLevel: string | null,
-        effortLevel: string | null = null
+        effortLevel: string | null = null,
+        additionalDirectories: string[] = []
     ): Promise<void> {
         // Save thinkingLevel
         if (thinkingLevel) {
@@ -432,6 +451,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
         this.logService.info(`  Permission: ${permissionMode ?? 'CLI default'}`);
         this.logService.info(`  Thinking Level: ${this.thinkingLevel}`);
         this.logService.info(`  Effort: ${effort ?? 'model default'}`);
+        this.logService.info(`  Additional directories: ${additionalDirectories.length ? additionalDirectories.join(', ') : 'none'}`);
         this.logService.info('');
 
         // Check whether it already exists
@@ -486,7 +506,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         statusCode: error.statusCode,
                         errorType: error.type,
                     });
-                }
+                },
+                additionalDirectories
             );
             this.logService.info('  ✓ spawnClaude() done, Query object created');
 
@@ -627,7 +648,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
         permissionMode: string | undefined,
         thinking: ThinkingConfig | undefined,
         effort: EffortLevel | undefined,
-        onStderrError?: SdkQueryParams['onStderrError']
+        onStderrError?: SdkQueryParams['onStderrError'],
+        additionalDirectories?: string[]
     ): Promise<Query> {
         return this.sdkService.query({
             inputStream,
@@ -638,7 +660,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
             permissionMode,
             thinking,
             effort,
-            onStderrError
+            onStderrError,
+            additionalDirectories
         });
     }
 
@@ -767,6 +790,45 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "export_conversation":
                 return handleExportConversation(request, this.handlerContext);
+
+            case "get_permissions":
+                return handleGetPermissions(request, this.handlerContext);
+
+            case "update_permission":
+                return handleUpdatePermission(request, this.handlerContext);
+
+            case "resolve_directory":
+                return handleResolveDirectory(request, this.handlerContext);
+
+            case "get_plugins":
+                return handleGetPlugins(request, this.handlerContext);
+
+            case "plugin_action":
+                return handlePluginAction(request, this.handlerContext);
+
+            case "get_available_plugins":
+                return handleGetAvailablePlugins(request, this.handlerContext);
+
+            case "get_marketplaces":
+                return handleGetMarketplaces(request, this.handlerContext);
+
+            case "marketplace_action":
+                return handleMarketplaceAction(request, this.handlerContext);
+
+            case "open_release_notes":
+                return handleOpenReleaseNotes(request, this.handlerContext);
+
+            case "get_auth_status":
+                return handleGetAuthStatus(request, this.handlerContext);
+
+            case "auth_login":
+                return handleAuthLogin(request, this.handlerContext);
+
+            case "auth_login_action":
+                return handleAuthLoginAction(request, this.handlerContext);
+
+            case "auth_logout":
+                return handleAuthLogout(request, this.handlerContext);
 
             case "get_config_options":
                 return this.getConfigOptions(channelId);
@@ -1301,6 +1363,16 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 memoryFiles: memoryFiles(cwd).filter((f) => f.exists)
             }
         };
+    }
+
+    async reloadPlugins(): Promise<void> {
+        await Promise.all(Array.from(this.channels.entries()).map(async ([channelId, channel]) => {
+            try {
+                await channel.query.reloadPlugins();
+            } catch (error) {
+                this.logService.warn(`[reloadPlugins] ${channelId}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }));
     }
 
     /** Output styles for the `/output-style` picker (`initializationResult()`). */

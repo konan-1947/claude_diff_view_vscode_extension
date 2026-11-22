@@ -20,6 +20,12 @@ export const UI_SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: 'status', description: 'Show version, model, account, MCP servers and settings files' },
   { name: 'export', description: 'Export the conversation to a markdown file or the clipboard' },
   { name: 'hooks', description: 'Show the hooks in your settings files' },
+  { name: 'permissions', description: 'Manage allow, ask and deny tool permission rules' },
+  { name: 'add-dir', description: 'Add a new working directory' },
+  { name: 'plugin', description: 'Enable or disable installed plugins' },
+  { name: 'release-notes', description: 'View release notes' },
+  { name: 'login', description: 'Sign in with your Anthropic account' },
+  { name: 'logout', description: 'Sign out from your Anthropic account' },
 ]
 
 const UI_COMMAND_PREFIX = 'ui-command-'

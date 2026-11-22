@@ -100,6 +100,28 @@
       @close="closePanel"
     />
     <HelpPanel v-else-if="activePanel === 'help'" @pick="pickFromHelp" @close="closePanel" />
+    <PermissionsPanel
+      v-else-if="activePanel === 'permissions'"
+      @add-directory="() => void startAddDirectory('')"
+      @close="closePanel"
+    />
+    <ListPanel
+      v-else-if="activePanel === 'add-dir'"
+      title="Add directory"
+      :subtitle="addDirPath"
+      :items="ADD_DIR_ITEMS"
+      note="Claude can then read and edit files in this directory. The conversation restarts in place to pick it up."
+      @select="(choice) => void confirmAddDirectory(choice)"
+      @close="closePanel"
+    />
+    <PluginPanel v-else-if="activePanel === 'plugin'" @close="closePanel" />
+    <AuthPanel
+      v-else-if="activePanel === 'login' || activePanel === 'logout'"
+      :key="activePanel"
+      :mode="activePanel"
+      @switch-mode="(mode) => (activePanel = mode)"
+      @close="closePanel"
+    />
 
     <!-- Attachment list (if any) -->
     <div v-if="attachments && attachments.length > 0" v-show="!activePanel" class="attachments-list">
@@ -259,6 +281,9 @@ import ConfigPanel from './CommandPanel/ConfigPanel.vue'
 import AutoModeSetupPanel from './CommandPanel/AutoModeSetupPanel.vue'
 import StatusPanel from './CommandPanel/StatusPanel.vue'
 import HelpPanel from './CommandPanel/HelpPanel.vue'
+import PermissionsPanel from './CommandPanel/PermissionsPanel.vue'
+import PluginPanel from './CommandPanel/PluginPanel.vue'
+import AuthPanel from './CommandPanel/AuthPanel.vue'
 import type { ClaudeFileKind } from '@shared/messages'
 import { transcriptToMarkdown, exportFileName } from '../utils/exportTranscript'
 import type { AttachmentItem } from '../types/attachment'
@@ -364,6 +389,11 @@ type PanelName =
   | 'export'
   | 'hooks'
   | 'help'
+  | 'permissions'
+  | 'add-dir'
+  | 'plugin'
+  | 'login'
+  | 'logout'
 
 const PANEL_COMMANDS: Record<string, PanelName> = {
   '/output-style': 'output-style',
@@ -386,6 +416,18 @@ const UI_PANEL_COMMANDS: Record<string, PanelName> = {
   '/export': 'export',
   '/hooks': 'hooks',
   '/help': 'help',
+  '/permissions': 'permissions',
+  '/allowed-tools': 'permissions',
+  '/add-dir': 'add-dir',
+  '/plugin': 'plugin',
+  '/plugins': 'plugin',
+  '/login': 'login',
+  '/logout': 'logout',
+}
+
+// UI commands that do their job at once, without a panel
+const UI_ACTION_COMMANDS: Record<string, () => void> = {
+  '/release-notes': () => void openReleaseNotes(),
 }
 
 /** Argument typed after a UI command (`/resume <name>`, `/export <file>`) */
@@ -393,11 +435,22 @@ const panelArg = ref('')
 
 function openUiPanel(command: string): boolean {
   const match = /^(\/\S+)(?:\s+([\s\S]*))?$/.exec(command.trim())
-  const panel = match ? UI_PANEL_COMMANDS[match[1].toLowerCase()] : undefined
+  const name = match?.[1].toLowerCase() ?? ''
+  const action = UI_ACTION_COMMANDS[name]
+  if (action) {
+    clearInput()
+    action()
+    return true
+  }
+  const panel = UI_PANEL_COMMANDS[name]
   if (!panel) return false
   const arg = (match?.[2] ?? '').trim()
   clearInput()
   panelArg.value = arg
+  if (panel === 'add-dir') {
+    void startAddDirectory(arg)
+    return true
+  }
   if (panel === 'resume' && arg && resumeByArg(arg)) return true
   if (panel === 'export' && arg) {
     void exportConversation('file', arg)
@@ -662,6 +715,89 @@ async function exportConversation(target: 'file' | 'clipboard', fileName?: strin
   } catch (error) {
     notify(`Export failed: ${error instanceof Error ? error.message : String(error)}`, 'error')
   }
+}
+
+// `/add-dir [path]`: resolve the folder (no path: a folder picker), then ask
+// whether it is for this session only or saved for the project, like the CLI
+const addDirPath = ref('')
+const ADD_DIR_ITEMS: ListPanelItem[] = [
+  { value: 'session', label: 'Yes, for this session' },
+  { value: 'remember', label: 'Yes, and remember this directory', detail: 'saved in .claude/settings.local.json' },
+  { value: 'no', label: 'No' },
+]
+
+function normalizeForCompare(p: string): string {
+  const unified = p.replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[a-z]:\//i.test(unified) ? unified.toLowerCase() : unified
+}
+
+function isInside(child: string, parent: string): boolean {
+  const c = normalizeForCompare(child)
+  const p = normalizeForCompare(parent)
+  return c === p || c.startsWith(`${p}/`)
+}
+
+async function startAddDirectory(arg: string) {
+  activePanel.value = null
+  const session = runtime?.sessionStore.activeSession()
+  const conn = await connection()
+  if (!session || !conn) return
+  const result = await conn.resolveDirectory(arg || undefined)
+  if (result.cancelled) {
+    closePanel()
+    return
+  }
+  if (result.error || !result.path) {
+    notify(result.error ?? 'Not a directory', 'error')
+    closePanel()
+    return
+  }
+  const dir = result.path
+  const cwd = session.cwd()
+  const { entries } = await conn.getPermissions()
+  const known = [
+    ...session.additionalDirectories(),
+    ...entries.filter((e) => e.list === 'additionalDirectories').map((e) => e.value),
+  ]
+  const covering = [cwd, ...known].find((p) => p && isInside(dir, p))
+  if (covering) {
+    notify(`${dir} is already accessible within ${covering}`, 'warning')
+    closePanel()
+    return
+  }
+  addDirPath.value = dir
+  activePanel.value = 'add-dir'
+}
+
+async function confirmAddDirectory(choice: string) {
+  const dir = addDirPath.value
+  const session = runtime?.sessionStore.activeSession()
+  if (choice === 'no' || !dir || !session) return
+  if (session.busy()) {
+    notify('Wait for the current turn to finish, then add the directory again', 'warning')
+    return
+  }
+  try {
+    if (choice === 'remember') {
+      const error = await (await connection())?.updatePermission('additionalDirectories', 'add', dir, 'local-settings')
+      if (error) {
+        notify(error, 'error')
+        return
+      }
+      await session.relaunch()
+      notify(`Added ${dir}, saved in the local settings`)
+    } else {
+      await session.addDirectoryForSession(dir)
+      notify(`Added ${dir} for this session`)
+    }
+  } catch (error) {
+    notify(error instanceof Error ? error.message : String(error), 'error')
+  }
+}
+
+async function openReleaseNotes() {
+  const error = await (await connection())?.openReleaseNotes()
+  if (error) notify(error, 'error')
 }
 
 // `/help` → a command: open its panel, or put it in the input to add arguments

@@ -107,7 +107,8 @@ cho CLI (và đồng bộ trạng thái như mục 1).
 
 Các panel đều nằm trong `components/CommandPanel/` và dùng khung `CommandPanel.vue`:
 `ListPanel.vue` (chọn 1 mục: ↑/↓, j/k, số 1–9, Enter), `TextPanel.vue` (ô nhập một dòng),
-`McpPanel.vue`, `AutoModeSetupPanel.vue`, `StatusPanel.vue`, `HelpPanel.vue`. Bảng lệnh →
+`McpPanel.vue`, `AutoModeSetupPanel.vue`, `StatusPanel.vue`, `HelpPanel.vue`,
+`PermissionsPanel.vue`, `PluginPanel.vue`, `AuthPanel.vue`. Bảng lệnh →
 panel là `PANEL_COMMANDS` (chỉ khi gõ trơn) và `UI_PANEL_COMMANDS` (lệnh mục 3, luôn do UI
 xử lý kể cả khi có tham số) trong `ChatInputBox.vue`.
 
@@ -120,8 +121,13 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
       trước, gõ để lọc, Enter chuyển sang hội thoại đó; nút "All chats" mở trang lịch sử.
       `/resume <id hoặc tên>` chuyển thẳng nếu đúng một hội thoại khớp, không thì mở panel
       đã lọc sẵn theo chữ đó.
-- [ ] `/permissions` → màn hình allow/deny rules (đọc/ghi `settings.json` của project
-      và user).
+- [~] `/permissions` (alias `/allowed-tools`) → `PermissionsPanel` (đã làm, chờ test tay):
+      tab Allow / Ask / Deny / Workspace như CLI (←/→); rules của settings user / project /
+      local kèm nguồn, ưu tiên cao nhất trước. `A` thêm rule (Tab chọn file đích, mặc định
+      local), `D` hai lần để xoá, Enter mở file chứa rule. Tab Workspace: thư mục làm việc,
+      thư mục `/add-dir` của session và `permissions.additionalDirectories`; `A` ở đây chạy
+      luồng `/add-dir`. Ghi file qua `updatePermissionList` (`claudeFiles.ts`, giữ các key
+      khác). Cần test: CLI có nhận rule mới ngay mà không cần mở lại session không.
 - [~] `/help` → `HelpPanel` (đã làm, chờ test tay): phím tắt của UI + mọi lệnh `/` (lệnh
       do UI xử lý có nhãn "UI"), gõ để lọc; Enter mở panel của lệnh hoặc điền lệnh vào ô
       nhập để gõ tiếp tham số.
@@ -133,21 +139,53 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
       `accountInfo()`, MCP từ `mcpServerStatus()`, kèm plugin, các file settings và
       CLAUDE.md. Trước lượt đầu tiên CLI chưa gửi `system/init` nên version / model hiện
       "shown after the first message".
-- [ ] `/add-dir` → chọn thư mục (VS Code folder picker) → `additionalDirectories` của SDK.
+- [~] `/add-dir [path]` (đã làm, chờ test tay): không có path → folder picker; path tương
+      đối tính từ workspace, `~` được mở rộng. Thư mục đã nằm trong một thư mục làm việc thì
+      báo như CLI. Hỏi "Yes, for this session" (`Session.additionalDirectories`, gửi theo
+      `launch_claude` → option `additionalDirectories` của SDK) hoặc "Yes, and remember this
+      directory" (ghi `permissions.additionalDirectories` vào `.claude/settings.local.json`).
+      SDK không thêm được thư mục vào query đang chạy (`register_repo_root` chỉ nhận thư mục
+      con), nên cả hai cách đều đóng query và mở lại với resume (`Session.relaunch()`); bị từ
+      chối khi đang chạy một lượt. Thư mục "this session" mất khi webview dựng lại.
 - [~] `/hooks` → `ListPanel` chỉ đọc (đã làm, chờ test tay): hooks trong settings user /
       project / local (`claudeFiles.ts`), event + matcher + lệnh + nguồn; Enter mở file
       settings chứa hook đó. File JSON hỏng thì báo dưới danh sách. Hook do plugin hay
       managed settings khai báo chưa hiện.
-- [ ] `/plugin` → tối thiểu: liệt kê plugin; cài/gỡ có thể để sau.
-- [ ] `/release-notes` → mở changelog.
+- [~] `/plugin` (alias `/plugins`) → `PluginPanel`, 3 tab (←/→). Phía host các lệnh
+      `claude plugin …` đã chạy thử thật trên một `CLAUDE_CONFIG_DIR` tạm; giao diện còn
+      chờ test tay.
+      - **Installed:** `claude plugin list --json`; Enter / `E` → `enable|disable <id> --scope`,
+        `D` hai lần → `uninstall`.
+      - **Discover:** `claude plugin list --json --available` (~4100 plugin từ
+        `anthropic-plugin-directory` có sẵn và các marketplace đã thêm; host giữ cache), gõ để
+        lọc, sắp theo `installCount`, vẽ tối đa 100 dòng, hiện mô tả của dòng đang chọn.
+        Enter → chọn scope (user / project / local) → `install <id> --scope <s> --json`. Plugin
+        cài bằng một lệnh do marketplace khai báo: CLI trả `shownCommand` (`command`,
+        `sha256`, `archiveUrl`) → panel hiện lệnh, người dùng duyệt thì chạy lại với
+        `--accept-command <sha256>` (không bao giờ dùng `-y`). Chưa làm: `--config` cho
+        plugin có userConfig (dùng `claude plugin configure` trong terminal).
+      - **Marketplaces:** `marketplace list --json` (thư mục có sẵn không nằm trong danh
+        sách), `A` thêm (owner/repo, URL, đường dẫn), `U` cập nhật, `D` hai lần để xoá.
+      - Mọi thay đổi xong đều `reloadPlugins()` trên các channel đang mở.
+      - Lưu ý: CLI **không kiểm tra id** khi `enable` (id không tồn tại vẫn được ghi vào
+        `enabledPlugins`), nên panel chỉ thao tác trên id lấy từ danh sách.
+- [x] `/release-notes` → mở `CLAUDE_CONFIG_DIR/cache/changelog.md` (CLI tự lưu) bằng
+      markdown preview; không có file thì mở CHANGELOG trên GitHub.
 - [~] `/export` → `ListPanel` "Save to file" / "Copy to clipboard" (đã làm, chờ test tay):
       transcript markdown dựng ở webview (`utils/exportTranscript.ts`: text, thinking gập
       lại, tool call một dòng + kết quả cắt 12 dòng), host ghi qua save dialog hoặc
       `vscode.env.clipboard`. `/export <tên file>` mở thẳng save dialog với tên đó.
-- [ ] `/login`, `/logout` → hướng dẫn chạy trong terminal (chưa thử qua SDK).
-- [~] Tự đưa các lệnh trên vào danh sách gợi ý `/` (đánh dấu là lệnh do UI xử lý): đã làm
-      cho các lệnh đã có panel (`UI_SLASH_COMMANDS` trong `slashCommandProvider.ts`, icon
-      khác lệnh của CLI); thêm vào đó khi làm các lệnh còn lại.
+- [~] `/login`, `/logout` → `AuthPanel` (đã làm, chờ test tay; chưa đăng nhập thật lần nào):
+      trạng thái từ `claude auth status --json`. Login: chọn Claude subscription / Console /
+      SSO (SSO hỏi email) → host chạy `claude auth login --claudeai|--console|--sso` trong
+      node-pty (`LoginProcess`, `claudeCli.ts`). CLI tự mở trình duyệt, in URL ("If the browser
+      didn't open, visit: …", hyperlink OSC 8) rồi chờ ở `Paste code here if prompted >`:
+      panel hiện link (mở bằng `openExternal`, dùng được qua Remote) và ô dán code (ghi vào
+      stdin của PTY). Xong thì `closeAllChannelsWithCredentialChange()`: các tab mở lại query
+      ở tin nhắn sau. Logout: xác nhận → `claude auth logout`. Panel `persistent` (không đóng
+      khi mất focus lúc đang chờ trình duyệt); đóng panel giữa chừng thì kill tiến trình login.
+- [x] Tự đưa các lệnh trên vào danh sách gợi ý `/` (đánh dấu là lệnh do UI xử lý):
+      `UI_SLASH_COMMANDS` trong `slashCommandProvider.ts`, icon khác lệnh của CLI.
 - [x] `/cost` chạy được (cùng output với `/usage`).
 - Bỏ qua (không có ý nghĩa trong UI): `/theme`, `/vim`, `/statusline`, `/terminal-setup`.
 

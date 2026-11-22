@@ -28,7 +28,7 @@
       </div>
     </div>
 
-    <div class="cp-body">
+    <div :class="['cp-body', { top }]">
       <slot />
     </div>
 
@@ -57,9 +57,22 @@ interface Props {
   actions?: CommandPanelAction[]
   /** Muted key help under the content, one entry per key: ["←/→ to adjust", "Esc to cancel"] */
   hint?: string[]
+  /**
+   * Stay open when the focus leaves (only Esc or a close action dismiss it):
+   * for a panel that waits on something outside, like the browser of `/login`.
+   */
+  persistent?: boolean
+  /** Content starts at the top instead of being centered (tabbed panels: the tab row must not move) */
+  top?: boolean
 }
 
-withDefaults(defineProps<Props>(), { subtitle: '', actions: () => [], hint: () => [] })
+const props = withDefaults(defineProps<Props>(), {
+  subtitle: '',
+  actions: () => [],
+  hint: () => [],
+  persistent: false,
+  top: false,
+})
 
 const emit = defineEmits<{
   (e: 'cancel'): void
@@ -81,6 +94,7 @@ function onKeydown(event: KeyboardEvent) {
 
 // Clicking elsewhere (the input, the transcript) dismisses it, like a menu
 function onFocusOut(event: FocusEvent) {
+  if (props.persistent) return
   const next = event.relatedTarget as Node | null
   if (!next || !rootRef.value?.contains(next)) {
     emit('cancel')
@@ -168,6 +182,10 @@ defineExpose({ focus: () => rootRef.value?.focus() })
   flex-direction: column;
   justify-content: center;
   padding: 6px 2px;
+}
+
+.cp-body.top {
+  justify-content: flex-start;
 }
 
 /* Bottom row, where the input's button row sits */

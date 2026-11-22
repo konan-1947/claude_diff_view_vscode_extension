@@ -86,6 +86,8 @@ export class Session {
   readonly messages = signal<Message[]>([]);
   readonly messageCount = signal<number>(0);
   readonly cwd = signal<string | undefined>(undefined);
+  /** `/add-dir` for this session only: passed to every launch of its query */
+  readonly additionalDirectories = signal<string[]>([]);
   readonly permissionMode = signal<PermissionMode>('default');
   readonly summary = signal<string | undefined>(undefined);
   readonly modelSelection = signal<string | undefined>(undefined);
@@ -302,10 +304,11 @@ export class Session {
       // the mode it settles on comes back in system/init (processIncomingMessage).
       this.permissionModeExplicit ? this.permissionMode() : undefined,
       this.thinkingLevel(),
-      this.effortLevel()
+      this.effortLevel(),
+      this.additionalDirectories()
     );
 
-    void this.readMessages(stream);
+    void this.readMessages(stream, channelId);
     return channelId;
   }
 
@@ -322,6 +325,33 @@ export class Session {
     await this.interrupt();
     this.claudeChannelId(undefined);
     this.busy(false);
+    await this.launchClaude();
+  }
+
+  /**
+   * `/add-dir` for this session only. The SDK takes extra directories only at
+   * launch, so a running query is closed and relaunched on the same
+   * conversation (resume). Refused while a turn runs.
+   */
+  async addDirectoryForSession(directory: string): Promise<void> {
+    if (this.busy()) {
+      throw new Error('Wait for the current turn to finish');
+    }
+    if (!this.additionalDirectories().includes(directory)) {
+      this.additionalDirectories([...this.additionalDirectories(), directory]);
+    }
+    await this.relaunch();
+  }
+
+  /** Close the running query (if any) and start it again, resuming the conversation */
+  async relaunch(): Promise<void> {
+    const old = this.claudeChannelId();
+    if (!old) {
+      return;
+    }
+    const connection = await this.getConnection();
+    this.claudeChannelId(undefined);
+    connection.closeChannel(old);
     await this.launchClaude();
   }
 
@@ -480,7 +510,7 @@ export class Session {
     }
   }
 
-  private async readMessages(stream: AsyncIterable<any>): Promise<void> {
+  private async readMessages(stream: AsyncIterable<any>, channelId: string): Promise<void> {
     try {
       for await (const event of stream) {
         this.processIncomingMessage(event);
@@ -489,7 +519,10 @@ export class Session {
       this.error(error instanceof Error ? error.message : String(error));
       this.busy(false);
     } finally {
-      this.claudeChannelId(undefined);
+      // A channel replaced by a relaunch (`/add-dir`) ends after the new one started
+      if (this.claudeChannelId() === channelId) {
+        this.claudeChannelId(undefined);
+      }
     }
   }
 

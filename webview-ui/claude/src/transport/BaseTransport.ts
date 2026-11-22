@@ -21,6 +21,18 @@ import type {
   ClaudeFileKind,
   GetHooksResponse,
   StatusInfo,
+  AuthLoginActionRequest,
+  AuthLoginMethod,
+  AuthLoginResponse,
+  AuthStatusInfo,
+  GetPermissionsResponse,
+  PermissionListName,
+  PluginEntry,
+  SettingsFileKind,
+  AvailablePluginEntry,
+  MarketplaceEntry,
+  PluginActionRequest,
+  PluginActionResponse,
 } from "@shared/messages";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -112,7 +124,8 @@ export abstract class BaseTransport {
     model?: string,
     permissionMode?: PermissionMode,
     thinkingLevel?: string,
-    effortLevel?: string
+    effortLevel?: string,
+    additionalDirectories?: string[]
   ): AsyncQueue<any> {
     const queue = new AsyncQueue<any>();
     this.streams.set(channelId, queue);
@@ -125,8 +138,17 @@ export abstract class BaseTransport {
       permissionMode,
       thinkingLevel,
       effortLevel,
+      additionalDirectories: additionalDirectories?.length ? additionalDirectories : undefined,
     });
     return queue;
+  }
+
+  /** Close a channel from this side: the host drops its query, the local stream ends */
+  closeChannel(channelId: string): void {
+    this.send({ type: "close_channel", channelId });
+    const stream = this.streams.get(channelId);
+    this.streams.delete(channelId);
+    stream?.done();
   }
 
   sendInput(channelId: string, message: any, done: boolean): void {
@@ -176,6 +198,77 @@ export abstract class BaseTransport {
   async getHooks(): Promise<Omit<GetHooksResponse, "type">> {
     const response = (await this.sendRequest({ type: "get_hooks" })) as GetHooksResponse;
     return { hooks: response?.hooks ?? [], errors: response?.errors ?? [] };
+  }
+  async getPermissions(): Promise<Omit<GetPermissionsResponse, "type">> {
+    const response = (await this.sendRequest({ type: "get_permissions" })) as GetPermissionsResponse;
+    return { entries: response?.entries ?? [], cwd: response?.cwd ?? "", errors: response?.errors ?? [] };
+  }
+  /** Resolves to the error text, or undefined when the settings file was written */
+  async updatePermission(
+    list: PermissionListName,
+    action: "add" | "remove",
+    value: string,
+    source: SettingsFileKind
+  ): Promise<string | undefined> {
+    const response = await this.sendRequest({ type: "update_permission", list, action, value, source });
+    return (response as any)?.error;
+  }
+  /** `/add-dir`: absolute folder for a typed path; no path opens a folder picker */
+  async resolveDirectory(path?: string): Promise<{ path?: string; error?: string; cancelled?: boolean }> {
+    const response = await this.sendRequest({ type: "resolve_directory", path });
+    return { path: (response as any)?.path, error: (response as any)?.error, cancelled: (response as any)?.cancelled };
+  }
+  async getPlugins(): Promise<{ plugins: PluginEntry[]; error?: string }> {
+    const response = await this.sendRequest({ type: "get_plugins" });
+    return { plugins: (response as any)?.plugins ?? [], error: (response as any)?.error };
+  }
+  async pluginAction(
+    action: PluginActionRequest["action"],
+    pluginId: string,
+    scope?: string,
+    acceptCommand?: string
+  ): Promise<Omit<PluginActionResponse, "type">> {
+    const response = (await this.sendRequest({ type: "plugin_action", action, pluginId, scope, acceptCommand })) as PluginActionResponse;
+    return { error: response?.error, message: response?.message, confirm: response?.confirm };
+  }
+  async getAvailablePlugins(refresh = false): Promise<{ plugins: AvailablePluginEntry[]; error?: string }> {
+    const response = await this.sendRequest({ type: "get_available_plugins", refresh });
+    return { plugins: (response as any)?.plugins ?? [], error: (response as any)?.error };
+  }
+  async getMarketplaces(): Promise<{ marketplaces: MarketplaceEntry[]; error?: string }> {
+    const response = await this.sendRequest({ type: "get_marketplaces" });
+    return { marketplaces: (response as any)?.marketplaces ?? [], error: (response as any)?.error };
+  }
+  async marketplaceAction(
+    action: "add" | "remove" | "update",
+    target: string
+  ): Promise<{ error?: string; message?: string }> {
+    const response = await this.sendRequest({ type: "marketplace_action", action, target });
+    return { error: (response as any)?.error, message: (response as any)?.message };
+  }
+  async openReleaseNotes(): Promise<string | undefined> {
+    const response = await this.sendRequest({ type: "open_release_notes" });
+    return (response as any)?.error;
+  }
+  async getAuthStatus(): Promise<{ status?: AuthStatusInfo; error?: string }> {
+    const response = await this.sendRequest({ type: "get_auth_status" });
+    return { status: (response as any)?.status, error: (response as any)?.error };
+  }
+  async authLogin(method: AuthLoginMethod, email?: string): Promise<Omit<AuthLoginResponse, "type">> {
+    const response = (await this.sendRequest({ type: "auth_login", method, email })) as AuthLoginResponse;
+    return { loginId: response?.loginId, url: response?.url, result: response?.result, error: response?.error };
+  }
+  async authLoginAction(
+    loginId: string,
+    action: AuthLoginActionRequest["action"],
+    code?: string
+  ): Promise<{ result?: { ok: boolean; error?: string }; error?: string }> {
+    const response = await this.sendRequest({ type: "auth_login_action", loginId, action, code });
+    return { result: (response as any)?.result, error: (response as any)?.error };
+  }
+  async authLogout(): Promise<string | undefined> {
+    const response = await this.sendRequest({ type: "auth_logout" });
+    return (response as any)?.error;
   }
   /** Resolves to the written path (file), undefined for the clipboard or a cancelled dialog */
   async exportConversation(

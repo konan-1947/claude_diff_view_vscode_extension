@@ -42,14 +42,35 @@ import type {
     OpenContentResponse,
     OpenURLRequest,
     OpenURLResponse,
-    // GetAuthStatusRequest,
-    // GetAuthStatusResponse,
-    // LoginRequest,
-    // LoginResponse,
-    // SubmitOAuthCodeRequest,
-    // SubmitOAuthCodeResponse,
     OpenConfigFileRequest,
     OpenConfigFileResponse,
+    GetPermissionsRequest,
+    GetPermissionsResponse,
+    UpdatePermissionRequest,
+    UpdatePermissionResponse,
+    ResolveDirectoryRequest,
+    ResolveDirectoryResponse,
+    GetPluginsRequest,
+    GetPluginsResponse,
+    PluginActionRequest,
+    PluginActionResponse,
+    AvailablePluginEntry,
+    GetAvailablePluginsRequest,
+    GetAvailablePluginsResponse,
+    GetMarketplacesRequest,
+    GetMarketplacesResponse,
+    MarketplaceActionRequest,
+    MarketplaceActionResponse,
+    OpenReleaseNotesRequest,
+    OpenReleaseNotesResponse,
+    GetAuthStatusRequest,
+    GetAuthStatusResponse,
+    AuthLoginRequest,
+    AuthLoginResponse,
+    AuthLoginActionRequest,
+    AuthLoginActionResponse,
+    AuthLogoutRequest,
+    AuthLogoutResponse,
     OpenClaudeInTerminalRequest,
     OpenClaudeInTerminalResponse,
     GetSettingsRequest,
@@ -79,7 +100,25 @@ import type {
     ExportConversationRequest,
     ExportConversationResponse
 } from '../../../shared/messages';
-import { ensureClaudeFile, memoryFiles, readHooks, resolveClaudeFile } from '../claudeFiles';
+import {
+    changelogFile,
+    ensureClaudeFile,
+    memoryFiles,
+    readHooks,
+    readPermissions,
+    resolveClaudeFile,
+    updatePermissionList
+} from '../claudeFiles';
+import {
+    cliError,
+    listAvailablePlugins,
+    listMarketplaces,
+    listPlugins,
+    LoginProcess,
+    readAuthStatus,
+    runClaudeCli,
+    runPluginCommand
+} from '../claudeCli';
 import type { HandlerContext } from './types';
 import type { PermissionMode, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AsyncStream } from '../transport/AsyncStream';
@@ -745,63 +784,296 @@ export async function handleOpenURL(
     }
 }
 
+// ============================================================================
+// `/permissions`, `/add-dir`, `/plugin`, `/release-notes`, `/login`, `/logout`
+// ============================================================================
+
+function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+/** `/permissions`: allow / ask / deny rules and extra directories of every settings file */
+export async function handleGetPermissions(
+    _request: GetPermissionsRequest,
+    context: HandlerContext
+): Promise<GetPermissionsResponse> {
+    const cwd = workspaceCwd(context);
+    const { entries, errors } = readPermissions(cwd);
+    return { type: "get_permissions_response", entries, cwd, errors };
+}
+
+/** Add or remove one rule / directory; the CLI picks the settings change up itself */
+export async function handleUpdatePermission(
+    request: UpdatePermissionRequest,
+    context: HandlerContext
+): Promise<UpdatePermissionResponse> {
+    const value = request.value.trim();
+    if (!value) {
+        return { type: "update_permission_response", error: 'Empty value' };
+    }
+    try {
+        updatePermissionList(workspaceCwd(context), request.source, request.list, request.action, value);
+        return { type: "update_permission_response" };
+    } catch (error) {
+        context.logService.warn(`[updatePermission] ${request.action} ${request.list} ${value}: ${errorText(error)}`);
+        return { type: "update_permission_response", error: errorText(error) };
+    }
+}
+
+/** `/add-dir [path]`: absolute folder for a typed path, or one picked in a dialog */
+export async function handleResolveDirectory(
+    request: ResolveDirectoryRequest,
+    context: HandlerContext
+): Promise<ResolveDirectoryResponse> {
+    const cwd = workspaceCwd(context);
+    let target = request.path?.trim();
+    if (!target) {
+        const picked = await vscode.window.showOpenDialog({
+            canSelectFiles: false,
+            canSelectFolders: true,
+            canSelectMany: false,
+            defaultUri: vscode.Uri.file(path.dirname(cwd)),
+            openLabel: 'Add directory'
+        });
+        if (!picked?.length) {
+            return { type: "resolve_directory_response", cancelled: true };
+        }
+        target = picked[0].fsPath;
+    }
+    if (target === '~' || target.startsWith('~/') || target.startsWith('~\\')) {
+        target = path.join(os.homedir(), target.slice(1));
+    }
+    // The CLI wants normalized absolute paths without a trailing separator
+    const resolved = path.resolve(cwd, target);
+    try {
+        if (!fs.statSync(resolved).isDirectory()) {
+            return { type: "resolve_directory_response", error: `${resolved} is not a directory` };
+        }
+    } catch {
+        return { type: "resolve_directory_response", error: `${resolved} does not exist` };
+    }
+    return { type: "resolve_directory_response", path: resolved };
+}
+
+/** `/plugin`: installed plugins (`claude plugin list --json`) */
+export async function handleGetPlugins(
+    _request: GetPluginsRequest,
+    context: HandlerContext
+): Promise<GetPluginsResponse> {
+    try {
+        const cli = await context.sdkService.getCliInvocation();
+        return { type: "get_plugins_response", plugins: await listPlugins(cli, workspaceCwd(context)) };
+    } catch (error) {
+        context.logService.warn(`[getPlugins] ${errorText(error)}`);
+        return { type: "get_plugins_response", plugins: [], error: errorText(error) };
+    }
+}
+
 /**
- * Get the auth status
+ * `claude plugin enable|disable|install|uninstall`, then every open session
+ * reloads its plugins. An install that would run a command of the marketplace
+ * comes back with `confirm`; it is run again with `--accept-command <sha256>`
+ * only once the user approved that exact command (never `-y`).
  */
-// export async function handleGetAuthStatus(
-//     _request: GetAuthStatusRequest,
-//     context: HandlerContext
-// ): Promise<GetAuthStatusResponse> {
-//     // TODO: implement auth status retrieval
-//     // const status = authManager?.getAuthStatus();
+export async function handlePluginAction(
+    request: PluginActionRequest,
+    context: HandlerContext
+): Promise<PluginActionResponse> {
+    try {
+        const cli = await context.sdkService.getCliInvocation();
+        const args = ['plugin', request.action, request.pluginId];
+        if (request.scope) {
+            args.push('--scope', request.scope);
+        }
+        if (request.action === 'install' && request.acceptCommand) {
+            args.push('--accept-command', request.acceptCommand);
+        }
+        // Installing clones or downloads the plugin
+        const timeout = request.action === 'install' ? 5 * 60_000 : 60_000;
+        const result = await runPluginCommand(cli, args, workspaceCwd(context), timeout);
+        if (!result.ok) {
+            return { type: "plugin_action_response", error: result.error, confirm: result.confirm };
+        }
+        await context.agentService.reloadPlugins();
+        return { type: "plugin_action_response", message: result.message };
+    } catch (error) {
+        context.logService.warn(`[pluginAction] ${request.action} ${request.pluginId}: ${errorText(error)}`);
+        return { type: "plugin_action_response", error: errorText(error) };
+    }
+}
 
-//     return {
-//         type: "get_auth_status_response",
-//         status: null
-//     };
-// }
+/** Plugins of the marketplaces, kept between reads: listing them takes seconds */
+let availablePluginsCache: AvailablePluginEntry[] | undefined;
 
-/**
- * Log in
- */
-// export async function handleLogin(
-//     request: LoginRequest,
-//     context: HandlerContext
-// ): Promise<LoginResponse> {
-//     const { logService, agentService } = context;
-//     const { method } = request;
+export async function handleGetAvailablePlugins(
+    request: GetAvailablePluginsRequest,
+    context: HandlerContext
+): Promise<GetAvailablePluginsResponse> {
+    try {
+        if (!availablePluginsCache || request.refresh) {
+            const cli = await context.sdkService.getCliInvocation();
+            availablePluginsCache = await listAvailablePlugins(cli, workspaceCwd(context));
+        }
+        return { type: "get_available_plugins_response", plugins: availablePluginsCache };
+    } catch (error) {
+        context.logService.warn(`[getAvailablePlugins] ${errorText(error)}`);
+        return { type: "get_available_plugins_response", plugins: [], error: errorText(error) };
+    }
+}
 
-//     // TODO: implement the auth flow
-//     logService.info(`Login requested with method: ${method}`);
+export async function handleGetMarketplaces(
+    _request: GetMarketplacesRequest,
+    context: HandlerContext
+): Promise<GetMarketplacesResponse> {
+    try {
+        const cli = await context.sdkService.getCliInvocation();
+        return { type: "get_marketplaces_response", marketplaces: await listMarketplaces(cli, workspaceCwd(context)) };
+    } catch (error) {
+        context.logService.warn(`[getMarketplaces] ${errorText(error)}`);
+        return { type: "get_marketplaces_response", marketplaces: [], error: errorText(error) };
+    }
+}
 
-//     // Close all existing channels
-//     await agentService.closeAllChannelsWithCredentialChange();
+/** `claude plugin marketplace add|remove|update`; the plugin list is read again afterwards */
+export async function handleMarketplaceAction(
+    request: MarketplaceActionRequest,
+    context: HandlerContext
+): Promise<MarketplaceActionResponse> {
+    const target = request.target.trim();
+    if (!target) {
+        return { type: "marketplace_action_response", error: 'Empty marketplace' };
+    }
+    try {
+        const cli = await context.sdkService.getCliInvocation();
+        // `add` and `update` fetch the marketplace (git clone / download)
+        const result = await runPluginCommand(cli, ['plugin', 'marketplace', request.action, target], workspaceCwd(context), 5 * 60_000);
+        availablePluginsCache = undefined;
+        if (!result.ok) {
+            return { type: "marketplace_action_response", error: result.error };
+        }
+        return { type: "marketplace_action_response", message: result.message };
+    } catch (error) {
+        context.logService.warn(`[marketplaceAction] ${request.action} ${target}: ${errorText(error)}`);
+        return { type: "marketplace_action_response", error: errorText(error) };
+    }
+}
 
-//     return {
-//         type: "login_response",
-//         auth: {
-//             authenticated: false
-//         }
-//     };
-// }
+const CHANGELOG_URL = 'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md';
 
-/**
- * Submit the OAuth code
- */
-// export async function handleSubmitOAuthCode(
-//     request: SubmitOAuthCodeRequest,
-//     context: HandlerContext
-// ): Promise<SubmitOAuthCodeResponse> {
-//     const { logService } = context;
-//     const { code } = request;
+/** `/release-notes`: the changelog the CLI caches, else the one on GitHub */
+export async function handleOpenReleaseNotes(
+    _request: OpenReleaseNotesRequest,
+    context: HandlerContext
+): Promise<OpenReleaseNotesResponse> {
+    try {
+        const file = changelogFile();
+        if (fs.existsSync(file)) {
+            await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(file));
+        } else {
+            await vscode.env.openExternal(vscode.Uri.parse(CHANGELOG_URL));
+        }
+        return { type: "open_release_notes_response" };
+    } catch (error) {
+        context.logService.warn(`[openReleaseNotes] ${errorText(error)}`);
+        return { type: "open_release_notes_response", error: errorText(error) };
+    }
+}
 
-//     // TODO: implement OAuth code submission
-//     logService.info(`OAuth code submitted: ${code.substring(0, 10)}...`);
+/** `claude auth status --json` */
+export async function handleGetAuthStatus(
+    _request: GetAuthStatusRequest,
+    context: HandlerContext
+): Promise<GetAuthStatusResponse> {
+    try {
+        const cli = await context.sdkService.getCliInvocation();
+        return { type: "get_auth_status_response", status: await readAuthStatus(cli, workspaceCwd(context)) };
+    } catch (error) {
+        context.logService.warn(`[getAuthStatus] ${errorText(error)}`);
+        return { type: "get_auth_status_response", error: errorText(error) };
+    }
+}
 
-//     return {
-//         type: "submit_oauth_code_response"
-//     };
-// }
+/** Running `claude auth login` processes, by id (one per `/login` panel) */
+const loginProcesses = new Map<string, { process: LoginProcess; url?: string }>();
+
+/** Once the credentials changed, every session restarts on its next message */
+async function afterCredentialChange(context: HandlerContext): Promise<void> {
+    await context.agentService.closeAllChannelsWithCredentialChange();
+}
+
+export async function handleAuthLogin(
+    request: AuthLoginRequest,
+    context: HandlerContext
+): Promise<AuthLoginResponse> {
+    try {
+        const cli = await context.sdkService.getCliInvocation();
+        const email = request.email?.trim() || undefined;
+        const login = new LoginProcess(cli, request.method, email, workspaceCwd(context));
+        const loginId = Math.random().toString(36).slice(2);
+        loginProcesses.set(loginId, { process: login });
+        void login.wait().then(async (result) => {
+            // Kept a while so the panel's `wait` still finds the result
+            setTimeout(() => loginProcesses.delete(loginId), 60_000);
+            context.logService.info(`[authLogin] ended: ${result.ok ? 'ok' : result.error}`);
+            if (result.ok) {
+                await afterCredentialChange(context);
+            }
+        });
+        const url = await login.waitForUrl(30_000);
+        loginProcesses.get(loginId)!.url = url;
+        return { type: "auth_login_response", loginId, url, result: login.result };
+    } catch (error) {
+        context.logService.warn(`[authLogin] ${errorText(error)}`);
+        return { type: "auth_login_response", error: errorText(error) };
+    }
+}
+
+export async function handleAuthLoginAction(
+    request: AuthLoginActionRequest,
+    context: HandlerContext
+): Promise<AuthLoginActionResponse> {
+    const entry = loginProcesses.get(request.loginId);
+    if (!entry) {
+        return { type: "auth_login_action_response", error: 'The sign-in has ended' };
+    }
+    const login = entry.process;
+    switch (request.action) {
+        case 'wait':
+            return { type: "auth_login_action_response", result: await login.wait() };
+        case 'code':
+            login.submitCode(request.code ?? '');
+            return { type: "auth_login_action_response" };
+        case 'cancel':
+            login.cancel();
+            loginProcesses.delete(request.loginId);
+            return { type: "auth_login_action_response" };
+        case 'open_url':
+            if (entry.url) {
+                await vscode.env.openExternal(vscode.Uri.parse(entry.url, true));
+            }
+            return { type: "auth_login_action_response" };
+    }
+    context.logService.warn(`[authLoginAction] unknown action ${(request as any).action}`);
+    return { type: "auth_login_action_response", error: 'Unknown action' };
+}
+
+export async function handleAuthLogout(
+    _request: AuthLogoutRequest,
+    context: HandlerContext
+): Promise<AuthLogoutResponse> {
+    try {
+        const cli = await context.sdkService.getCliInvocation();
+        const result = await runClaudeCli(cli, ['auth', 'logout'], workspaceCwd(context));
+        if (result.code !== 0) {
+            return { type: "auth_logout_response", error: cliError(result) };
+        }
+        await afterCredentialChange(context);
+        return { type: "auth_logout_response" };
+    } catch (error) {
+        context.logService.warn(`[authLogout] ${errorText(error)}`);
+        return { type: "auth_logout_response", error: errorText(error) };
+    }
+}
 
 /**
  * Open a config file

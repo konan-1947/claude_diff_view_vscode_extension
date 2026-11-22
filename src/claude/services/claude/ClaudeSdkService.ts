@@ -74,6 +74,16 @@ export interface SdkQueryParams {
     effort?: EffortLevel;
     /** Callback invoked when stderr shows a fatal error (streaming request fallback failed) */
     onStderrError?: (error: LLMRequestError) => void;
+    /** Extra working directories (`/add-dir` for this session only), absolute paths */
+    additionalDirectories?: string[];
+}
+
+/** How to start the `claude` CLI for a subcommand (`claude plugin list`, `claude auth login`) */
+export interface CliInvocation {
+    command: string;
+    /** Arguments to put before the subcommand's (the script, when the CLI is a `cli.js`) */
+    prefixArgs: string[];
+    env: Record<string, string>;
 }
 
 export interface SdkProbeParams {
@@ -120,6 +130,9 @@ export interface IClaudeSdkService {
      * file's content from before the edit.
      */
     setBeforeFileWrite(callback: ((filePath: string) => Promise<void> | void) | undefined): void;
+
+    /** The CLI the SDK runs, to start it directly for a subcommand */
+    getCliInvocation(): Promise<CliInvocation>;
 }
 
 /** CLI flag-settings overlay, passed with --settings (profile switching writes here). */
@@ -170,7 +183,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
      * Query Claude through the SDK
      */
     async query(params: SdkQueryParams): Promise<Query> {
-        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, effort, onStderrError } = params;
+        const { inputStream, resume, canUseTool, model, cwd, permissionMode, thinking, effort, onStderrError, additionalDirectories } = params;
 
         this.logService.info('========================================');
         this.logService.info('ClaudeSdkService.query() called');
@@ -235,6 +248,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
             allowDangerouslySkipPermissions: allowBypassPermissions(),
             thinking,
             effort,
+            additionalDirectories: additionalDirectories?.length ? additionalDirectories : undefined,
 
             // CanUseTool callback
             canUseTool,
@@ -587,6 +601,15 @@ export class ClaudeSdkService implements IClaudeSdkService {
 
     setBeforeFileWrite(callback: ((filePath: string) => Promise<void> | void) | undefined): void {
         this.beforeFileWrite = callback;
+    }
+
+    async getCliInvocation(): Promise<CliInvocation> {
+        const cliPath = await this.getClaudeExecutablePath();
+        const env = await this.getMergedEnvironmentVariables();
+        // A `cli.js` (npm install) is run by node, as the SDK does
+        return /\.(c|m)?js$/i.test(cliPath)
+            ? { command: 'node', prefixArgs: [cliPath], env }
+            : { command: cliPath, prefixArgs: [], env };
     }
 
     private async snapshotBeforeWrite(input: unknown): Promise<void> {

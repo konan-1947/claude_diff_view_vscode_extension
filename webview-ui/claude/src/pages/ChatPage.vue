@@ -13,7 +13,11 @@
     </div>
 
     <!-- Body: message container -->
-    <div class="main" :class="{ 'is-empty': messages.length === 0 }">
+    <div
+      class="main"
+      :class="{ 'is-empty': messages.length === 0 }"
+      :style="emptyInputHeight ? { '--empty-input-height': `${emptyInputHeight}px` } : undefined"
+    >
       <!-- <div class="chatContainer"> -->
         <div
           ref="containerEl"
@@ -44,7 +48,7 @@
           </template>
         </div>
 
-        <div class="inputContainer">
+        <div ref="inputContainerEl" class="inputContainer">
           <PermissionRequestModal
             v-if="pendingPermission && toolContext"
             :request="pendingPermission"
@@ -226,6 +230,22 @@
 
   // DOM refs
   const containerEl = ref<HTMLDivElement | null>(null);
+  const inputContainerEl = ref<HTMLDivElement | null>(null);
+
+  // Height of the idle input in an empty chat, measured once when the chat
+  // becomes empty: the CSS centers that height, so the input's top edge stays
+  // put while a panel or a longer prompt makes it taller.
+  const emptyInputHeight = ref(0);
+  watch(
+    () => messages.value.length === 0,
+    async (empty) => {
+      if (!empty) return;
+      emptyInputHeight.value = 0;
+      await nextTick();
+      emptyInputHeight.value = inputContainerEl.value?.offsetHeight ?? 0;
+    },
+    { immediate: true }
+  );
   const endEl = ref<HTMLDivElement | null>(null);
 
   // Attachment state
@@ -591,9 +611,17 @@
     padding: 0 var(--cs-edge) 10px;
   }
 
-  /* Empty chat: the input sits in the middle of the pane */
+  /* Empty chat: the input sits in the middle of the pane, its top edge fixed
+     there (where the idle input's top is when centered), so a command panel
+     or a longer prompt grows it downward only. With messages it is pinned to
+     the bottom and grows upward. The spacer shrinks when space runs out. */
   .main.is-empty {
-    justify-content: center;
+    justify-content: flex-start;
+  }
+  .main.is-empty::before {
+    content: '';
+    flex: 0 1 calc(50% - var(--empty-input-height, 160px) / 2);
+    min-height: 0;
   }
   .main.is-empty > .messagesContainer {
     display: none;

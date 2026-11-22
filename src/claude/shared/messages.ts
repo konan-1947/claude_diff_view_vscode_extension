@@ -42,6 +42,7 @@ export interface LaunchClaudeMessage extends BaseMessage {
     permissionMode?: PermissionMode; // permission mode
     thinkingLevel?: string | null; // Thinking level (off | default_on)
     effortLevel?: string | null;   // Effort level reported by the CLI for the model; null/"auto" = CLI default
+    additionalDirectories?: string[]; // `/add-dir` for this session only (absolute paths)
 }
 
 /**
@@ -486,6 +487,248 @@ export interface ExportConversationResponse {
     cancelled?: boolean;
 }
 
+/** The settings files a UI command can change */
+export type SettingsFileKind = "user-settings" | "project-settings" | "local-settings";
+
+/** `permissions.<list>` in a settings file */
+export type PermissionListName = "allow" | "ask" | "deny" | "additionalDirectories";
+
+/** `/permissions`: one rule (or directory) of one settings file */
+export interface PermissionEntry {
+    list: PermissionListName;
+    value: string;
+    source: SettingsFileKind;
+}
+
+export interface GetPermissionsRequest {
+    type: "get_permissions";
+}
+
+export interface GetPermissionsResponse {
+    type: "get_permissions_response";
+    entries: PermissionEntry[];
+    /** The session's working folder (the CLI's first working directory) */
+    cwd: string;
+    errors: { source: ClaudeFileKind; error: string }[];
+}
+
+/** Add a rule / directory to a settings file, or remove it */
+export interface UpdatePermissionRequest {
+    type: "update_permission";
+    list: PermissionListName;
+    action: "add" | "remove";
+    value: string;
+    source: SettingsFileKind;
+}
+
+export interface UpdatePermissionResponse {
+    type: "update_permission_response";
+    error?: string;
+}
+
+/**
+ * `/add-dir`: turn the typed path into an absolute folder (relative to the
+ * workspace, `~` expanded); no path → a folder picker.
+ */
+export interface ResolveDirectoryRequest {
+    type: "resolve_directory";
+    path?: string;
+}
+
+export interface ResolveDirectoryResponse {
+    type: "resolve_directory_response";
+    path?: string;
+    error?: string;
+    cancelled?: boolean;
+}
+
+/** `/plugin`: one installed plugin (`claude plugin list --json`) */
+export interface PluginEntry {
+    /** `name@marketplace` */
+    id: string;
+    name: string;
+    marketplace?: string;
+    version?: string;
+    scope?: string;
+    description?: string;
+    enabled: boolean;
+}
+
+export interface GetPluginsRequest {
+    type: "get_plugins";
+}
+
+export interface GetPluginsResponse {
+    type: "get_plugins_response";
+    plugins: PluginEntry[];
+    error?: string;
+}
+
+/** `/plugin` Discover: one plugin of a configured marketplace (`claude plugin list --available`) */
+export interface AvailablePluginEntry {
+    /** `name@marketplace` */
+    id: string;
+    name: string;
+    marketplace?: string;
+    description?: string;
+    installCount?: number;
+}
+
+export interface GetAvailablePluginsRequest {
+    type: "get_available_plugins";
+    /** Read again instead of the copy kept since the last read */
+    refresh?: boolean;
+}
+
+export interface GetAvailablePluginsResponse {
+    type: "get_available_plugins_response";
+    plugins: AvailablePluginEntry[];
+    error?: string;
+}
+
+/**
+ * `claude plugin enable|disable|install|uninstall <id>`, then every open
+ * session reloads its plugins.
+ */
+export interface PluginActionRequest {
+    type: "plugin_action";
+    action: "enable" | "disable" | "install" | "uninstall";
+    pluginId: string;
+    scope?: string;
+    /** `install`: sha256 of the marketplace-declared command the user approved */
+    acceptCommand?: string;
+}
+
+/** A command the marketplace wants run to install the plugin, to be shown to the user first */
+export interface PluginCommandConfirmation {
+    command: string;
+    sha256: string;
+    archiveUrl?: string;
+}
+
+export interface PluginActionResponse {
+    type: "plugin_action_response";
+    error?: string;
+    /** What the CLI said on success */
+    message?: string;
+    /** `install` stopped at a command that needs the user's approval */
+    confirm?: PluginCommandConfirmation;
+}
+
+/** `/plugin` Marketplaces: `claude plugin marketplace list --json` */
+export interface MarketplaceEntry {
+    name: string;
+    /** "github", "git", "url", "directory"... */
+    source?: string;
+    /** owner/repo, URL or path */
+    location?: string;
+}
+
+export interface GetMarketplacesRequest {
+    type: "get_marketplaces";
+}
+
+export interface GetMarketplacesResponse {
+    type: "get_marketplaces_response";
+    marketplaces: MarketplaceEntry[];
+    error?: string;
+}
+
+/** `claude plugin marketplace add <source> | remove <name> | update <name>` */
+export interface MarketplaceActionRequest {
+    type: "marketplace_action";
+    action: "add" | "remove" | "update";
+    /** source for `add`, name otherwise */
+    target: string;
+}
+
+export interface MarketplaceActionResponse {
+    type: "marketplace_action_response";
+    error?: string;
+    message?: string;
+}
+
+/** `/release-notes`: the CLI's changelog in the markdown preview */
+export interface OpenReleaseNotesRequest {
+    type: "open_release_notes";
+}
+
+export interface OpenReleaseNotesResponse {
+    type: "open_release_notes_response";
+    error?: string;
+}
+
+/** `/login`, `/logout`: `claude auth status --json` */
+export interface AuthStatusInfo {
+    loggedIn: boolean;
+    /** "claude.ai", "console", "api_key"... */
+    authMethod?: string;
+    apiProvider?: string;
+    email?: string;
+    orgName?: string;
+    subscriptionType?: string;
+    loginExpiresAt?: string;
+    apiKeySource?: string;
+}
+
+export interface GetAuthStatusRequest {
+    type: "get_auth_status";
+}
+
+export interface GetAuthStatusResponse {
+    type: "get_auth_status_response";
+    status?: AuthStatusInfo;
+    error?: string;
+}
+
+export type AuthLoginMethod = "claudeai" | "console" | "sso";
+
+/**
+ * Start `claude auth login`. Answers once the CLI printed the sign-in URL (or
+ * ended before that, with `result`).
+ */
+export interface AuthLoginRequest {
+    type: "auth_login";
+    method: AuthLoginMethod;
+    email?: string;
+}
+
+export interface AuthLoginResponse {
+    type: "auth_login_response";
+    loginId?: string;
+    url?: string;
+    /** Set when the login already ended */
+    result?: { ok: boolean; error?: string };
+    error?: string;
+}
+
+/**
+ * Follow-ups of a running login: `wait` answers when it ends, `code` passes
+ * the code from the browser page, `cancel` stops it, `open_url` opens the
+ * sign-in page in the browser.
+ */
+export interface AuthLoginActionRequest {
+    type: "auth_login_action";
+    loginId: string;
+    action: "wait" | "code" | "cancel" | "open_url";
+    code?: string;
+}
+
+export interface AuthLoginActionResponse {
+    type: "auth_login_action_response";
+    result?: { ok: boolean; error?: string };
+    error?: string;
+}
+
+export interface AuthLogoutRequest {
+    type: "auth_logout";
+}
+
+export interface AuthLogoutResponse {
+    type: "auth_logout_response";
+    error?: string;
+}
+
 /**
  * Context window usage as the CLI itself reports it (`/context`).
  * `usage` is null when the channel has no live query yet.
@@ -710,46 +953,6 @@ export interface RenameTabResponse {
 }
 
 /**
- * Get the auth status
- */
-// export interface GetAuthStatusRequest {
-//     type: "get_auth_status";
-// }
-
-// export interface GetAuthStatusResponse {
-//     type: "get_auth_status_response";
-//     status: null | { authenticated: boolean };
-// }
-
-/**
- * Login request
- */
-// export interface LoginRequest {
-//     type: "login";
-//     method: "claude.ai" | "console.anthropic.com";
-// }
-
-// export interface LoginResponse {
-//     type: "login_response";
-//     auth: {
-//         authenticated: boolean;
-//         apiKey?: string;
-//     };
-// }
-
-/**
- * Submit the OAuth code
- */
-// export interface SubmitOAuthCodeRequest {
-//     type: "submit_oauth_code";
-//     code: string;
-// }
-
-// export interface SubmitOAuthCodeResponse {
-//     type: "submit_oauth_code_response";
-// }
-
-/**
  * Open a config file
  */
 export interface OpenConfigFileRequest {
@@ -771,16 +974,6 @@ export interface OpenClaudeInTerminalRequest {
 export interface OpenClaudeInTerminalResponse {
     type: "open_claude_in_terminal_response";
 }
-
-/**
- * Auth URL notification (Extension → WebView)
- */
-// export interface AuthURLRequest {
-//     type: "auth_url";
-//     url: string;
-//     method: string;
-// }
-
 
 /**
  * Get settings request
@@ -1039,6 +1232,19 @@ export type WebViewRequest =
     | OpenClaudeFileRequest
     | GetHooksRequest
     | ExportConversationRequest
+    | GetPermissionsRequest
+    | UpdatePermissionRequest
+    | ResolveDirectoryRequest
+    | GetPluginsRequest
+    | PluginActionRequest
+    | GetAvailablePluginsRequest
+    | GetMarketplacesRequest
+    | MarketplaceActionRequest
+    | OpenReleaseNotesRequest
+    | GetAuthStatusRequest
+    | AuthLoginRequest
+    | AuthLoginActionRequest
+    | AuthLogoutRequest
     | GetConfigOptionsRequest
     | GetContextUsageRequest
     | GetAppliedEffortRequest
@@ -1049,9 +1255,6 @@ export type WebViewRequest =
     | ListFilesRequest
     | OpenURLRequest
     | StatPathRequest
-    // | GetAuthStatusRequest
-    // | LoginRequest
-    // | SubmitOAuthCodeRequest
     | OpenConfigFileRequest
     | OpenConfigFileRequest
     | OpenClaudeInTerminalRequest
@@ -1083,6 +1286,19 @@ export type WebViewRequestResponse =
     | GetClaudeStateResponse
     | SdkProbeResponse
     | GetMcpServersResponse
+    | GetPermissionsResponse
+    | UpdatePermissionResponse
+    | ResolveDirectoryResponse
+    | GetPluginsResponse
+    | PluginActionResponse
+    | GetAvailablePluginsResponse
+    | GetMarketplacesResponse
+    | MarketplaceActionResponse
+    | OpenReleaseNotesResponse
+    | GetAuthStatusResponse
+    | AuthLoginResponse
+    | AuthLoginActionResponse
+    | AuthLogoutResponse
     | GetContextUsageResponse
     | GetAppliedEffortResponse
     | GetAssetUrisResponse
@@ -1092,9 +1308,6 @@ export type WebViewRequestResponse =
     | ListFilesResponse
     | OpenURLResponse
     | StatPathResponse
-    // | GetAuthStatusResponse
-    // | LoginResponse
-    // | SubmitOAuthCodeResponse
     | OpenConfigFileResponse
     | OpenConfigFileResponse
     | OpenClaudeInTerminalResponse
@@ -1116,7 +1329,6 @@ export type ExtensionRequest =
     | SelectionChangedRequest
     | UpdateStateRequest
     | VisibilityChangedRequest;
-    // | AuthURLRequest;
 
 /**
  * Visibility change (Extension → WebView)
