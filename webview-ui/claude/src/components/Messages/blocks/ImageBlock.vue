@@ -5,14 +5,17 @@
       :src="imageSrc"
       :alt="imageAlt"
       class="image-content"
+      @click="open = true"
       @error="handleError"
     />
     <div v-else class="image-placeholder">Image failed to load</div>
+    <ImageLightbox :src="open ? imageSrc : null" @close="open = false" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import ImageLightbox from '../../Common/ImageLightbox.vue';
 import type { ImageBlock as ImageBlockType } from '../../../models/ContentBlock';
 
 interface Props {
@@ -22,6 +25,7 @@ interface Props {
 const props = defineProps<Props>();
 
 const loadError = ref(false);
+const open = ref(false);
 
 const imageSrc = computed(() => {
   if (loadError.value) return null;
@@ -47,6 +51,7 @@ function handleError() {
   height: auto;
   border-radius: 4px;
   border: 1px solid var(--vscode-panel-border);
+  cursor: zoom-in;
 }
 
 .image-placeholder {

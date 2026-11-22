@@ -144,9 +144,25 @@
 
     <!-- Attachment list (if any) -->
     <div v-if="attachments && attachments.length > 0" v-show="!activePanel" class="attachments-list">
+      <template v-for="attachment in attachments" :key="attachment.id">
+      <!-- Images: thumbnail, click to open the full-size popup -->
       <div
-        v-for="attachment in attachments"
-        :key="attachment.id"
+        v-if="isImageAttachment(attachment)"
+        class="attachment-thumb"
+        :title="attachment.fileName"
+        @click="openPreview(attachment)"
+      >
+        <img :src="attachmentSrc(attachment)" :alt="attachment.fileName" />
+        <button
+          class="thumb-remove"
+          @click.stop="handleRemoveAttachment(attachment.id)"
+          :aria-label="`Remove ${attachment.fileName}`"
+        >
+          <span class="codicon codicon-close" />
+        </button>
+      </div>
+      <div
+        v-else
         class="attachment-item"
       >
         <div class="icon-wrapper">
@@ -163,7 +179,13 @@
         </div>
         <span class="attachment-name">{{ attachment.fileName }}</span>
       </div>
+      </template>
     </div>
+    <ImageLightbox
+      :src="preview ? attachmentSrc(preview) : null"
+      :alt="preview?.fileName"
+      @close="preview = null"
+    />
 
     <!-- Row 1: input area -->
     <div
@@ -309,7 +331,8 @@ import type { ClaudeFileKind } from '@shared/messages'
 import type { Message } from '../models/Message'
 import { usePromptHistory } from '../utils/promptHistory'
 import { transcriptToMarkdown, exportFileName } from '../utils/exportTranscript'
-import type { AttachmentItem } from '../types/attachment'
+import { IMAGE_MEDIA_TYPES, type AttachmentItem } from '../types/attachment'
+import ImageLightbox from './Common/ImageLightbox.vue'
 import type { ModeOption } from '../utils/permissionModes'
 import { Dropdown, DropdownItem } from './Dropdown'
 import { RuntimeKey } from '../composables/runtimeContext'
@@ -1604,7 +1627,23 @@ function handleAddFiles(files: FileList) {
   emit('addAttachment', files)
 }
 
+function isImageAttachment(a: AttachmentItem): boolean {
+  return (IMAGE_MEDIA_TYPES as readonly string[]).includes(a.mediaType)
+}
+
+function attachmentSrc(a: AttachmentItem): string {
+  return `data:${a.mediaType};base64,${a.data}`
+}
+
+/** Attachment shown in the full-size popup */
+const preview = ref<AttachmentItem | null>(null)
+
+function openPreview(a: AttachmentItem) {
+  preview.value = a
+}
+
 function handleRemoveAttachment(id: string) {
+  if (preview.value?.id === id) preview.value = null
   emit('removeAttachment', id)
 }
 
@@ -1825,6 +1864,55 @@ defineExpose({
 
 .remove-button:hover {
   opacity: 1 !important;
+}
+
+/* Image attachment: thumbnail with an always-visible remove button */
+.attachment-thumb {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: zoom-in;
+  background: var(--vscode-editor-background);
+}
+
+.attachment-thumb:hover {
+  border-color: var(--vscode-focusBorder);
+}
+
+.attachment-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumb-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+}
+
+.thumb-remove:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.thumb-remove .codicon {
+  font-size: 12px;
 }
 
 </style>

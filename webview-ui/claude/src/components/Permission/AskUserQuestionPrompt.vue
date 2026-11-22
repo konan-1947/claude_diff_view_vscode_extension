@@ -30,14 +30,19 @@
           Submit
         </button>
       </div>
-      <span v-else-if="current" class="aq-chip">{{ current.header }}</span>
+      <!-- One question: chip and question share the title row -->
+      <span v-else-if="current" class="aq-title">
+        <span v-if="current.header" class="aq-chip">{{ current.header }}</span>
+        <span class="aq-question">{{ current.question }}</span>
+      </span>
     </template>
 
     <template v-if="current">
-      <div class="aq-question">{{ current.question }}</div>
+      <div v-if="questions.length > 1" class="aq-question">{{ current.question }}</div>
       <PromptOptions
         :key="step"
         ref="optionsRef"
+        layout="grid"
         :options="questionOptions"
         @pick="onPick"
         @move="focused = $event"
@@ -59,6 +64,7 @@
       </div>
       <PromptOptions
         :key="'review'"
+        layout="grid"
         :options="reviewOptions"
         @pick="onReviewPick"
         @side="moveStep"
@@ -143,8 +149,8 @@ const previewText = computed(() => {
 })
 
 const hint = computed(() => {
-  const keys = ['↑/↓ to select', current.value?.multiSelect ? 'Enter to toggle' : 'Enter to confirm']
-  if (questions.value.length > 1) keys.push('←/→ to switch question')
+  const keys = ['←/→ to select', current.value?.multiSelect ? 'Enter to toggle' : 'Enter to confirm']
+  if (questions.value.length > 1) keys.push('Tab to switch question')
   keys.push('Esc to decline')
   return keys
 })
@@ -286,7 +292,15 @@ function decline() {
   color: var(--cs-fg);
 }
 
+.aq-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
 .aq-chip {
+  flex-shrink: 0;
   display: inline-block;
   padding: 1px 6px;
   border-radius: 4px;

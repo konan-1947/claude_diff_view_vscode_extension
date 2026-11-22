@@ -464,8 +464,10 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .tab.done .tab-title::after { content: ' \u25CF'; color: #3fb950; }
   /* xterm.css paints .xterm-viewport black and stretches it over the padding box, which showed
      as a hard black frame (top/left/bottom, not right). Paint the whole terminal with the theme
-     colour instead, so the padding blends into it on every side. */
-  .term-pane,
+     colour instead, so the padding blends into it on every side. Claude UI panes are excluded:
+     they follow the VS Code theme, and the terminal preset's background under VS Code's text
+     colours made the chat unreadable. */
+  .term-pane:not(.claude),
   .xterm,
   .xterm .xterm-viewport { background-color: var(--term-bg, var(--vscode-editor-background)) !important; }
   .xterm { padding: 8px 4px 6px 10px; height: 100%; box-sizing: border-box; }

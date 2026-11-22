@@ -34,6 +34,7 @@ import TodoWriteTool from './tools/TodoWrite.vue';
 import WebFetchTool from './tools/WebFetch.vue';
 import WebSearchTool from './tools/WebSearch.vue';
 import DefaultTool from './tools/Default.vue';
+import AskUserQuestionTool from './tools/AskUserQuestion.vue';
 
 interface Props {
   block: ToolUseContentBlock;
@@ -87,6 +88,8 @@ const toolComponent = computed(() => {
       return BashOutputTool;
     case 'ExitPlanMode':
       return ExitPlanModeTool;
+    case 'AskUserQuestion':
+      return AskUserQuestionTool;
     case 'KillShell':
       return KillShellTool;
     case 'MultiEdit':

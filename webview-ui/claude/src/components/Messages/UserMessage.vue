@@ -6,7 +6,20 @@
       <div class="message-content">
         <div class="message-view">
           <div class="message-text">
-            <div>{{ displayContent }}</div>
+            <div>
+              <div v-if="images.length" class="message-images">
+                <button
+                  v-for="(img, i) in images"
+                  :key="i"
+                  class="message-image"
+                  :aria-label="`View image ${i + 1}`"
+                  @click.stop="preview = img"
+                >
+                  <img :src="img" :alt="`Image ${i + 1}`" />
+                </button>
+              </div>
+              <div v-if="displayContent.trim()" class="message-body">{{ displayContent }}</div>
+            </div>
             <div class="message-actions">
               <Tooltip :content="copied ? 'Copied' : 'Copy message'">
                 <button class="restore-button" :class="{ copied }" @click.stop="copy">
@@ -26,6 +39,7 @@
         </div>
       </div>
     </div>
+    <ImageLightbox :src="preview" @close="preview = null" />
   </div>
 </template>
 
@@ -35,6 +49,7 @@ import { RestoreCheckpointKey } from '../../composables/runtimeContext';
 import type { Message } from '../../models/Message';
 import type { ToolContext } from '../../types/tool';
 import Tooltip from '../Common/Tooltip.vue';
+import ImageLightbox from '../Common/ImageLightbox.vue';
 
 interface Props {
   message: Message;
@@ -62,6 +77,23 @@ const displayContent = computed(() => {
   }
   return '';
 });
+
+// Images the user attached (data: URLs), shown as thumbnails above the text
+const images = computed(() => {
+  const content = props.message.message.content;
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const wrapper of content) {
+    const block = wrapper.content;
+    if (block.type === 'image' && block.source?.type === 'base64' && block.source.data) {
+      out.push(`data:${block.source.media_type};base64,${block.source.data}`);
+    }
+  }
+  return out;
+});
+
+/** Image open in the full-size popup */
+const preview = ref<string | null>(null);
 
 // Copy the prompt (same fallback as the copy button under Claude's reply)
 const copied = ref(false);
@@ -164,6 +196,49 @@ function handleRestore() {
   user-select: text;
   white-space: pre-wrap;
   flex: 1;
+}
+
+/* The 120px clamp applies to the text only, so thumbnails do not eat into it */
+.message-text > div:first-child:has(.message-images) {
+  max-height: none;
+}
+
+.message-text > div:first-child:has(.message-images) .message-body {
+  max-height: 120px;
+  overflow: hidden;
+}
+
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.message-images:last-child {
+  margin-bottom: 0;
+}
+
+.message-image {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--cs-fg-20);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: zoom-in;
+  background: transparent;
+}
+
+.message-image:hover {
+  border-color: var(--vscode-focusBorder);
+}
+
+.message-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* copy / restore checkpoint buttons, shown on hover */
