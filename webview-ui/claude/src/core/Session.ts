@@ -68,6 +68,12 @@ export class Session {
   /** Set once the user picks a mode; until then the CLI's own default applies. */
   private permissionModeExplicit = false;
   private contextUsageSeq = 0;
+  /**
+   * Argument of an `/effort` sent and not answered yet ('' = no argument). The
+   * CLI reads `auto` back as the model's default level, so the typed word is
+   * the only way to tell "auto" from that level picked explicitly.
+   */
+  private pendingEffortArg?: string;
 
   readonly connection = signal<BaseTransport | undefined>(undefined);
 
@@ -92,6 +98,12 @@ export class Session {
   readonly thinkingLevel = signal<string>('default_on');
   /** "auto" = the model's default effort (as the CLI decides) */
   readonly effortLevel = signal<string>('auto');
+  /**
+   * Level the CLI really applies to the next message (`applied.effort`): what
+   * "auto" resolves to for the current model. null = no effort sent,
+   * undefined = not known yet.
+   */
+  readonly appliedEffort = signal<string | null | undefined>(undefined);
   readonly todos = signal<any[]>([]);
   readonly worktree = signal<{ name: string; path: string } | undefined>(undefined);
   readonly selection = signal<SelectionRange | undefined>(undefined);
@@ -217,6 +229,11 @@ export class Session {
 
     // Launch the channel (making sure the current thinkingLevel is included)
     await this.launchClaude();
+
+    const effortCommand = /^\/effort(?:\s+(\S+))?\s*$/i.exec(input.trim());
+    if (effortCommand) {
+      this.pendingEffortArg = (effortCommand[1] ?? '').toLowerCase();
+    }
 
     const shouldIncludeSelection = includeSelection && !isSlash;
     let selectionPayload: SelectionRange | undefined;
@@ -380,16 +397,18 @@ export class Session {
     await connection.setThinkingLevel(channelId, level);
   }
 
-  async setEffortLevel(level: string): Promise<void> {
+  /** `persist`: also save it as the model's default, like Enter in the CLI's /effort menu */
+  async setEffortLevel(level: string, persist = false): Promise<void> {
     this.effortLevel(level);
 
-    const channelId = this.claudeChannelId();
+    const channelId = persist ? await this.launchClaude() : this.claudeChannelId();
     if (!channelId) {
       return;
     }
 
     const connection = await this.getConnection();
-    await connection.setEffortLevel(channelId, level === 'auto' ? null : level);
+    await connection.setEffortLevel(channelId, level === 'auto' ? null : level, persist);
+    void this.refreshAppliedEffort();
   }
 
   async getMcpServers(): Promise<any> {
@@ -463,6 +482,15 @@ export class Session {
       return;
     }
 
+    // /clear (also /reset, /new, and leaving plan mode with "clear context"):
+    // the CLI dropped the conversation and continues under a new session id
+    // (it arrives on the next events). Show an empty chat, like the CLI does,
+    // instead of a transcript Claude no longer remembers.
+    if (event?.type === 'conversation_reset') {
+      this.resetConversation();
+      return;
+    }
+
     // 🔥 Use the full message processing pipeline
 
     // 1. Get the current message array (as a mutable array)
@@ -498,14 +526,85 @@ export class Session {
           this.usageData({ ...this.usageData(), contextWindow: window });
         }
         void this.refreshContextUsage();
+        void this.refreshAppliedEffort();
       } else if (event.subtype === 'compact_boundary') {
         // Compaction shrinks the context; the CLI knows the new size.
         void this.refreshContextUsage();
+      } else if (event.subtype === 'session_title_changed' && typeof event.title === 'string') {
+        // /rename <name> (or a title the CLI generated): becomes the tab title
+        // through SessionStore's summary effect.
+        if (event.title.trim()) {
+          this.summary(event.title.trim());
+        }
       }
     } else if (event?.type === 'result') {
       this.busy(false);
       this.updateCost(event);
       void this.refreshContextUsage();
+      void this.refreshAppliedEffort();
+      if (event.local_command === 'effort') {
+        const arg = this.pendingEffortArg;
+        this.pendingEffortArg = undefined;
+        if (arg) {
+          void this.syncEffortFromCli(arg);
+        }
+      }
+    }
+  }
+
+  /** Read `applied.effort` (see appliedEffort); answers from another channel are dropped. */
+  async refreshAppliedEffort(): Promise<string | null | undefined> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) {
+      return this.appliedEffort();
+    }
+    try {
+      const connection = await this.getConnection();
+      const applied = await connection.getAppliedEffort(channelId);
+      if (applied !== undefined && channelId === this.claudeChannelId()) {
+        this.appliedEffort(applied);
+      }
+    } catch {
+      // keep the last known value
+    }
+    return this.appliedEffort();
+  }
+
+  /** Forget the shown conversation after the CLI reset it (see conversation_reset). */
+  private resetConversation(): void {
+    this.messages([]);
+    this.todos([]);
+    this.summary(undefined);
+    this.lastSentSelection = undefined;
+    this.pendingEffortArg = undefined;
+    this.usageData({ ...this.usageData(), totalTokens: 0 });
+    void this.refreshContextUsage();
+  }
+
+  /**
+   * `/effort <level>` changed the CLI's effort without telling the UI: read the
+   * level the CLI now applies and move the picker there. Only a level the CLI
+   * confirms is taken (a typo leaves it at its usage text); `auto` reads back
+   * as the model's default level, so it is taken from the command itself.
+   */
+  private async syncEffortFromCli(arg: string): Promise<void> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) {
+      return;
+    }
+    try {
+      const connection = await this.getConnection();
+      const applied = await connection.getAppliedEffort(channelId);
+      if (applied === undefined || channelId !== this.claudeChannelId()) {
+        return;
+      }
+      if (arg === 'auto') {
+        this.effortLevel('auto');
+      } else if (applied === arg) {
+        this.effortLevel(applied);
+      }
+    } catch {
+      // keep the picker as it was
     }
   }
 

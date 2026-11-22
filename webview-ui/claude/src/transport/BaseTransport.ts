@@ -149,6 +149,11 @@ export abstract class BaseTransport {
     const response = await this.sendRequest({ type: "get_context_usage" }, channelId);
     return (response as any)?.usage ?? null;
   }
+  /** Effort the CLI applies next (null = none sent, undefined = unknown). */
+  async getAppliedEffort(channelId: string): Promise<string | null | undefined> {
+    const response = await this.sendRequest({ type: "get_applied_effort" }, channelId);
+    return (response as any)?.effort;
+  }
   sdkProbe(capabilities: string[], timeoutMs?: number): Promise<SdkProbeResponse> {
     return this.sendRequest({ type: "sdk_probe", capabilities, timeoutMs });
   }
@@ -204,8 +209,8 @@ export abstract class BaseTransport {
     await this.sendRequest({ type: "set_thinking_level", channelId, thinkingLevel }, channelId);
   }
 
-  async setEffortLevel(channelId: string, effortLevel: string | null): Promise<void> {
-    await this.sendRequest({ type: "set_effort_level", channelId, effortLevel }, channelId);
+  async setEffortLevel(channelId: string, effortLevel: string | null, persist = false): Promise<void> {
+    await this.sendRequest({ type: "set_effort_level", channelId, effortLevel, persist }, channelId);
   }
 
   listSessions(): Promise<any> {

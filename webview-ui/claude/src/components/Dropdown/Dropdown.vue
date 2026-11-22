@@ -78,6 +78,8 @@ interface Props {
    * viewport; text wraps once that cap is reached. Ignores `width` / `align`.
    */
   fitContent?: boolean
+  /** Minimum width in px (default 140), so a short list does not shrink to its text */
+  minWidth?: number
 }
 
 interface Emits {
@@ -140,7 +142,7 @@ const listMaxHeight = computed(() => {
 const dropdownStyle = computed(() => {
   const style: any = {
     position: 'fixed',
-    minWidth: '140px',
+    minWidth: `${props.minWidth ?? 140}px`,
     maxWidth: '240px',
     width: props.width ? `${props.width}px` : 'auto',
     zIndex: 2548
@@ -153,7 +155,9 @@ const dropdownStyle = computed(() => {
   if (props.fitContent) {
     const left = Math.max(EDGE_MARGIN, triggerRect.left + props.offsetX)
     style.width = 'max-content'
-    style.maxWidth = `${Math.max(140, viewportWidth - left - EDGE_MARGIN)}px`
+    const room = viewportWidth - left - EDGE_MARGIN
+    style.maxWidth = `${Math.max(140, room)}px`
+    style.minWidth = `${Math.min(props.minWidth ?? 140, Math.max(140, room))}px`
     style.left = `${left}px`
     if (placement.value === 'below') {
       style.top = `${triggerRect.top + (triggerRect.height || 0) + props.offsetY}px`

@@ -27,22 +27,32 @@ Ký hiệu: `[ ]` chưa làm · `[~]` đã có một phần / cần kiểm tra l
       thì CLI tự báo lỗi. Hạn chế đã chấp nhận: `/model opus[1m]` / `opusplan` sau đó
       hiện và lưu là model thường (CLI chỉ báo ID thật); với `opusplan`, đổi plan mode
       cũng làm model chạy đổi theo → picker nhảy theo.
-- [ ] **Effort**: `/effort high` → CLI báo "Set effort level to high (this session only)",
-      `Session.effortLevel` không đổi. Sửa: bắt kết quả lệnh (hoặc tự chặn `/effort`,
-      xem mục 2) và cập nhật signal.
-- [ ] **`/clear`**: CLI tạo session mới (session id đổi) và quên hết; UI chỉ cập nhật
-      `sessionId` (`Session.ts`, nhánh `event.type === 'system'`) mà vẫn hiện hội thoại cũ
-      → người dùng tưởng Claude còn nhớ. Sửa: chặn `/clear` ở UI → xoá messages / mở
-      hội thoại mới trong cùng tab, cập nhật `{ title, sessionId }` trong `TerminalSessionStore`.
+- [~] **Effort** (đã làm, chờ test tay trong UI): `/effort <mức>` vẫn gửi cho CLI. Khi
+      `result` có `local_command: 'effort'`, `Session.syncEffortFromCli` đọc
+      `getSettings().applied.effort` (request `get_applied_effort`) và chỉ nhận mức CLI xác
+      nhận; gõ sai thì CLI in usage, picker giữ nguyên. Riêng `auto`: CLI báo lại thành mức
+      mặc định của model (ví dụ `medium`), nên lấy `auto` từ chính lệnh đã gõ.
+- [~] **`/clear`** (đã làm, chờ test tay): CLI phát event `conversation_reset` (cả
+      `/reset`, `/new`, rời plan mode kèm "clear context"); `Session.resetConversation()` xoá
+      messages, todos, tiêu đề, token đang hiện. Session id mới đến ở các event sau đó, và
+      `webViewService` tự ghi nó vào `TerminalSessionStore` (resume đúng hội thoại mới).
+      Hội thoại cũ vẫn nằm trong lịch sử.
 - [~] **Permission mode**: đã đọc `permissionMode` từ `system/init` và `system/status`.
       Cần kiểm tra khi CLI tự rời plan mode sau `ExitPlanMode`.
-- [ ] **`/rename <tên>`**: kiểm tra tên mới có về tiêu đề tab trong terminal tab strip
-      không (`renameTab`).
-- [ ] **`/compact`**: sau `compact_boundary` UI có refresh context usage; cần hiển thị
-      một mốc "Conversation compacted" giống CLI, và xử lý result rỗng
-      (`/compact` trên hội thoại trống trả về "Error: No messages to compact" + result rỗng).
-- [ ] **`/output-style <tên>`**, **`/fast`**: kiểm tra có cần hiển thị trạng thái
-      trong UI không (CLI có hiện trên status line).
+- [~] **`/rename <tên>`** (đã làm, chờ test tay): CLI phát `system/session_title_changed`
+      → `Session.summary` → tiêu đề tab (qua `renameTab`). Sau `/clear` CLI vẫn gửi lại
+      tên cũ cho session mới; UI theo CLI.
+- [~] **`/compact`** (đã làm, chờ test tay): `compact_boundary` hiện mốc "Conversation
+      compacted · 15.9K → 6.6K tokens" (`NoticeBlock`); tin tóm tắt CLI chèn sau đó
+      (`isSynthetic` khi đang chạy, `isCompactSummary` trong lịch sử) bị ẩn. Lịch sử đi qua
+      `logicalParentUuid` nên resume vẫn thấy phần trước compact, và danh sách chỉ còn một
+      mục. Không còn "result rỗng": CLI 2.1.327 trả text "Not enough messages to compact."
+      (hiện như một tin bình thường).
+- [x] **`/output-style <tên>`**, **`/fast`**: không cần hiển thị trạng thái. `/fast` qua SDK
+      trả "Fast mode is not available in the Agent SDK" (`fast_mode_disabled_reason:
+      sdk_opt_in_required`) → nên ẩn khỏi gợi ý (mục 2). `/output-style <tên>` ghi vào
+      `.claude/settings.local.json` của project, CLI báo tên style trong `system/init` mỗi
+      lượt (`output_style`); dropdown chọn style để ở mục 2.
 
 ## 2. Lệnh vốn là menu trong CLI → UI phải tự dựng control
 
@@ -51,7 +61,15 @@ Hiện qua UI chỉ in usage/text. Cách làm: chặn ở `ChatInputBox.handleSu
 cho CLI (và đồng bộ trạng thái như mục 1).
 
 - [~] `/model` → mở `ModelSelect` (đã làm: Enter hoặc chọn từ gợi ý `/`, chờ test tay).
-- [ ] `/effort` → mở `EffortSelect`.
+- [~] `/effort` → panel kiểu CLI (`components/CommandPanel/EffortPanel.vue`, đã làm, chờ
+      test tay): thanh trượt Faster ↔ Smarter, `←/→` chỉnh, `a` auto, `s` chỉ phiên này,
+      `Enter` lưu, `Esc` huỷ. Enter = `applyFlagSettings` + `updateSettings('userSettings',
+      { effortLevel })` (ghi `modelSettings.<model>.effortLevel` như CLI); `auto` và `max`
+      không lưu được nên Enter chỉ áp dụng cho phiên. Model không có mức effort thì lệnh
+      vẫn gửi cho CLI. `CommandPanel.vue` là khung chung (tiêu đề, gợi ý phím) cho các
+      lệnh menu tiếp theo.
+      Còn thiếu: tab mới hiện "Auto" dù CLI đang dùng mức đã lưu → đọc
+      `applied.effort` khi mở session.
 - [ ] `/output-style` → dropdown chọn style (danh sách lấy từ chính output của lệnh,
       hoặc đọc file style).
 - [ ] `/config` → mở trang Settings của uic / form `key=value` (CLI chỉ in danh sách key).
@@ -66,6 +84,7 @@ cho CLI (và đồng bộ trạng thái như mục 1).
       ẩn khỏi danh sách gợi ý, hoặc gắn vào màu tab.
 - [ ] `/agents`: CLI đã bỏ wizard → ẩn khỏi danh sách gợi ý.
 - [ ] `/focus`: CLI báo "isn't available here yet" → ẩn.
+- [ ] `/fast`: CLI báo "Fast mode is not available in the Agent SDK" → ẩn.
 
 ## 3. Lệnh terminal không có qua SDK ("isn't available in this environment")
 

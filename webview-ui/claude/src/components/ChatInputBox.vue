@@ -1,8 +1,18 @@
 <template>
   <!-- Input box - three-row layout -->
   <div class="full-input-box" style="position: relative;">
+    <!-- Command panel (`/effort` …): takes the input's place inside the same frame while open -->
+    <EffortPanel
+      v-if="activePanel === 'effort'"
+      :effort-level="effortLevel"
+      :auto-level="autoEffortLevel"
+      :levels="effortLevels"
+      @select="(level, persist) => emit('effortSelect', level, persist)"
+      @close="closePanel"
+    />
+
     <!-- Attachment list (if any) -->
-    <div v-if="attachments && attachments.length > 0" class="attachments-list">
+    <div v-if="attachments && attachments.length > 0" v-show="!activePanel" class="attachments-list">
       <div
         v-for="attachment in attachments"
         :key="attachment.id"
@@ -26,6 +36,7 @@
 
     <!-- Row 1: input area -->
     <div
+      v-show="!activePanel"
       ref="textareaRef"
       contenteditable="true"
       class="aislash-editor-input custom-scroll-container"
@@ -40,6 +51,7 @@
 
     <!-- Row 2: ButtonArea component + TokenIndicator -->
     <ButtonArea
+      v-show="!activePanel"
       ref="buttonAreaRef"
       :disabled="isSubmitDisabled"
       :loading="isLoading"
@@ -71,6 +83,7 @@
       :is-visible="slashCompletion.isOpen.value"
       :position="slashCompletion.position.value"
       fit-content
+      :min-width="320"
       :should-auto-focus="false"
       :close-on-click-outside="false"
       :data-nav="slashCompletion.navigationMode.value"
@@ -148,6 +161,7 @@ import { ref, computed, nextTick, inject, onMounted, onUnmounted } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import FileIcon from './FileIcon.vue'
 import ButtonArea from './ButtonArea.vue'
+import EffortPanel from './CommandPanel/EffortPanel.vue'
 import type { AttachmentItem } from '../types/attachment'
 import type { ModeOption } from '../utils/permissionModes'
 import { Dropdown, DropdownItem } from './Dropdown'
@@ -171,6 +185,8 @@ interface Props {
   modes?: ModeOption[]
   showThinkingToggle?: boolean
   effortLevel?: string
+  /** What "auto" resolves to right now (the CLI's applied effort), if known */
+  autoEffortLevel?: string | null
   effortLevels?: string[]
 }
 
@@ -183,9 +199,12 @@ interface Emits {
   (e: 'addAttachment', files: FileList): void
   (e: 'removeAttachment', id: string): void
   (e: 'thinkingToggle'): void
-  (e: 'effortSelect', level: string): void
+  /** persist: also save as the model's default (Enter in the /effort panel) */
+  (e: 'effortSelect', level: string, persist?: boolean): void
   (e: 'modeSelect', mode: PermissionMode): void
   (e: 'modelSelect', modelId: string): void
+  /** A command panel opened: the page refreshes what it shows (e.g. applied effort) */
+  (e: 'commandPanelOpen', panel: 'effort'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -220,13 +239,33 @@ const textareaRef = ref<HTMLDivElement | null>(null)
 
 const buttonAreaRef = ref<InstanceType<typeof ButtonArea>>()
 
-// `/model` without an argument opens the model picker, as the CLI opens its
-// model menu; through the SDK the CLI would only print usage text. Deferred so
+// `/model` / `/effort` without an argument open their picker, as the CLI opens
+// its menu; through the SDK the CLI would only print usage text. Deferred so
 // the click that picked the completion item does not reach the picker's
-// click-outside handler and close it straight away.
-function openModelPicker() {
-  clearInput()
-  setTimeout(() => buttonAreaRef.value?.openModelSelect(), 0)
+// click-outside handler and close it straight away. Returns false when there
+// is no picker for it (a model without effort levels): the command then goes
+// to the CLI as typed.
+function openPickerFor(command: string): boolean {
+  if (command === '/model') {
+    clearInput()
+    setTimeout(() => buttonAreaRef.value?.openModelSelect(), 0)
+    return true
+  }
+  if (command === '/effort' && props.effortLevels.length > 0) {
+    clearInput()
+    activePanel.value = 'effort'
+    emit('commandPanelOpen', 'effort')
+    return true
+  }
+  return false
+}
+
+/** Command panel shown in place of the input (null = the input itself) */
+const activePanel = ref<'effort' | null>(null)
+
+function closePanel() {
+  activePanel.value = null
+  nextTick(() => textareaRef.value?.focus())
 }
 
 function clearInput() {
@@ -251,8 +290,7 @@ const slashCompletion = useCompletionDropdown({
   provider: (query, signal) => getSlashCommands(query, runtime, signal),
   toDropdownItem: commandToDropdownItem,
   onSelect: (command, query) => {
-    if (command.label === '/model') {
-      openModelPicker()
+    if (openPickerFor(command.label)) {
       return
     }
     if (query) {
@@ -698,8 +736,7 @@ async function handleDrop(event: DragEvent) {
 function handleSubmit() {
   if (!content.value.trim()) return
 
-  if (content.value.trim() === '/model') {
-    openModelPicker()
+  if (openPickerFor(content.value.trim())) {
     return
   }
 

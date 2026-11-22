@@ -64,7 +64,9 @@
             :modes="modes"
             :show-thinking-toggle="showThinkingToggle"
             :effort-level="session?.effortLevel.value"
+            :auto-effort-level="session?.appliedEffort.value"
             :effort-levels="effortLevels"
+            @command-panel-open="() => session?.refreshAppliedEffort()"
             @submit="handleSubmit"
             @stop="handleStop"
             @add-attachment="handleAddAttachment"
@@ -317,11 +319,11 @@
     await s.setThinkingLevel(newLevel);
   }
 
-  async function handleEffortSelect(level: string) {
+  async function handleEffortSelect(level: string, persist = false) {
     const s = session.value;
     if (!s) return;
 
-    await s.setEffortLevel(level);
+    await s.setEffortLevel(level, persist);
   }
 
   async function handleModeSelect(mode: PermissionMode) {
@@ -370,7 +372,8 @@
     when: () =>
       isBusy.value &&
       !pendingPermission.value &&
-      !document.querySelector('.dropdown-popover'),
+      !document.querySelector('.dropdown-popover') &&
+      !document.querySelector('.command-panel'),
   });
 
   // The CLI can switch model by itself (`/model <name>` typed in the chat);

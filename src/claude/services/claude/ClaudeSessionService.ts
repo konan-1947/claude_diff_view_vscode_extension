@@ -30,10 +30,16 @@ interface SessionMessage {
     uuid: string;
     sessionId: string;
     parentUuid?: string;
+    /** Set on a compact_boundary: the last message before compaction (parentUuid is null there) */
+    logicalParentUuid?: string;
     timestamp: string;
     type: "user" | "assistant" | "attachment" | "system" | "summary" | "ai-title" | "custom-title";
     message?: any;
     isMeta?: boolean;
+    /** The synthetic summary message written right after a compact_boundary */
+    isCompactSummary?: boolean;
+    subtype?: string;
+    compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number };
     isSidechain?: boolean;
     leafUuid?: string;
     summary?: string;
@@ -158,6 +164,22 @@ function convertMessage(msg: SessionMessage): any | undefined {
             session_id: msg.uuid,
             parent_tool_use_id: null,
             toolUseResult: msg.toolUseResult,
+            // Same flag the live stream sets on the summary (isSynthetic): not shown
+            ...(msg.isCompactSummary ? { isCompactSummary: true } : {}),
+            timestamp
+        };
+    }
+
+    // Shaped like the live SDK message, so history shows the same marker
+    if (msg.type === "system" && msg.subtype === "compact_boundary") {
+        return {
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: {
+                trigger: msg.compactMetadata?.trigger,
+                pre_tokens: msg.compactMetadata?.preTokens,
+                post_tokens: msg.compactMetadata?.postTokens
+            },
             timestamp
         };
     }
@@ -212,7 +234,7 @@ function generateSummary(messages: SessionMessage[]): string {
     let text = "";
 
     for (const msg of messages) {
-        if (msg.type !== "user" || msg.isMeta) {
+        if (msg.type !== "user" || msg.isMeta || msg.isCompactSummary) {
             continue;
         }
         text = extractUserText(msg);
@@ -366,8 +388,10 @@ async function loadProjectData(cwd: string): Promise<SessionData> {
 function getTranscripts(data: SessionData): SessionMessage[][] {
     const allMessages = [...data.messages.values()];
 
+    // A compaction links back through logicalParentUuid: the pre-compaction
+    // leaf is not a conversation of its own.
     const referencedUuids = new Set(
-        allMessages.map(msg => msg.parentUuid).filter(Boolean) as string[]
+        allMessages.map(msg => msg.parentUuid ?? msg.logicalParentUuid).filter(Boolean) as string[]
     );
 
     const rootMessages = allMessages.filter(msg => !referencedUuids.has(msg.uuid));
@@ -378,15 +402,20 @@ function getTranscripts(data: SessionData): SessionMessage[][] {
 }
 
 /**
- * Rebuild the full conversation chain
+ * Rebuild the full conversation chain. Crosses compactions (a compact_boundary
+ * has no parentUuid, only logicalParentUuid), so a resumed conversation still
+ * shows what came before /compact, as the CLI's transcript does.
  */
 function getTranscript(message: SessionMessage, data: SessionData): SessionMessage[] {
     const result: SessionMessage[] = [];
+    const seen = new Set<string>();
     let current: SessionMessage | undefined = message;
 
-    while (current) {
+    while (current && !seen.has(current.uuid)) {
+        seen.add(current.uuid);
         result.unshift(current);
-        current = current.parentUuid ? data.messages.get(current.parentUuid) : undefined;
+        const parent: string | undefined = current.parentUuid ?? current.logicalParentUuid;
+        current = parent ? data.messages.get(parent) : undefined;
     }
 
     return result;

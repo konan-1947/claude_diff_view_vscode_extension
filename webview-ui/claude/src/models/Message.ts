@@ -7,7 +7,7 @@
  * 3. Support reactive tool_result linking via ContentBlockWrapper
  */
 
-import type { ContentBlockType } from '../models/ContentBlock';
+import type { ContentBlockType, NoticeBlock } from '../models/ContentBlock';
 import { parseMessageContent } from '../models/contentParsers';
 import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 
@@ -105,6 +105,10 @@ export class Message {
    * @returns a Message instance or null
    */
   static fromRaw(raw: any): Message | null {
+    if (raw.type === 'user' && isHiddenUserMessage(raw)) {
+      return null;
+    }
+
     if (raw.type === 'user' || raw.type === 'assistant') {
       const rawContent = Array.isArray(raw.message?.content)
         ? raw.message.content
@@ -139,7 +143,25 @@ export class Message {
       );
     }
 
-    // Do not render system messages (state updates only)
+    // Compaction marker, as the CLI prints "Conversation compacted" in the transcript
+    if (raw.type === 'system' && raw.subtype === 'compact_boundary') {
+      const block: NoticeBlock = {
+        type: 'notice',
+        icon: 'fold',
+        message: raw.compact_metadata?.trigger === 'auto'
+          ? 'Conversation compacted automatically'
+          : 'Conversation compacted',
+        detail: formatCompactTokens(raw.compact_metadata),
+      };
+      return new Message(
+        'tip',
+        { role: 'system', content: [new ContentBlockWrapper(block)] },
+        toEpochMs(raw.timestamp),
+        { subtype: 'compact_boundary' }
+      );
+    }
+
+    // Do not render other system messages (state updates only)
     if (raw.type === 'system') {
       return null;
     }
@@ -152,6 +174,35 @@ export class Message {
     // stream_event and similar do not create messages
     return null;
   }
+}
+
+/**
+ * User-role messages the CLI adds itself and does not show: the summary that
+ * replaces the conversation after a compaction (`isSynthetic` live,
+ * `isCompactSummary` in history). One carrying tool results still goes
+ * through, so nothing that renders a tool call is lost.
+ */
+function isHiddenUserMessage(raw: any): boolean {
+  if (raw.isCompactSummary === true) return true;
+  if (raw.isSynthetic !== true) return false;
+  const content = raw.message?.content;
+  return !Array.isArray(content) || !content.some((b: any) => b?.type === 'tool_result');
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return `${n}`;
+}
+
+/** "15.9K → 6.6K tokens", or undefined when the CLI gave no counts */
+function formatCompactTokens(meta: any): string | undefined {
+  const pre = meta?.pre_tokens;
+  const post = meta?.post_tokens;
+  if (typeof pre !== 'number' || pre <= 0) return undefined;
+  return typeof post === 'number'
+    ? `${formatTokens(pre)} → ${formatTokens(post)} tokens`
+    : `${formatTokens(pre)} tokens before`;
 }
 
 /**

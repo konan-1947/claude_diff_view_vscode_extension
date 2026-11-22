@@ -39,6 +39,7 @@ import type {
     ToolPermissionRequest,
     ToolPermissionResponse,
     GetContextUsageResponse,
+    GetAppliedEffortResponse,
 } from '../../shared/messages';
 
 // SDK type imports
@@ -708,6 +709,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
             case "get_context_usage":
                 return this.getContextUsage(channelId);
 
+            case "get_applied_effort":
+                return this.getAppliedEffort(channelId);
+
             case "get_asset_uris":
                 return handleGetAssetUris(request, this.handlerContext);
 
@@ -781,7 +785,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
                 if (!channelId) {
                     throw new Error('channelId is required for set_effort_level');
                 }
-                await this.setEffortLevel(channelId, (request as any).effortLevel ?? null);
+                await this.setEffortLevel(
+                    channelId,
+                    (request as any).effortLevel ?? null,
+                    (request as any).persist === true
+                );
                 return {
                     type: "set_effort_level_response"
                 };
@@ -989,7 +997,7 @@ export class ClaudeAgentService implements IClaudeAgentService {
      * The value is passed through as the CLI lists it; null goes back to the
      * model's default.
      */
-    async setEffortLevel(channelId: string, level: string | null): Promise<void> {
+    async setEffortLevel(channelId: string, level: string | null, persist = false): Promise<void> {
         const channel = this.channels.get(channelId);
         if (!channel?.query) {
             return;
@@ -997,6 +1005,16 @@ export class ClaudeAgentService implements IClaudeAgentService {
         const effort = toEffort(level) ?? null;
         await channel.query.applyFlagSettings({ effortLevel: effort });
         this.logService.info(`[setEffortLevel] Set channel ${channelId} to effort: ${effort ?? 'model default'}`);
+
+        // updateSettings saves the model's default only; the running level was set above.
+        if (persist && effort && effort !== 'max') {
+            try {
+                await channel.query.updateSettings('userSettings', { effortLevel: effort });
+                this.logService.info(`[setEffortLevel] Saved ${effort} as the current model's default`);
+            } catch (error) {
+                this.logService.warn(`[setEffortLevel] Could not save default: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
     }
 
     /**
@@ -1011,6 +1029,34 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
         await channel.query.setPermissionMode(mode);
         this.logService.info(`[setPermissionMode] Set channel ${channelId} to mode: ${mode}`);
+    }
+
+    /**
+     * Effort the CLI applies to the next message (what `/effort <level>` set,
+     * after org caps / model downgrades). Read back after a local `/effort`
+     * so the effort picker follows the CLI instead of keeping its own copy.
+     */
+    async getAppliedEffort(channelId?: string): Promise<GetAppliedEffortResponse> {
+        const channel = channelId ? this.channels.get(channelId) : undefined;
+        if (!channel?.query) {
+            return { type: "get_applied_effort_response", effort: undefined };
+        }
+        try {
+            // Implemented by the SDK's Query but missing from its type declarations
+            const query = channel.query as { getSettings?: () => Promise<any> };
+            if (typeof query.getSettings !== 'function') {
+                return { type: "get_applied_effort_response", effort: undefined };
+            }
+            const settings = await query.getSettings();
+            const effort = settings?.applied?.effort;
+            return {
+                type: "get_applied_effort_response",
+                effort: typeof effort === 'string' || effort === null ? effort : undefined
+            };
+        } catch (error) {
+            this.logService.warn(`[getAppliedEffort] ${error instanceof Error ? error.message : String(error)}`);
+            return { type: "get_applied_effort_response", effort: undefined };
+        }
     }
 
     /**

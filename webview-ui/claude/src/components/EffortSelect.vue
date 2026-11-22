@@ -83,6 +83,11 @@ const options = computed(() => [
 const selectedLabel = computed(() => labelOf(props.effortLevel))
 
 const triggerRef = ref<InstanceType<typeof DropdownTrigger>>()
+
+// Lets `/effort` (no argument) open this picker, like the CLI's effort menu.
+defineExpose({
+  open: () => triggerRef.value?.open()
+})
 const { activeIndex, navMode, onOpen, onClose, onMouseEnter } = usePickerKeyboard({
   trigger: triggerRef,
   count: () => options.value.length,

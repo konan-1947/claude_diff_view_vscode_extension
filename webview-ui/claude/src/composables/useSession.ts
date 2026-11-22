@@ -47,6 +47,8 @@ export interface UseSessionReturn {
   cliModel: Ref<string | undefined>;
   thinkingLevel: Ref<string>;
   effortLevel: Ref<string>;
+  appliedEffort: Ref<string | null | undefined>;
+  refreshAppliedEffort: () => Promise<string | null | undefined>;
   todos: Ref<any[]>;
   worktree: Ref<{ name: string; path: string } | undefined>;
   selection: Ref<SelectionRange | undefined>;
@@ -83,7 +85,7 @@ export interface UseSessionReturn {
   setModel: (model: ModelOption) => Promise<boolean>;
   adoptModel: (model: string) => void;
   setThinkingLevel: (level: string) => Promise<void>;
-  setEffortLevel: (level: string) => Promise<void>;
+  setEffortLevel: (level: string, persist?: boolean) => Promise<void>;
   getMcpServers: () => Promise<any>;
   openConfigFile: (configType: string) => Promise<void>;
   onPermissionRequested: (callback: (request: PermissionRequest) => void) => () => void;
@@ -117,6 +119,8 @@ export function useSession(session: Session): UseSessionReturn {
   const cliModel = useSignal(session.cliModel);
   const thinkingLevel = useSignal(session.thinkingLevel);
   const effortLevel = useSignal(session.effortLevel);
+  const appliedEffort = useSignal(session.appliedEffort);
+  const refreshAppliedEffort = session.refreshAppliedEffort.bind(session);
   const todos = useSignal(session.todos);
   const worktree = useSignal(session.worktree);
   const selection = useSignal(session.selection);
@@ -167,6 +171,8 @@ export function useSession(session: Session): UseSessionReturn {
     cliModel,
     thinkingLevel,
     effortLevel,
+    appliedEffort,
+    refreshAppliedEffort,
     todos,
     worktree,
     selection,

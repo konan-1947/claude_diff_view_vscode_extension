@@ -40,6 +40,16 @@ export interface InterruptBlock {
   friendlyMessage: string;
 }
 
+/** One-line marker between messages (e.g. "Conversation compacted") */
+export interface NoticeBlock {
+  type: 'notice';
+  message: string;
+  /** Secondary text after the message, e.g. token counts */
+  detail?: string;
+  /** codicon name without the `codicon-` prefix */
+  icon?: string;
+}
+
 export interface SelectionBlock {
   type: 'selection';
   filePath: string;
@@ -103,6 +113,7 @@ export type ContentBlockType =
   | ImageBlock
   | DocumentBlock
   | InterruptBlock
+  | NoticeBlock
   | LLMErrorBlock
   | SelectionBlock
   | OpenedFileBlock

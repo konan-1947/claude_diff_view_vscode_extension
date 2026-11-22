@@ -249,6 +249,13 @@ export interface SetEffortLevelRequest {
     type: "set_effort_level";
     channelId: string;
     effortLevel: string | null;
+    /**
+     * Also save it as the default for the session's current model in
+     * ~/.claude/settings.json, as the CLI's /effort menu does on Enter.
+     * Ignored for "auto"/null (the CLI cannot delete the key) and "max"
+     * (session-only by design).
+     */
+    persist?: boolean;
 }
 
 export interface SetEffortLevelResponse {
@@ -320,6 +327,21 @@ export interface GetContextUsageResponse {
         percentage: number;
         model: string;
     } | null;
+}
+
+/**
+ * Effort level the CLI will send with the next message (`getSettings().applied.effort`),
+ * after `/effort`, org caps and model downgrades. `auto` reads back as the
+ * model's default level, never as "auto".
+ */
+export interface GetAppliedEffortRequest {
+    type: "get_applied_effort";
+}
+
+export interface GetAppliedEffortResponse {
+    type: "get_applied_effort_response";
+    /** null = no effort parameter sent; undefined = unknown (no channel / older CLI) */
+    effort: string | null | undefined;
 }
 
 /**
@@ -833,6 +855,7 @@ export type WebViewRequest =
     | SdkProbeRequest
     | GetMcpServersRequest
     | GetContextUsageRequest
+    | GetAppliedEffortRequest
     | GetAssetUrisRequest
     | ListSessionsRequest
     | GetSessionRequest
@@ -875,6 +898,7 @@ export type WebViewRequestResponse =
     | SdkProbeResponse
     | GetMcpServersResponse
     | GetContextUsageResponse
+    | GetAppliedEffortResponse
     | GetAssetUrisResponse
     | ListSessionsResponse
     | GetSessionResponse
