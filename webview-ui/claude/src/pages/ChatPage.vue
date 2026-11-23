@@ -41,7 +41,8 @@
                 />
               </template>
             <!-- </div> -->
-            <div v-if="isBusy || shellRunning" class="spinnerRow">
+            <!-- No spinner while a prompt waits for the user: nothing is running then -->
+            <div v-if="(isBusy || shellRunning) && !pendingPermission" class="spinnerRow">
               <Spinner
                 :size="16"
                 :permission-mode="permissionMode"
