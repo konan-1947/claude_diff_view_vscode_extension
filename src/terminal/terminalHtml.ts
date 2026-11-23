@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { findInstallableForPrimary } from './fontInstaller';
 import { PENDING_TREE_CSS } from '../views/pendingTree';
-import { DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_FOCUS_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
+import { CLAUDE_UI_LIMITS, DEFAULT_CLAUDE_UI_APPEARANCE, DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_FOCUS_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 import { TERMINAL_THEMES } from './terminalThemes';
 
 interface FontOption {
@@ -33,6 +33,13 @@ const FONT_OPTIONS: ReadonlyArray<FontOption> = [
   { label: 'Roboto Mono',       value: '"Roboto Mono", Consolas, monospace',                     primary: 'Roboto Mono' },
   { label: 'SF Mono',           value: '"SF Mono", Menlo, Consolas, monospace',                  primary: 'SF Mono' },
   { label: 'Courier New',       value: '"Courier New", Courier, monospace',                      primary: 'Courier New' },
+];
+
+/** Claude UI font: '' follows VS Code's editor font (what the chat uses by default). */
+const CLAUDE_FONT_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+  { label: 'Follow VS Code', value: '' },
+  { label: 'System UI (sans-serif)', value: 'system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif' },
+  ...FONT_OPTIONS.map((f) => ({ label: f.label, value: f.value })),
 ];
 
 export interface IntroSlide {
@@ -1402,6 +1409,64 @@ ${FONT_OPTIONS.map((f) => {
         </div>
         </section>
 
+        <section class="settings-card">
+        <h3 class="settings-card-title">Claude UI appearance</h3>
+        <div class="field-grid">
+        <div class="field">
+          <label for="f-claude-font-size">Font size</label>
+          <input id="f-claude-font-size" type="number" min="${CLAUDE_UI_LIMITS.fontSize.min}" max="${CLAUDE_UI_LIMITS.fontSize.max}" step="1">
+        </div>
+        <div class="field">
+          <label for="f-claude-line-height">Line height</label>
+          <input id="f-claude-line-height" type="number" min="${CLAUDE_UI_LIMITS.lineHeight.min}" max="${CLAUDE_UI_LIMITS.lineHeight.max}" step="1">
+        </div>
+        <div class="field">
+          <label for="f-claude-row-gap">Row spacing</label>
+          <input id="f-claude-row-gap" type="number" min="${CLAUDE_UI_LIMITS.rowGap.min}" max="${CLAUDE_UI_LIMITS.rowGap.max}" step="1">
+        </div>
+        <div class="field">
+          <label for="f-claude-column-max">Max width</label>
+          <input id="f-claude-column-max" type="number" min="0" max="${CLAUDE_UI_LIMITS.columnMaxWidth.max}" step="20">
+        </div>
+        </div>
+        <p class="setting-help">Font size scales the whole chat (14 = 100%). Line height, row spacing and max width are in px at 100%; max width 0 = full width.</p>
+        <div class="field">
+          <label for="f-claude-font-family">Font family</label>
+          <select id="f-claude-font-family">
+${CLAUDE_FONT_OPTIONS.map((f) => `            <option value="${escapeAttr(f.value)}">${escapeHtml(f.label)}</option>`).join('\n')}
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-claude-preset">Theme</label>
+          <select id="f-claude-preset">
+            <option value="vscode">Follow VS Code</option>
+            ${themeOptionsHtml()}
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div class="field indent claude-custom-only">
+          <label for="f-claude-bg">Background</label>
+          <div class="color-row">
+            <input id="f-claude-bg" type="color">
+            <span id="f-claude-bg-hex"></span>
+          </div>
+        </div>
+        <div class="field indent claude-custom-only">
+          <label for="f-claude-fg">Foreground</label>
+          <div class="color-row">
+            <input id="f-claude-fg" type="color">
+            <span id="f-claude-fg-hex"></span>
+          </div>
+        </div>
+        <div class="field indent claude-custom-only">
+          <label for="f-claude-accent">Accent</label>
+          <div class="color-row">
+            <input id="f-claude-accent" type="color">
+            <span id="f-claude-accent-hex"></span>
+          </div>
+        </div>
+        </section>
+
         <section class="settings-card span-1">
         <h3 class="settings-card-title">Behavior</h3>
         <div class="field">
@@ -1673,7 +1738,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return;
       }
 
-      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FOCUS_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS, ...DEFAULT_EXCLUSION_SETTINGS })};
+      const DEFAULTS = ${JSON.stringify({ ...DEFAULT_SETTINGS, ...DEFAULT_BURST_DETECTION_SETTINGS, ...DEFAULT_SOUND_NOTIFICATION_SETTINGS, ...DEFAULT_FOCUS_SETTINGS, ...DEFAULT_FILE_LIMIT_SETTINGS, ...DEFAULT_EXCLUSION_SETTINGS, claudeUi: DEFAULT_CLAUDE_UI_APPEARANCE })};
+      const CLAUDE_LIMITS = ${JSON.stringify(CLAUDE_UI_LIMITS)};
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
       const termHost = document.getElementById('term-host');
@@ -1714,6 +1780,43 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       }
 
       const BUILTIN_THEMES = ${JSON.stringify(Object.fromEntries(TERMINAL_THEMES.map((t) => [t.id, t.colors])))};
+
+      const THEME_KINDS = ${JSON.stringify(Object.fromEntries(TERMINAL_THEMES.map((t) => [t.id, t.group])))};
+
+      // Claude UI appearance → what ClaudeFrame.setAppearance applies (colors null = VS Code theme)
+      function resolveClaudeAppearance(a) {
+        a = a || DEFAULTS.claudeUi;
+        let colors = null;
+        const preset = BUILTIN_THEMES[a.themePreset];
+        if (preset) {
+          colors = {
+            kind: THEME_KINDS[a.themePreset] === 'light' ? 'light' : 'dark',
+            background: preset.background,
+            foreground: preset.foreground,
+            accent: preset.brightBlue || preset.blue,
+            green: preset.green, red: preset.red, yellow: preset.yellow,
+            blue: preset.blue, purple: preset.magenta, orange: preset.brightYellow,
+          };
+        } else if (a.themePreset === 'custom') {
+          const c = a.customColors;
+          colors = { kind: isLightColor(c.background) ? 'light' : 'dark', background: c.background, foreground: c.foreground, accent: c.accent };
+        }
+        return {
+          zoom: a.fontSize / 14,
+          fontFamily: a.fontFamily,
+          lineHeight: a.lineHeight,
+          rowGap: a.rowGap,
+          columnMaxWidth: a.columnMaxWidth,
+          colors,
+        };
+      }
+
+      function isLightColor(hex) {
+        const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+        if (!m) return false;
+        const [r, g, b] = [m[1], m[2], m[3]].map((h) => parseInt(h, 16));
+        return 0.299 * r + 0.587 * g + 0.114 * b > 150;
+      }
 
       function resolveTheme(s) {
         if (BUILTIN_THEMES[s.themePreset]) return BUILTIN_THEMES[s.themePreset];
@@ -1757,6 +1860,9 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       function applySettings(s) {
         currentSettings = s;
+        if (window.ClaudeFrame && window.ClaudeFrame.setAppearance) {
+          window.ClaudeFrame.setAppearance(resolveClaudeAppearance(s.claudeUi));
+        }
         const theme = resolveTheme(s);
         applyChromeColors(s, theme);
         document.documentElement.style.setProperty('--term-bg', theme.background);
@@ -2654,6 +2760,19 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const fMaxFileLines = document.getElementById('f-max-file-lines');
       const fMaxAutoOpen = document.getElementById('f-max-auto-open');
       const customRows = document.querySelectorAll('.custom-only');
+      const fClaudeFontSize = document.getElementById('f-claude-font-size');
+      const fClaudeLineHeight = document.getElementById('f-claude-line-height');
+      const fClaudeRowGap = document.getElementById('f-claude-row-gap');
+      const fClaudeColumnMax = document.getElementById('f-claude-column-max');
+      const fClaudeFontFamily = document.getElementById('f-claude-font-family');
+      const fClaudePreset = document.getElementById('f-claude-preset');
+      const fClaudeBg = document.getElementById('f-claude-bg');
+      const fClaudeFg = document.getElementById('f-claude-fg');
+      const fClaudeAccent = document.getElementById('f-claude-accent');
+      const fClaudeBgHex = document.getElementById('f-claude-bg-hex');
+      const fClaudeFgHex = document.getElementById('f-claude-fg-hex');
+      const fClaudeAccentHex = document.getElementById('f-claude-accent-hex');
+      const claudeCustomRows = document.querySelectorAll('.claude-custom-only');
 
       // Pattern .gitignore (Included files + Excluded paths): giữ nguyên hoa/thường, không tự thêm dấu chấm.
       function parsePatterns(value) {
@@ -2887,12 +3006,59 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fBurstHold.value = String(s.burstDetectionHoldMs);
         fMaxFileLines.value = String(s.maxFileLines);
         fMaxAutoOpen.value = String(s.maxAutoOpenDiffs);
+        const c = s.claudeUi || DEFAULTS.claudeUi;
+        fClaudeFontSize.value = String(c.fontSize);
+        fClaudeLineHeight.value = String(c.lineHeight);
+        fClaudeRowGap.value = String(c.rowGap);
+        fClaudeColumnMax.value = String(c.columnMaxWidth);
+        fClaudeFontFamily.value = c.fontFamily;
+        if (fClaudeFontFamily.value !== c.fontFamily) {
+          // Stored font not in the list (an older list, or edited by hand): keep it selectable
+          const extra = document.createElement('option');
+          extra.value = c.fontFamily;
+          extra.textContent = 'Custom: ' + (c.fontFamily.split(',')[0] || c.fontFamily).replace(/"/g, '').trim();
+          fClaudeFontFamily.appendChild(extra);
+          fClaudeFontFamily.value = c.fontFamily;
+        }
+        fClaudePreset.value = c.themePreset;
+        fClaudeBg.value = c.customColors.background;
+        fClaudeFg.value = c.customColors.foreground;
+        fClaudeAccent.value = c.customColors.accent;
+        fClaudeBgHex.textContent = c.customColors.background;
+        fClaudeFgHex.textContent = c.customColors.foreground;
+        fClaudeAccentHex.textContent = c.customColors.accent;
         toggleCustomRows();
       }
 
       function toggleCustomRows() {
         const show = fPreset.value === 'custom';
         customRows.forEach((el) => { el.style.display = show ? '' : 'none'; });
+        const showClaude = fClaudePreset.value === 'custom';
+        claudeCustomRows.forEach((el) => { el.style.display = showClaude ? '' : 'none'; });
+      }
+
+      function clampInt(input, limits, fallback, allowZero) {
+        const v = parseInt(input.value, 10);
+        if (!isFinite(v)) return fallback;
+        if (allowZero && v === 0) return 0;
+        return Math.min(limits.max, Math.max(limits.min, v));
+      }
+
+      function readClaudeForm() {
+        const d = DEFAULTS.claudeUi;
+        return {
+          fontSize: clampInt(fClaudeFontSize, CLAUDE_LIMITS.fontSize, d.fontSize),
+          lineHeight: clampInt(fClaudeLineHeight, CLAUDE_LIMITS.lineHeight, d.lineHeight),
+          rowGap: clampInt(fClaudeRowGap, CLAUDE_LIMITS.rowGap, d.rowGap),
+          columnMaxWidth: clampInt(fClaudeColumnMax, CLAUDE_LIMITS.columnMaxWidth, d.columnMaxWidth, true),
+          fontFamily: fClaudeFontFamily.value,
+          themePreset: fClaudePreset.value,
+          customColors: {
+            background: fClaudeBg.value,
+            foreground: fClaudeFg.value,
+            accent: fClaudeAccent.value,
+          },
+        };
       }
 
       function readForm() {
@@ -2925,6 +3091,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           maxAutoOpenDiffs: isFinite(maxAutoOpen) ? Math.min(1000, Math.max(0, maxAutoOpen)) : DEFAULTS.maxAutoOpenDiffs,
           excludedPaths: listEditors.excludedPaths.get(),
           respectGitignore: !!fRespectGitignore.checked,
+          claudeUi: readClaudeForm(),
         };
       }
 
@@ -2997,6 +3164,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       fBg.addEventListener('input', () => { fBgHex.textContent = fBg.value; });
       fFg.addEventListener('input', () => { fFgHex.textContent = fFg.value; });
       fCursorColor.addEventListener('input', () => { fCursorHex.textContent = fCursorColor.value; });
+      fClaudePreset.addEventListener('change', toggleCustomRows);
+      fClaudeBg.addEventListener('input', () => { fClaudeBgHex.textContent = fClaudeBg.value; });
+      fClaudeFg.addEventListener('input', () => { fClaudeFgHex.textContent = fClaudeFg.value; });
+      fClaudeAccent.addEventListener('input', () => { fClaudeAccentHex.textContent = fClaudeAccent.value; });
 
       // ---- Introduce overlay ----
       const INTRO_SLIDES = ${JSON.stringify(introSlides)};

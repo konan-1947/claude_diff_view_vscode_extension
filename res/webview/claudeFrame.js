@@ -20,9 +20,19 @@
  * Messages: the app posts `{ __claudeUi: tabId, message }` to its parent;
  * `create().post(payload)` delivers `{ type: 'from-extension', ... }` back.
  *
+ * Appearance (Settings → Claude UI appearance), set by the parent with
+ * `ClaudeFrame.setAppearance(a)`:
+ * - font size = CSS zoom on the <iframe> element (14 = 100%). The app sizes
+ *   most text and spacing in px, so only zoom scales all of it; zooming the
+ *   iframe (not the document inside) works like page zoom, so viewport sizes
+ *   and element rects inside stay consistent for dropdown placement.
+ * - font, colours and layout = a <style> in the iframe overriding `--vscode-*`
+ *   and `--cs-*` variables (!important beats the inline theme copy on <html>).
+ *
  * Public entry point:
  *   const frame = window.ClaudeFrame.create({ id, resume, onMessage });
  *   host.appendChild(frame.el); frame.post(payload); frame.focus(); frame.dispose();
+ *   window.ClaudeFrame.setAppearance(appearance);
  */
 (function () {
   'use strict';
@@ -101,8 +111,132 @@
     } catch (_) { /* frame navigating */ }
   }
 
+  // ---- appearance -------------------------------------------------------
+
+  /**
+   * { zoom, fontFamily, lineHeight, rowGap, columnMaxWidth,
+   *   colors: null | { kind: 'dark'|'light', background, foreground, accent,
+   *                    green, red, yellow, blue, purple, orange } }
+   */
+  var appearance = null;
+  var THEME_KIND_CLASSES = ['vscode-dark', 'vscode-light', 'vscode-high-contrast', 'vscode-high-contrast-light'];
+
+  function mix(a, b, pct) {
+    return 'color-mix(in srgb, ' + a + ' ' + pct + '%, ' + b + ')';
+  }
+
+  function appearanceCss(a) {
+    var vars = {};
+    if (a.fontFamily) vars['--vscode-editor-font-family'] = a.fontFamily;
+    vars['--cs-line-height'] = a.lineHeight + 'px';
+    vars['--cs-row-gap'] = a.rowGap + 'px';
+    vars['--cs-column-max'] = a.columnMaxWidth > 0 ? a.columnMaxWidth + 'px' : '100000px';
+    var c = a.colors;
+    if (c) {
+      var bg = c.background, fg = c.foreground, accent = c.accent;
+      var raised = mix(bg, fg, 92), border = mix(fg, 'transparent', 18);
+      [
+        '--vscode-editor-background', '--vscode-sideBar-background', '--vscode-panel-background',
+        '--vscode-editorGroupHeader-tabsBackground',
+      ].forEach(function (n) { vars[n] = bg; });
+      [
+        '--vscode-editor-foreground', '--vscode-foreground', '--vscode-input-foreground',
+        '--vscode-dropdown-foreground', '--vscode-menu-foreground', '--vscode-list-hoverForeground',
+        '--vscode-panelTitle-activeForeground',
+      ].forEach(function (n) { vars[n] = fg; });
+      vars['--vscode-descriptionForeground'] = mix(fg, 'transparent', 70);
+      vars['--vscode-input-placeholderForeground'] = mix(fg, 'transparent', 50);
+      [
+        '--vscode-input-background', '--vscode-dropdown-background', '--vscode-menu-background',
+        '--vscode-editorWidget-background', '--vscode-quickInput-background',
+      ].forEach(function (n) { vars[n] = raised; });
+      vars['--vscode-textCodeBlock-background'] = mix(bg, fg, 88);
+      [
+        '--vscode-panel-border', '--vscode-widget-border', '--vscode-input-border',
+        '--vscode-dropdown-border', '--vscode-menu-border', '--vscode-commandCenter-inactiveBorder',
+        '--vscode-inlineChatInput-border',
+      ].forEach(function (n) { vars[n] = border; });
+      vars['--vscode-list-hoverBackground'] = mix(fg, 'transparent', 8);
+      vars['--vscode-list-activeSelectionBackground'] = mix(accent, 'transparent', 30);
+      vars['--vscode-list-activeSelectionForeground'] = fg;
+      vars['--vscode-menu-selectionBackground'] = mix(accent, 'transparent', 30);
+      vars['--vscode-scrollbarSlider-background'] = mix(fg, 'transparent', 15);
+      vars['--vscode-scrollbarSlider-hoverBackground'] = mix(fg, 'transparent', 25);
+      vars['--vscode-scrollbarSlider-activeBackground'] = mix(fg, 'transparent', 35);
+      vars['--vscode-focusBorder'] = accent;
+      vars['--vscode-textLink-foreground'] = accent;
+      vars['--vscode-textLink-activeForeground'] = accent;
+      vars['--vscode-button-background'] = accent;
+      vars['--vscode-button-hoverBackground'] = mix(accent, fg, 85);
+      vars['--vscode-button-foreground'] = c.kind === 'light' ? '#ffffff' : bg;
+      vars['--vscode-badge-background'] = accent;
+      vars['--vscode-progressBar-background'] = accent;
+      if (c.green) {
+        vars['--vscode-charts-green'] = c.green;
+        vars['--vscode-gitDecoration-addedResourceForeground'] = c.green;
+        vars['--vscode-testing-iconPassed'] = c.green;
+      }
+      if (c.red) {
+        vars['--vscode-charts-red'] = c.red;
+        vars['--vscode-errorForeground'] = c.red;
+        vars['--vscode-gitDecoration-deletedResourceForeground'] = c.red;
+        vars['--vscode-testing-iconFailed'] = c.red;
+      }
+      if (c.yellow) {
+        vars['--vscode-charts-yellow'] = c.yellow;
+        vars['--vscode-editorWarning-foreground'] = c.yellow;
+      }
+      if (c.blue) vars['--vscode-charts-blue'] = c.blue;
+      if (c.purple) vars['--vscode-charts-purple'] = c.purple;
+      if (c.orange) vars['--vscode-charts-orange'] = c.orange;
+    }
+    var body = Object.keys(vars).map(function (n) { return '  ' + n + ': ' + vars[n] + ' !important;'; }).join('\n');
+    return ':root {\n' + body + '\n}' + (c ? '\nhtml, body { background: ' + c.background + ' !important; }' : '');
+  }
+
+  function applyAppearance(frame) {
+    var iframe = frame.iframe;
+    var a = appearance;
+    iframe.style.zoom = a && a.zoom && a.zoom !== 1 ? String(a.zoom) : '';
+    var doc = frame.doc();
+    if (!doc || !doc.head || !doc.body) return;
+    try {
+      var style = doc.getElementById('ai-cli-claude-appearance');
+      if (!a) {
+        if (style) style.remove();
+        return;
+      }
+      if (!style) {
+        style = doc.createElement('style');
+        style.id = 'ai-cli-claude-appearance';
+      }
+      // Last in <head>, after the app's own stylesheet
+      doc.head.appendChild(style);
+      style.textContent = appearanceCss(a);
+      // A light preset under a dark VS Code theme (or the reverse): the app's
+      // `.vscode-light` rules must follow the preset. syncTheme ran just
+      // before, so with no preset the copied VS Code classes stay.
+      if (a.colors) {
+        THEME_KIND_CLASSES.forEach(function (k) { doc.body.classList.remove(k); });
+        doc.body.classList.add('vscode-' + a.colors.kind);
+        doc.body.setAttribute('data-vscode-theme-kind', 'vscode-' + a.colors.kind);
+      }
+    } catch (_) { /* frame navigating */ }
+  }
+
+  function setAppearance(a) {
+    appearance = a || null;
+    frames.forEach(function (f) {
+      syncTheme(f.doc());
+      applyAppearance(f);
+    });
+  }
+
   var themeObserver = new MutationObserver(function () {
-    frames.forEach(function (f) { syncTheme(f.doc()); });
+    frames.forEach(function (f) {
+      syncTheme(f.doc());
+      applyAppearance(f);
+    });
   });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
   if (document.body) {
@@ -163,6 +297,7 @@
     var frame = {
       id: id,
       el: el,
+      iframe: iframe,
       doc: function () {
         try { return iframe.contentDocument; } catch (_) { return null; }
       },
@@ -200,6 +335,7 @@
       loaded = true;
       var doc = frame.doc();
       syncTheme(doc);
+      applyAppearance(frame);
       try { forwardKeys(iframe.contentWindow); } catch (_) {}
       var pending = queue.splice(0);
       pending.forEach(function (p) { frame.post(p); });
@@ -233,6 +369,7 @@
     }
 
     frames.add(frame);
+    applyAppearance(frame);
     loadAssets().then(function (parts) {
       if (disposed) return;
       html = buildDocument(parts[0], parts[1], {
@@ -253,5 +390,5 @@
     return frame;
   }
 
-  window.ClaudeFrame = { create: create };
+  window.ClaudeFrame = { create: create, setAppearance: setAppearance };
 })();

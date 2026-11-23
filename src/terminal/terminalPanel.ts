@@ -15,7 +15,10 @@ import { getPreviewKind, isBinaryImage } from '../preview/previewKind';
 import { applySoundNotifications } from '../commands/soundNotifications';
 import {
   BurstDetectionSettings,
+  CLAUDE_UI_LIMITS,
+  ClaudeUiAppearance,
   CursorStyle,
+  DEFAULT_CLAUDE_UI_APPEARANCE,
   DEFAULT_BURST_DETECTION_SETTINGS,
   DEFAULT_EXCLUSION_SETTINGS,
   DEFAULT_FILE_LIMIT_SETTINGS,
@@ -36,6 +39,7 @@ import {
 import { THEME_PRESET_IDS } from './terminalThemes';
 
 const SETTINGS_KEY = 'ai-cli-diff-view.terminal.settings';
+const CLAUDE_UI_APPEARANCE_KEY = 'ai-cli-diff-view.claudeUi.appearance';
 const INTRODUCE_SEEN_KEY = 'ai-cli-diff-view.introduce.seen';
 const MAX_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024;
 
@@ -308,6 +312,44 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     await this.context.globalState.update(SETTINGS_KEY, s);
   }
 
+  /** Any stored or incoming value made valid, field by field, over `base` */
+  private normalizeClaudeUi(v: unknown, base: ClaudeUiAppearance): ClaudeUiAppearance {
+    const src = (v && typeof v === 'object' ? v : {}) as Partial<ClaudeUiAppearance>;
+    const num = (x: unknown, key: keyof typeof CLAUDE_UI_LIMITS, fallback: number, allowZero = false): number => {
+      if (typeof x !== 'number' || !isFinite(x)) return fallback;
+      if (allowZero && x === 0) return 0;
+      const { min, max } = CLAUDE_UI_LIMITS[key];
+      return Math.round(Math.min(max, Math.max(min, x)));
+    };
+    return {
+      fontSize: num(src.fontSize, 'fontSize', base.fontSize),
+      fontFamily: typeof src.fontFamily === 'string' ? src.fontFamily.trim() : base.fontFamily,
+      themePreset: src.themePreset === undefined ? base.themePreset : this.normalizePreset(src.themePreset),
+      customColors: {
+        background: this.normalizeColor(src.customColors?.background, base.customColors.background),
+        foreground: this.normalizeColor(src.customColors?.foreground, base.customColors.foreground),
+        accent: this.normalizeColor(src.customColors?.accent, base.customColors.accent),
+      },
+      lineHeight: num(src.lineHeight, 'lineHeight', base.lineHeight),
+      rowGap: num(src.rowGap, 'rowGap', base.rowGap),
+      columnMaxWidth: num(src.columnMaxWidth, 'columnMaxWidth', base.columnMaxWidth, true),
+    };
+  }
+
+  private loadClaudeUiAppearance(): ClaudeUiAppearance {
+    const defaults: ClaudeUiAppearance = {
+      ...DEFAULT_CLAUDE_UI_APPEARANCE,
+      customColors: { ...DEFAULT_CLAUDE_UI_APPEARANCE.customColors },
+    };
+    return this.normalizeClaudeUi(this.context.globalState.get(CLAUDE_UI_APPEARANCE_KEY), defaults);
+  }
+
+  private async saveClaudeUiAppearance(incoming: unknown): Promise<void> {
+    if (!incoming) return;
+    const next = this.normalizeClaudeUi(incoming, this.loadClaudeUiAppearance());
+    await this.context.globalState.update(CLAUDE_UI_APPEARANCE_KEY, next);
+  }
+
   private loadSettingsPayload(): TerminalSettingsPayload {
     return {
       ...this.loadSettings(),
@@ -317,6 +359,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       ...this.loadFocusSettings(),
       ...this.loadFileLimitSettings(),
       ...this.loadExclusionSettings(),
+      claudeUi: this.loadClaudeUiAppearance(),
     };
   }
 
@@ -710,6 +753,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.saveFocusSettings(incoming),
             this.saveFileLimitSettings(incoming),
             this.saveExclusionSettings(incoming),
+            this.saveClaudeUiAppearance((incoming as Partial<TerminalSettingsPayload>).claudeUi),
           ]).then(() => {
             this.webview?.postMessage({ type: 'settings', settings: this.loadSettingsPayload() });
           });

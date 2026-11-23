@@ -48,10 +48,52 @@ export interface ExclusionSettings {
   respectGitignore: boolean;
 }
 
+/** Claude UI accent/background/foreground for the `custom` preset. */
+export interface ClaudeUiColors {
+  background: string;
+  foreground: string;
+  accent: string;
+}
+
+/**
+ * Look of the Claude UI tabs (applied by `res/webview/claudeFrame.js`).
+ * `fontSize` scales the whole iframe (CSS zoom, 14 = 100%), since the app sizes
+ * most of its text and spacing in px; the layout values are px at 100%.
+ */
+export interface ClaudeUiAppearance {
+  fontSize: number;
+  /** '' = follow VS Code (`editor.fontFamily`) */
+  fontFamily: string;
+  themePreset: ThemePreset;
+  customColors: ClaudeUiColors;
+  lineHeight: number;
+  rowGap: number;
+  /** Widest the chat column gets; 0 = full width */
+  columnMaxWidth: number;
+}
+
+export const CLAUDE_UI_LIMITS = {
+  fontSize: { min: 10, max: 24 },
+  lineHeight: { min: 14, max: 40 },
+  rowGap: { min: 0, max: 40 },
+  columnMaxWidth: { min: 480, max: 4000 },
+} as const;
+
+export const DEFAULT_CLAUDE_UI_APPEARANCE: ClaudeUiAppearance = {
+  fontSize: 14,
+  fontFamily: '',
+  themePreset: 'vscode',
+  customColors: { background: '#1e1e1e', foreground: '#cccccc', accent: '#3b8eea' },
+  lineHeight: 22,
+  rowGap: 14,
+  columnMaxWidth: 840,
+};
+
 export interface TerminalSettingsPayload
   extends TerminalSettings, BurstDetectionSettings, SoundNotificationSettings, FocusSettings, FileLimitSettings, ExclusionSettings {
   /** `.gitignore`-style patterns of extra files to track. See `src/watcher/fileTypeRules.ts`. */
   includedPaths: string[];
+  claudeUi: ClaudeUiAppearance;
 }
 
 export const DEFAULT_BURST_DETECTION_SETTINGS: BurstDetectionSettings = {
