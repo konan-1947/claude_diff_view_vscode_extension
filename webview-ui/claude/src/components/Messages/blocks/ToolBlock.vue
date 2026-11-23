@@ -47,8 +47,10 @@ const props = defineProps<Props>();
 // 🔥 Wrap alien-signals with useSignal so Vue can track reactive changes
 const toolResult = props.wrapper ? useSignal(props.wrapper.toolResult) : ref(undefined);
 
-// Get the tool use result (data from session load)
+// Structured tool output. A plain property on the wrapper, set right before the
+// reactive tool_result, so depend on toolResult to re-read it when the result lands.
 const toolUseResult = computed(() => {
+  void toolResult.value;
   if (!props.wrapper) return undefined;
   return props.wrapper.toolUseResult;
 });

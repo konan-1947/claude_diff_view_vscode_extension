@@ -78,15 +78,36 @@ function resultText(): string {
 }
 
 /** Answers keyed by question text: structured result first, else the result text
- *  (`"question"="answer"` pairs, as the CLI writes it). */
+ *  (`"question"="answer", ...` pairs, as the CLI writes it). The CLI does not
+ *  escape quotes inside a question or answer, so a generic `"…"="…"` regex
+ *  breaks on e.g. `ví dụ "abc"`; instead locate each known question's
+ *  `"<question>"="` marker and take everything up to the next marker. */
 const answers = computed<Record<string, string>>(() => {
   const structured = props.toolUseResult?.answers ?? props.toolUse?.input?.answers;
   if (structured && typeof structured === 'object') return structured;
   const out: Record<string, string> = {};
-  const re = /"((?:[^"\\]|\\.)*)"="((?:[^"\\]|\\.)*)"/g;
   const text = resultText();
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) out[m[1]] = m[2];
+  const marks = questions.value
+    .map((q) => {
+      const marker = `"${q.question}"="`;
+      const at = text.indexOf(marker);
+      return { q: q.question, at, start: at + marker.length };
+    })
+    .filter((m) => m.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  marks.forEach((m, i) => {
+    const next = marks[i + 1];
+    let raw = next ? text.slice(m.start, next.at) : text.slice(m.start);
+    if (next) {
+      raw = raw.replace(/",\s*$/, '');
+    } else {
+      // Last pair: the answer ends at the last quote (the CLI's trailing
+      // sentence after it has none), so quotes inside the answer survive.
+      const end = raw.lastIndexOf('"');
+      if (end >= 0) raw = raw.slice(0, end);
+    }
+    out[m.q] = raw;
+  });
   return out;
 });
 

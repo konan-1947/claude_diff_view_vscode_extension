@@ -129,13 +129,16 @@ export function processAndAttachMessage(messages: Message[], rawEvent: any): voi
             if (block.type === 'tool_result') {
                 const toolUseWrapper = findToolUseBlock(messages, block.tool_use_id);
                 if (toolUseWrapper) {
+                    // Structured tool output: `tool_use_result` on live SDK messages,
+                    // `toolUseResult` in the transcript on session load. Set it before
+                    // the (reactive) tool_result so readers see both at once.
+                    const structured = rawEvent.toolUseResult ?? rawEvent.tool_use_result;
+                    if (structured) {
+                        toolUseWrapper.toolUseResult = structured;
+                    }
+
                     // Link tool_result (live conversation)
                     toolUseWrapper.setToolResult(block);
-
-                    // Link toolUseResult (extra data on session load)
-                    if (rawEvent.toolUseResult) {
-                        toolUseWrapper.toolUseResult = rawEvent.toolUseResult;
-                    }
                 }
             }
         }
