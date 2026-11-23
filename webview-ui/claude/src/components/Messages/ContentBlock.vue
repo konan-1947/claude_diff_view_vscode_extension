@@ -38,6 +38,7 @@ import DiagnosticsBlock from './blocks/DiagnosticsBlock.vue';
 import ToolBlock from './blocks/ToolBlock.vue';
 import ToolResultBlock from './blocks/ToolResultBlock.vue';
 import UnknownBlock from './blocks/UnknownBlock.vue';
+import UsageReportBlock from './blocks/UsageReportBlock.vue';
 
 interface Props {
   block: ContentBlockType;
@@ -76,6 +77,8 @@ const blockComponent = computed(() => {
       return ToolBlock;
     case 'tool_result':
       return ToolResultBlock;
+    case 'usage_report':
+      return UsageReportBlock;
     default:
       return UnknownBlock;
   }

@@ -227,6 +227,26 @@ function convertMessage(msg: SessionMessage): any | undefined {
         return hook ? { ...hook, timestamp } : undefined;
     }
 
+    // Output of a local slash command (/usage, /model…). Live it arrives as a
+    // `<synthetic>` assistant text, so history gets the same shape.
+    if (msg.type === "system" && msg.subtype === "local_command") {
+        const content = (msg as any).content;
+        const text = typeof content === "string"
+            ? content.replace(/<\/?local-command-(?:stdout|stderr)>/g, "").trim()
+            : "";
+        if (!text) {
+            return undefined;
+        }
+        return {
+            type: "assistant",
+            message: { role: "assistant", model: "<synthetic>", content: [{ type: "text", text }] },
+            session_id: msg.uuid,
+            parent_tool_use_id: null,
+            uuid: msg.uuid,
+            timestamp
+        };
+    }
+
     if (msg.type === "system") {
         return undefined;
     }

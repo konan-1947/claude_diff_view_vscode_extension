@@ -10,6 +10,7 @@
 import type { ContentBlockType, HookBlock, NoticeBlock } from '../models/ContentBlock';
 import { parseMessageContent } from '../models/contentParsers';
 import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
+import { parseUsageReport } from '../models/usageReport';
 
 /**
  * Message type
@@ -111,6 +112,18 @@ export class Message {
       return null;
     }
 
+    // `/usage` output: the CLI answers local commands with a `<synthetic>`
+    // assistant text; this one is drawn as a card instead of plain lines.
+    const usage = raw.type === 'assistant' ? usageReportOf(raw) : undefined;
+    if (usage) {
+      return new Message(
+        'tip',
+        { role: 'system', content: [new ContentBlockWrapper(usage)] },
+        toEpochMs(raw.timestamp),
+        { subtype: 'usage_report' }
+      );
+    }
+
     if (raw.type === 'user' || raw.type === 'assistant') {
       const rawContent = Array.isArray(raw.message?.content)
         ? raw.message.content
@@ -205,6 +218,17 @@ function isHiddenUserMessage(raw: any): boolean {
   if (raw.isSynthetic !== true) return false;
   const content = raw.message?.content;
   return !Array.isArray(content) || !content.some((b: any) => b?.type === 'tool_result');
+}
+
+function usageReportOf(raw: any) {
+  if (raw.message?.model !== '<synthetic>') return undefined;
+  const content = raw.message?.content;
+  const text = typeof content === 'string'
+    ? content
+    : Array.isArray(content) && content.length === 1 && content[0]?.type === 'text'
+      ? content[0].text
+      : undefined;
+  return typeof text === 'string' ? parseUsageReport(text) : undefined;
 }
 
 function formatTokens(n: number): string {

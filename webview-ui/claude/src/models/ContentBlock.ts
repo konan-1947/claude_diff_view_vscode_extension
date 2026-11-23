@@ -130,6 +130,10 @@ export type ToolUseContentBlock = ToolUseBlock & {
   toolResult?: ToolResultBlock;
 };
 
+import type { UsageReportBlock } from './usageReport';
+
+export type { UsageReportBlock };
+
 export type ContentBlockType =
   | TextBlock
   | ThinkingBlock
@@ -143,6 +147,7 @@ export type ContentBlockType =
   | OpenedFileBlock
   | DiagnosticsBlock
   | SlashCommandResultBlock
+  | UsageReportBlock
   | BashBlock
   | ToolUseContentBlock
   | ToolResultBlock;
