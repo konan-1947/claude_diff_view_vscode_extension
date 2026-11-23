@@ -38,6 +38,12 @@ export interface TaskInfo {
   error?: string;
 }
 
+/** A task the CLI already reported as finished is gone, even before its next task list */
+const FINISHED_STATUSES = new Set(['completed', 'failed', 'killed', 'stopped']);
+export function isTaskFinished(info: TaskInfo | undefined): boolean {
+  return FINISHED_STATUSES.has(info?.status ?? '');
+}
+
 export interface BackgroundTask {
   taskId: string;
   taskType: string;

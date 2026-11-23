@@ -958,6 +958,25 @@ export interface StopTaskResponse {
 }
 
 /**
+ * Output so far of a background Bash task: the tail of the file the CLI
+ * writes it to (`.../tasks/<id>.output`, named in the Bash tool result).
+ */
+export interface ReadTaskOutputRequest {
+    type: "read_task_output";
+    path: string;
+    /** Most bytes returned, from the end of the file */
+    maxBytes?: number;
+}
+
+export interface ReadTaskOutputResponse {
+    type: "read_task_output_response";
+    output?: string;
+    /** The file is longer than what was returned */
+    truncated?: boolean;
+    error?: string;
+}
+
+/**
  * Rewind conversation: the transcript entry just before a user message, to
  * resume at (`resumeSessionAt`). null = it was the first message.
  */
@@ -1433,6 +1452,7 @@ export type WebViewRequest =
     | RewindFilesRequest
     | StopTaskRequest
     | GetRewindPointRequest
+    | ReadTaskOutputRequest
     | ListFilesRequest
     | OpenURLRequest
     | StatPathRequest
@@ -1495,6 +1515,7 @@ export type WebViewRequestResponse =
     | RewindFilesResponse
     | StopTaskResponse
     | GetRewindPointResponse
+    | ReadTaskOutputResponse
     | ListFilesResponse
     | OpenURLResponse
     | StatPathResponse

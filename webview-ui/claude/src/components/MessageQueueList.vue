@@ -15,6 +15,7 @@
           <span>{{ queuedMessages.length }} Queued</span>
         </div>
       </div>
+      <span class="queue-hint">↑ to edit</span>
     </div>
 
     <!-- Queue list (when expanded) -->
@@ -105,6 +106,14 @@ function toggleExpanded() {
 </script>
 
 <style scoped>
+.queue-hint {
+  flex-shrink: 0;
+  padding-right: 8px;
+  font-size: 11px;
+  color: var(--vscode-input-placeholderForeground);
+  opacity: 0.7;
+}
+
 
 .queue-item {
   display: flex;

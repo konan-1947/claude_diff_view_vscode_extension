@@ -112,7 +112,9 @@ import type {
     RunShellCommandRequest,
     RunShellCommandResponse,
     GetRewindPointRequest,
-    GetRewindPointResponse
+    GetRewindPointResponse,
+    ReadTaskOutputRequest,
+    ReadTaskOutputResponse
 } from '../../../shared/messages';
 import { appendPromptHistory, readPromptHistory, runShellCommand } from '../promptTools';
 import {
@@ -775,6 +777,39 @@ export async function handleRunShellCommand(
     return runShellCommand(request.command, requestCwd(request.cwd, context), signal);
 }
 
+/**
+ * Tail of a background task's output file. Only `<...>/tasks/<id>.output`
+ * files are read: the path comes from the webview.
+ */
+export async function handleReadTaskOutput(
+    request: ReadTaskOutputRequest
+): Promise<ReadTaskOutputResponse> {
+    const file = path.resolve(String(request.path ?? ''));
+    if (!file.endsWith('.output') || path.basename(path.dirname(file)) !== 'tasks') {
+        return { type: "read_task_output_response", error: 'Not a task output file' };
+    }
+    const maxBytes = Math.min(Math.max(Number(request.maxBytes) || 64 * 1024, 1024), 1024 * 1024);
+    let handle: fs.promises.FileHandle | undefined;
+    try {
+        handle = await fs.promises.open(file, 'r');
+        const { size } = await handle.stat();
+        const start = Math.max(0, size - maxBytes);
+        const buffer = Buffer.alloc(size - start);
+        await handle.read(buffer, 0, buffer.length, start);
+        let output = buffer.toString('utf8');
+        // Started mid-line (and maybe mid-character): drop the partial first line
+        if (start > 0) {
+            const nl = output.indexOf('\n');
+            output = nl >= 0 ? output.slice(nl + 1) : output;
+        }
+        return { type: "read_task_output_response", output, truncated: start > 0 };
+    } catch (error) {
+        return { type: "read_task_output_response", error: error instanceof Error ? error.message : String(error) };
+    } finally {
+        await handle?.close();
+    }
+}
+
 export async function handleGetRewindPoint(
     request: GetRewindPointRequest,
     context: HandlerContext
@@ -888,9 +923,14 @@ export async function handleOpenURL(
     context: HandlerContext
 ): Promise<OpenURLResponse> {
     const { url } = request;
+    // The URL comes from the webview (a link in Claude's reply): only web and
+    // mail links, never `command:` / `vscode:` / `file:` URIs openExternal would run
+    if (!/^(https?:|mailto:)/i.test(String(url ?? '').trim())) {
+        throw new Error(`Refusing to open a non-web URL: ${url}`);
+    }
 
     try {
-        await vscode.env.openExternal(vscode.Uri.parse(url));
+        await vscode.env.openExternal(vscode.Uri.parse(url, true));
         return { type: "open_url_response" };
     } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);

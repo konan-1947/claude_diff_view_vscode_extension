@@ -113,6 +113,8 @@ export class Session {
    */
   private silentInputs = 0;
   private shellAbort?: AbortController;
+  /** The last prompt sent, as typed: Esc before any tool ran gives it back to the input */
+  private lastPrompt?: { input: string; attachments: AttachmentPayload[]; message: Message };
 
   readonly connection = signal<BaseTransport | undefined>(undefined);
 
@@ -295,6 +297,7 @@ export class Session {
 
     if (messageModel) {
       this.messages([...this.messages(), messageModel]);
+      this.lastPrompt = { input, attachments, message: messageModel };
     }
 
     if (!this.summary()) {
@@ -403,6 +406,67 @@ export class Session {
     }
     const connection = await this.getConnection();
     connection.interruptClaude(channelId);
+  }
+
+  /**
+   * Esc on a turn that has run no tool yet, as the CLI does: the prompt does not
+   * stay in the conversation as an interrupted request. The turn is stopped, the
+   * conversation rewound to just before the prompt, and the prompt returned so
+   * the caller can put it back in the input. Undefined when a tool already ran
+   * (or the turn would not stop): then it is an ordinary interrupt.
+   */
+  async withdrawLastPrompt(): Promise<{ input: string; attachments: AttachmentPayload[] } | undefined> {
+    const prompt = this.lastPrompt;
+    if (!prompt || !this.busy() || !this.isUnstarted(prompt.message)) {
+      return undefined;
+    }
+    await this.interrupt();
+    await this.waitIdle(5000);
+    // A tool may have started between the keypress and the interrupt landing
+    if (this.busy() || !this.isUnstarted(prompt.message)) {
+      return undefined;
+    }
+    try {
+      await this.rewindConversation(prompt.message);
+    } catch (error) {
+      // Not in the saved transcript: the CLI never recorded it, so dropping it here is enough
+      console.warn('[Session] withdraw: rewind failed, dropping the prompt locally', error);
+      const index = this.messages().indexOf(prompt.message);
+      if (index >= 0) {
+        this.messages(this.messages().slice(0, index));
+      }
+    }
+    this.lastPrompt = undefined;
+    return { input: prompt.input, attachments: prompt.attachments };
+  }
+
+  /** `message` is still in the chat and nothing after it is a tool call or another prompt */
+  private isUnstarted(message: Message): boolean {
+    const all = this.messages();
+    const index = all.indexOf(message);
+    if (index < 0) return false;
+    return all.slice(index + 1).every((m) => {
+      if (m.type === 'user' && m.uuid) return false;
+      const content = m.message?.content;
+      return !Array.isArray(content) || !content.some((w) => (w.content as any)?.type === 'tool_use');
+    });
+  }
+
+  private waitIdle(timeoutMs: number): Promise<void> {
+    if (!this.busy()) return Promise.resolve();
+    return new Promise((resolve) => {
+      let stop: (() => void) | undefined;
+      const done = () => {
+        clearTimeout(timer);
+        // The effect may still be running its first pass: stop it once it returns
+        queueMicrotask(() => stop?.());
+        resolve();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      stop = effect(() => {
+        if (!this.busy()) done();
+      });
+    });
   }
 
   async restartClaude(): Promise<void> {

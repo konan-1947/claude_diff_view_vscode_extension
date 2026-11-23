@@ -1,17 +1,33 @@
 <template>
-  <div v-if="rows.length > 0" class="bg-tasks">
+  <div
+    v-if="rows.length > 0"
+    ref="rootRef"
+    class="bg-tasks"
+    :class="{ focused }"
+    tabindex="-1"
+    @keydown="onKeydown"
+    @focusin="focused = true"
+    @focusout="onFocusOut"
+  >
     <div class="bg-header" @click="expanded = !expanded">
       <span class="codicon" :class="expanded ? 'codicon-chevron-down' : 'codicon-chevron-right'"></span>
       <span class="codicon codicon-loading codicon-modifier-spin bg-spin"></span>
       <span>{{ rows.length }} background task{{ rows.length === 1 ? '' : 's' }}</span>
+      <!-- Keys, in the header so showing them never changes the height -->
+      <span class="bg-keys">
+        <template v-if="confirmKill">press k again to stop</template>
+        <template v-else-if="focused">↑↓ select&nbsp;&nbsp;Enter view&nbsp;&nbsp;k stop&nbsp;&nbsp;Esc back</template>
+        <template v-else>↓ from the input</template>
+      </span>
     </div>
     <div v-if="expanded" class="bg-list">
-      <template v-for="task in rows" :key="task.taskId">
+      <template v-for="(task, index) in rows" :key="task.taskId">
         <div
           class="bg-row"
-          :class="{ clickable: task.isAgent, open: openTask === task.taskId }"
+          :class="{ clickable: true, open: openTask === task.taskId, selected: focused && index === selected }"
           :title="task.description"
-          @click="task.isAgent && toggle(task.taskId)"
+          @mousedown.prevent
+          @click="selected = index; focusList(); toggle(task.taskId)"
         >
           <img v-if="task.isAgent" :src="agentIcon" class="bg-kind bg-agent-icon" alt="" aria-hidden="true" />
           <span v-else class="codicon codicon-terminal bg-kind"></span>
@@ -19,7 +35,6 @@
           <span v-if="task.stats" class="bg-stats">{{ task.stats }}</span>
           <span v-if="errors[task.taskId]" class="bg-error" :title="errors[task.taskId]">{{ errors[task.taskId] }}</span>
           <span
-            v-if="task.isAgent"
             class="codicon bg-chevron"
             :class="openTask === task.taskId ? 'codicon-chevron-down' : 'codicon-chevron-right'"
           ></span>
@@ -43,19 +58,26 @@
             :running="true"
           />
         </div>
+        <!-- Background shell: its command and what it printed so far -->
+        <BackgroundShellDetail
+          v-else-if="!task.isAgent && openTask === task.taskId"
+          :resolve="() => findShell(task.taskId, task.info?.toolUseId)"
+          :read-output="readTaskOutput"
+        />
       </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import Tooltip from './Common/Tooltip.vue';
 import SubagentDetail from './Messages/SubagentDetail.vue';
+import BackgroundShellDetail, { type BackgroundShell } from './BackgroundShellDetail.vue';
 import { subagentCalls, subagentStatus } from '../utils/subagentCalls';
 import agentIcon from '../../../../media/icons/view-diff.png';
 import type { BackgroundTask, TaskInfo } from '../core/LiveActivity';
-import { formatDuration, formatTokenCount } from '../core/LiveActivity';
+import { formatDuration, formatTokenCount, isTaskFinished } from '../core/LiveActivity';
 
 /**
  * Tasks the CLI runs in the background (a Bash call with run_in_background, a
@@ -69,9 +91,16 @@ interface Props {
   stopTask: (taskId: string) => Promise<string | undefined>;
   /** Subagent messages by the tool_use id of their Agent call */
   subagentMessages: Record<string, any[]>;
+  /** Command and output file of a background Bash task */
+  findShell: (taskId: string, toolUseId?: string) => BackgroundShell | undefined;
+  readTaskOutput: (path: string) => Promise<{ output?: string; truncated?: boolean; error?: string }>;
 }
 
 const props = defineProps<Props>();
+const emit = defineEmits<{
+  /** ↑ past the first task, or Esc: focus goes back to the chat input */
+  (e: 'exit'): void;
+}>();
 const expanded = ref(true);
 const stopping = reactive<Record<string, boolean>>({});
 const errors = reactive<Record<string, string>>({});
@@ -86,11 +115,8 @@ let timer: ReturnType<typeof setInterval> | undefined;
 onMounted(() => { timer = setInterval(() => { now.value = Date.now(); }, 1000); });
 onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 
-// A task the CLI already reported as finished is gone, even before its next list
-const FINISHED = new Set(['completed', 'failed', 'killed', 'stopped']);
-
 const rows = computed(() =>
-  props.tasks.filter((task) => !FINISHED.has(props.taskInfo[task.taskId]?.status ?? '')).map((task) => {
+  props.tasks.filter((task) => !isTaskFinished(props.taskInfo[task.taskId])).map((task) => {
     const info = props.taskInfo[task.taskId];
     const stats = [
       info?.totalTokens ? `${formatTokenCount(info.totalTokens)} tokens` : '',
@@ -111,6 +137,92 @@ const rows = computed(() =>
   })
 );
 
+// ---- Keyboard (as the CLI's task list: ↓ from the prompt, ↑↓ Enter k Esc) ----
+
+const rootRef = ref<HTMLElement>();
+const focused = ref(false);
+const selected = ref(0);
+/** Task waiting for the second `k` */
+const confirmKill = ref<string | null>(null);
+
+watch(
+  () => rows.value.length,
+  (n) => {
+    if (selected.value >= n) selected.value = Math.max(0, n - 1);
+    // The last task ended while the list had the focus: give it back to the input
+    if (n === 0 && focused.value) {
+      focused.value = false;
+      exit();
+    }
+  }
+);
+
+/** Focus the list (↓ from the chat input); false when there is nothing to focus */
+function focusList(): boolean {
+  if (rows.value.length === 0) return false;
+  expanded.value = true;
+  if (selected.value >= rows.value.length) selected.value = 0;
+  void nextTick(() => rootRef.value?.focus());
+  return true;
+}
+
+function onFocusOut(e: FocusEvent) {
+  if (rootRef.value?.contains(e.relatedTarget as Node | null)) return;
+  focused.value = false;
+  confirmKill.value = null;
+}
+
+function exit() {
+  confirmKill.value = null;
+  emit('exit');
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const task = rows.value[selected.value];
+  const key = e.key;
+  if (key !== 'k' && key !== 'K') confirmKill.value = null;
+  switch (key) {
+    case 'ArrowDown':
+      selected.value = Math.min(rows.value.length - 1, selected.value + 1);
+      break;
+    case 'ArrowUp':
+      if (selected.value === 0) exit();
+      else selected.value -= 1;
+      break;
+    case 'Enter':
+    case ' ':
+      if (task) toggle(task.taskId);
+      break;
+    case 'ArrowRight':
+      if (task) openTask.value = task.taskId;
+      break;
+    case 'ArrowLeft':
+      openTask.value = null;
+      break;
+    case 'Escape':
+      if (openTask.value) openTask.value = null;
+      else exit();
+      break;
+    case 'k':
+    case 'K':
+      if (!task) break;
+      if (confirmKill.value === task.taskId) {
+        confirmKill.value = null;
+        void kill(task.taskId);
+      } else {
+        confirmKill.value = task.taskId;
+      }
+      break;
+    default:
+      return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+defineExpose({ focusList });
+
 async function kill(taskId: string) {
   if (stopping[taskId]) return;
   stopping[taskId] = true;
@@ -123,7 +235,8 @@ async function kill(taskId: string) {
 
 <style scoped>
 .bg-tasks {
-  margin-bottom: 4px;
+  margin-top: 4px;
+  outline: none;
   font-size: 12px;
   color: var(--vscode-input-placeholderForeground);
 }
@@ -160,6 +273,21 @@ async function kill(taskId: string) {
   min-width: 0;
   padding: 2px 8px 2px 6px;
   border-radius: 4px;
+}
+
+.bg-keys {
+  margin-left: auto;
+  padding-right: 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.7;
+}
+
+.bg-row.selected {
+  background-color: var(--vscode-list-activeSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+  color: var(--vscode-list-activeSelectionForeground, inherit);
 }
 
 .bg-row:hover {

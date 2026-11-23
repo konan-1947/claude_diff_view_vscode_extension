@@ -29,7 +29,10 @@ defineProps<Props>();
 .tip-message {
   display: block;
   outline: none;
-  padding: 4px 12px;
+  /* Same inset as the turn rows, so the line sits in the log's text column */
+  padding: 4px calc(var(--cs-edge) + var(--cs-row-inset));
+  font-size: var(--cs-font-size);
+  line-height: var(--cs-line-height);
   background-color: var(--vscode-sideBar-background);
   opacity: 1;
 }

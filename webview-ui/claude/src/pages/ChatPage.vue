@@ -71,12 +71,6 @@
             :modes="modes.map((m) => m.id)"
           />
           <RateLimitBanner :info="activity.rateLimit.value" />
-          <BackgroundTasksList
-            :tasks="activity.backgroundTasks.value"
-            :task-info="activity.tasks.value"
-            :stop-task="activity.stopTask"
-            :subagent-messages="activity.subagentMessages.value"
-          />
           <MessageQueueList
             :queued-messages="queuedMessages"
             :visible="queuedMessages.length > 0"
@@ -90,6 +84,8 @@
             :progress-percentage="progressPercentage"
             :context-tooltip="contextTooltip"
             :conversation-working="isBusy"
+            :has-queued="queuedMessages.length > 0"
+            :has-tasks-below="hasRunningTasks"
             :attachments="attachments"
             :thinking-level="session?.thinkingLevel.value"
             :permission-mode="session?.permissionMode.value"
@@ -106,12 +102,26 @@
             @run-commands="handleRunCommands"
             @open-history="$emit('switchToSessions')"
             @stop="handleStop"
+            @edit-queued="editQueued"
+            @focus-tasks="tasksListRef?.focusList()"
             @add-attachment="handleAddAttachment"
             @remove-attachment="handleRemoveAttachment"
             @thinking-toggle="handleToggleThinking"
             @effort-select="handleEffortSelect"
             @mode-select="handleModeSelect"
             @model-select="handleModelSelect"
+          />
+          <!-- Below the input, as in the CLI: ↓ from the input moves into it; the
+               input stays pinned above and grows upward when it opens -->
+          <BackgroundTasksList
+            ref="tasksListRef"
+            :tasks="activity.backgroundTasks.value"
+            :task-info="activity.tasks.value"
+            :stop-task="activity.stopTask"
+            :subagent-messages="activity.subagentMessages.value"
+            :find-shell="findBackgroundShell"
+            :read-task-output="readTaskOutput"
+            @exit="chatInputRef?.focus()"
           />
           <!-- `claude --continue`: under the input, so the centered empty-state
                input does not move when this appears (it is found asynchronously) -->
@@ -146,6 +156,7 @@
   import BackgroundTasksList from '../components/BackgroundTasksList.vue';
   import RateLimitBanner from '../components/RateLimitBanner.vue';
   import { useLiveActivity } from '../composables/useLiveActivity';
+  import { isTaskFinished } from '../core/LiveActivity';
   import type { QueuedMessage } from '../types/queue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import SessionConflictPrompt from '../components/SessionConflictPrompt.vue';
@@ -634,6 +645,7 @@
     when: () =>
       (isBusy.value || shellRunning.value) &&
       !pendingPermission.value &&
+      !inTaskList() &&
       !document.querySelector('.dropdown-popover') &&
       !document.querySelector('.command-panel'),
   });
@@ -660,7 +672,7 @@
     allowInEditable: true,
     priority: 60,
     when: () => {
-      if (!pendingPermission.value || forwardingEscape) return false;
+      if (!pendingPermission.value || forwardingEscape || inTaskList()) return false;
       if (document.querySelector('.dropdown-popover') || document.querySelector('.command-panel')) return false;
       const panel = document.querySelector('[data-permission-panel]');
       return !!panel && !panel.contains(document.activeElement);
@@ -713,22 +725,95 @@
     await s.setModel({ value: modelId });
   }
 
-  function handleStop() {
+  /**
+   * Queued prompts leave the queue and go back into the input, ahead of what
+   * is typed there: on interrupt, and on ↑ to edit them (as the CLI does).
+   */
+  function restoreQueueToInput() {
+    const queued = queuedMessages.value;
+    if (queued.length === 0) return;
+    queuedMessages.value = [];
+    const typed = chatInputRef.value?.getContent() ?? '';
+    const text = [...queued.map((m) => m.content), typed].filter((t) => t.trim()).join('\n');
+    chatInputRef.value?.setContent(text);
+    attachments.value = [...queued.flatMap((m) => m.attachments), ...attachments.value];
+  }
+
+  function editQueued() {
+    restoreQueueToInput();
+    chatInputRef.value?.focus();
+  }
+
+  async function handleStop() {
     const s = session.value;
     // Interrupting gives the queued prompts back to the input (as the CLI
     // does), instead of sending them as soon as the turn stops.
-    if (queuedMessages.value.length > 0) {
-      const queued = queuedMessages.value;
-      queuedMessages.value = [];
+    restoreQueueToInput();
+    if (!s) return;
+    // No tool ran yet: like the CLI, the prompt leaves the chat and goes back
+    // to the input instead of staying as an interrupted request
+    const withdrawn = await s.__session.withdrawLastPrompt();
+    if (withdrawn) {
       const typed = chatInputRef.value?.getContent() ?? '';
-      const text = [...queued.map((m) => m.content), typed].filter((t) => t.trim()).join('\n');
+      const text = [withdrawn.input, typed].filter((t) => t.trim()).join('\n');
       chatInputRef.value?.setContent(text);
-      attachments.value = [...queued.flatMap((m) => m.attachments), ...attachments.value];
-    }
-    if (s) {
+      const restored: AttachmentItem[] = withdrawn.attachments.map((a, i) =>
+        'id' in a ? (a as AttachmentItem) : { ...a, id: `restored-${Date.now()}-${i}`, fileSize: a.fileSize ?? 0 }
+      );
+      attachments.value = [...restored, ...attachments.value];
+    } else if (s.__session.busy()) {
       // Methods are already bound in useSession and can be called directly
       void s.interrupt();
     }
+  }
+
+  // ---- Background shells (Bash with run_in_background) ----
+
+  const tasksListRef = ref<InstanceType<typeof BackgroundTasksList> | null>(null);
+  const hasRunningTasks = computed(() =>
+    activity.backgroundTasks.value.some((t) => !isTaskFinished(activity.tasks.value[t.taskId]))
+  );
+  /** Keys typed in the task list stay there (its Esc goes back to the input) */
+  const inTaskList = () => !!document.activeElement?.closest('.bg-tasks');
+
+  const readTaskOutput = async (path: string) =>
+    (await runtime!.sessionStore.getConnection()).readTaskOutput(path, 64 * 1024);
+
+  function toolResultText(result: any): string {
+    const content = result?.content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('\n');
+    }
+    return '';
+  }
+
+  /**
+   * The Bash call that started background task `taskId`: matched by its
+   * tool_use id, else by the task id its result names ("…with ID: <id>").
+   * The result also names the file the output goes to.
+   */
+  function findBackgroundShell(taskId: string, toolUseId?: string) {
+    const all = messages.value;
+    for (let i = all.length - 1; i >= 0; i--) {
+      const content = all[i]?.message?.content;
+      if (!Array.isArray(content)) continue;
+      for (const wrapper of content) {
+        const block = wrapper?.content;
+        if (block?.type !== 'tool_use' || block.name !== 'Bash' || !block.input?.run_in_background) continue;
+        const result = typeof wrapper.toolResult === 'function' ? wrapper.toolResult() : undefined;
+        const text = toolResultText(result) || String(wrapper.toolUseResult?.stdout ?? '');
+        const useResult = wrapper.toolUseResult;
+        const matches =
+          (toolUseId && block.id === toolUseId) ||
+          useResult?.backgroundTaskId === taskId ||
+          text.includes(taskId);
+        if (!matches) continue;
+        const file = /written to:\s*(\S+\.output)/i.exec(text)?.[1];
+        return { command: String(block.input.command ?? ''), outputFile: file };
+      }
+    }
+    return undefined;
   }
 
   async function handleAddAttachment(files: FileList) {
@@ -825,8 +910,15 @@
     display: flex;
     flex-direction: column;
     gap: var(--cs-row-gap);
-    padding: 10px 0 12px;
+    /* Bottom padding = the fade below, so the last row clears it when scrolled down */
+    padding: 10px 0 var(--cs-transcript-fade);
     position: relative;
+    /* Rows scrolling down under the input fade out (as in Cursor), instead of
+       a hard edge. A mask, not a gradient overlay: it needs no background
+       colour, which differs between the side bar and the Agent-mode panel. */
+    --cs-transcript-fade: 28px;
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--cs-transcript-fade)), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--cs-transcript-fade)), transparent);
   }
   /* Wide pane (Agent-mode main panel): one centred column. The scrollbar stays
      at the pane edge since the scroll container itself keeps the full width. */

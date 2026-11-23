@@ -155,6 +155,7 @@ import {
     handleAddPromptHistory,
     handleRunShellCommand,
     handleGetRewindPoint,
+    handleReadTaskOutput,
 } from './handlers/handlers';
 
 export const IClaudeAgentService = createDecorator<IClaudeAgentService>('claudeAgentService');
@@ -1015,6 +1016,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "get_rewind_point":
                 return handleGetRewindPoint(request, this.handlerContext);
+
+            case "read_task_output":
+                return handleReadTaskOutput(request);
 
             case "rewind_files":
                 return this.rewindFiles(channelId, request as RewindFilesRequest);

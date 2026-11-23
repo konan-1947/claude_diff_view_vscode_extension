@@ -439,6 +439,10 @@ export abstract class BaseTransport {
     const response = await this.sendRequest({ type: "get_rewind_point", sessionId, userMessageId, cwd });
     return { found: !!(response as any)?.found, parentUuid: (response as any)?.parentUuid ?? null };
   }
+  async readTaskOutput(path: string, maxBytes?: number): Promise<{ output?: string; truncated?: boolean; error?: string }> {
+    const response = (await this.sendRequest({ type: "read_task_output", path, maxBytes })) as any;
+    return { output: response?.output, truncated: response?.truncated, error: response?.error };
+  }
   exec(command: string, params: string[]): Promise<any> {
     return this.sendRequest({ type: "exec", command, params });
   }

@@ -349,6 +349,10 @@ interface Props {
   showSearch?: boolean
   selectedModel?: string
   conversationWorking?: boolean
+  /** Prompts wait in the queue: ↑ takes them back into the input to edit */
+  hasQueued?: boolean
+  /** Background tasks are listed below the input: ↓ moves into that list */
+  hasTasksBelow?: boolean
   attachments?: AttachmentItem[]
   thinkingLevel?: string
   permissionMode?: PermissionMode
@@ -366,6 +370,8 @@ interface Emits {
   /** Several commands from one panel (`/config`), sent in order even while busy */
   (e: 'runCommands', commands: string[]): void
   (e: 'stop'): void
+  (e: 'editQueued'): void
+  (e: 'focusTasks'): void
   (e: 'input', content: string): void
   (e: 'attach'): void
   (e: 'addAttachment', files: FileList): void
@@ -1310,6 +1316,29 @@ function handleKeydown(event: KeyboardEvent) {
   }
 
   if (noModifier && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    // As in the CLI: ↑ first takes the queued prompts out of the queue for
+    // editing (they are sent again only when submitted), then the history
+    if (
+      event.key === 'ArrowUp' &&
+      props.hasQueued &&
+      historyIndex.value === -1 &&
+      caretOnEdgeLine('first')
+    ) {
+      event.preventDefault()
+      emit('editQueued')
+      return
+    }
+    // ↓ on the last line, not browsing the history: into the task list below
+    if (
+      event.key === 'ArrowDown' &&
+      props.hasTasksBelow &&
+      historyIndex.value === -1 &&
+      caretOnEdgeLine('last')
+    ) {
+      event.preventDefault()
+      emit('focusTasks')
+      return
+    }
     if (navigateHistory(event.key === 'ArrowUp')) {
       event.preventDefault()
     }

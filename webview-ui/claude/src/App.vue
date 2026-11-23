@@ -41,6 +41,7 @@ import SettingsPage from './pages/SettingsPage.vue';
 import './styles/claude-theme.css';
 import { useRuntime } from './composables/useRuntime';
 import { RuntimeKey } from './composables/runtimeContext';
+import { installLinkHandler } from './utils/linkHandler';
 // import IconTestPage from './pages/IconTestPage.vue';
 
 type PageName = 'sessions' | 'chat' | 'settings';
@@ -56,6 +57,11 @@ const runtime = needsRuntime ? useRuntime() : null;
 
 if (runtime) {
   provide(RuntimeKey, runtime);
+  // Links in the chat open outside: web links in the system browser, file paths in the editor
+  installLinkHandler({
+    openURL: (url) => runtime.appContext.openURL(url),
+    openFile: (path, location) => void runtime.appContext.fileOpener.open(path, location),
+  });
 }
 
 onMounted(() => {

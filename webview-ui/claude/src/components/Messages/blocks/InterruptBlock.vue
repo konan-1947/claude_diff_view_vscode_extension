@@ -16,14 +16,12 @@ defineProps<Props>();
 </script>
 
 <style scoped>
-/* Matches the Claudex SystemMessage style */
+/* Left-aligned like an ordinary log row */
 .interrupt-block {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
   background-color: transparent;
-  transform: translateX(-10px);
 }
 
 .interrupt-block .codicon {
