@@ -74,6 +74,34 @@ type Row =
   | { kind: 'other'; key: string; block: ContentBlockType; wrapper?: ContentBlockWrapper };
 
 const EXPLORE_TOOLS = new Set(['Read', 'Glob', 'Grep']);
+const PLAN_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
+
+const normPath = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+
+// Plan files of this turn: the ExitPlanMode card already shows the plan, so the
+// Write/Edit that produced the file would only repeat it
+const planFiles = computed(() => {
+  const out = new Set<string>();
+  for (const msg of props.turn.assistant) {
+    const content = msg.message.content;
+    if (typeof content === 'string') continue;
+    for (const w of content) {
+      const b = w.content as any;
+      if (b.type === 'tool_use' && b.name === 'ExitPlanMode' && typeof b.input?.planFilePath === 'string') {
+        out.add(normPath(b.input.planFilePath));
+      }
+    }
+  }
+  return out;
+});
+
+function isPlanFileWrite(b: any): boolean {
+  if (!PLAN_WRITE_TOOLS.has(b.name)) return false;
+  const fp = b.input?.file_path;
+  if (typeof fp !== 'string') return false;
+  const n = normPath(fp);
+  return planFiles.value.has(n) || n.includes('/.claude/plans/');
+}
 
 const rows = computed<Row[]>(() => {
   const out: Row[] = [];
@@ -90,7 +118,9 @@ const rows = computed<Row[]>(() => {
         out.push({ kind: 'thought', key, text: (block as any).thinking ?? '' });
       } else if (block.type === 'tool_use') {
         const b = block as any;
-        if (EXPLORE_TOOLS.has(b.name)) {
+        if (isPlanFileWrite(b)) {
+          return;
+        } else if (EXPLORE_TOOLS.has(b.name)) {
           const last = out[out.length - 1];
           if (last && last.kind === 'explore') last.tools.push({ name: b.name, input: b.input });
           else out.push({ kind: 'explore', key, tools: [{ name: b.name, input: b.input }] });

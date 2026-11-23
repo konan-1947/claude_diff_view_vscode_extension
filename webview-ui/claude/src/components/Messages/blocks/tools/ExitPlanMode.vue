@@ -119,10 +119,9 @@ const toggleExpand = () => {
 }
 
 .plan-content {
-  font-family: var(--vscode-editor-font-family);
-  font-size: 0.9em;
+  font-family: var(--vscode-font-family);
   line-height: 1.6;
-  color: var(--vscode-editor-foreground);
+  color: var(--vscode-foreground);
 }
 
 /* Markdown styles */
