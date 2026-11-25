@@ -29,6 +29,7 @@
               <template v-for="item in chatItems" :key="item.key">
                 <TurnView
                   v-if="item.kind === 'turn'"
+                  :data-turn-key="item.key"
                   :turn="item"
                   :context="toolContext"
                   :default-open="item.key === liveTurnKey"
@@ -54,6 +55,8 @@
             <div ref="endEl" />
           </template>
         </div>
+
+        <StickyPrompt v-if="stickyText" :text="stickyText" @jump="jumpToStickyPrompt" />
 
         <div ref="inputContainerEl" class="inputContainer">
           <SessionConflictPrompt
@@ -165,6 +168,8 @@
   import Spinner from '../components/Messages/WaitingIndicator.vue';
   import MessageRenderer from '../components/Messages/MessageRenderer.vue';
   import TurnView from '../components/Messages/TurnView.vue';
+  import StickyPrompt from '../components/Messages/StickyPrompt.vue';
+  import { userMessageText } from '../utils/userText';
   import { buildChatItems, formatAgo } from '../utils/turns';
   import { useKeybinding } from '../utils/useKeybinding';
   import { useSignal } from '@gn8/alien-signals-vue';
@@ -382,7 +387,63 @@
     scrollToBottom();
   });
 
+  // ---- Sticky prompt: the user message of the turn at the top of the view ----
+
+  /** Key of the turn whose prompt is pinned; null while that prompt's own bubble is visible */
+  const stickyKey = ref<number | null>(null);
+  let stickyFrame = 0;
+
+  function updateStickyPrompt(): void {
+    stickyFrame = 0;
+    const container = containerEl.value;
+    if (!container) { stickyKey.value = null; return; }
+    const top = container.getBoundingClientRect().top;
+    let current: HTMLElement | null = null;
+    for (const el of container.querySelectorAll<HTMLElement>('[data-turn-key]')) {
+      if (el.getBoundingClientRect().top > top) break;
+      current = el;
+    }
+    const bubble = current?.querySelector<HTMLElement>('.user-message');
+    stickyKey.value = current && bubble && bubble.getBoundingClientRect().bottom <= top
+      ? Number(current.dataset.turnKey)
+      : null;
+  }
+
+  function scheduleStickyPrompt(): void {
+    if (!stickyFrame) stickyFrame = requestAnimationFrame(updateStickyPrompt);
+  }
+
+  const stickyText = computed(() => {
+    if (stickyKey.value === null || dimTranscript.value) return '';
+    const item = chatItems.value.find(i => i.key === stickyKey.value);
+    const user = item?.kind === 'turn' ? item.user : undefined;
+    return user ? userMessageText(user).replace(/\s+/g, ' ').trim() : '';
+  });
+
+  function jumpToStickyPrompt(): void {
+    const key = stickyKey.value;
+    if (key === null) return;
+    containerEl.value
+      ?.querySelector<HTMLElement>(`[data-turn-key="${key}"] .user-message`)
+      ?.scrollIntoView({ block: 'start' });
+  }
+
+  let stickyResize: ResizeObserver | undefined;
+  watch(containerEl, (el, old) => {
+    old?.removeEventListener('scroll', scheduleStickyPrompt);
+    stickyResize?.disconnect();
+    if (!el) return;
+    el.addEventListener('scroll', scheduleStickyPrompt, { passive: true });
+    stickyResize = new ResizeObserver(scheduleStickyPrompt);
+    stickyResize.observe(el);
+    scheduleStickyPrompt();
+  });
+  watch(chatItems, () => nextTick(scheduleStickyPrompt));
+
   onUnmounted(() => {
+    containerEl.value?.removeEventListener('scroll', scheduleStickyPrompt);
+    stickyResize?.disconnect();
+    if (stickyFrame) cancelAnimationFrame(stickyFrame);
     try { unregisterToggle?.(); } catch {}
   });
 
@@ -517,6 +578,13 @@
     }
   }
 
+  /** Ctrl+U: every queued prompt straight to the CLI, in queue order */
+  async function handleQueueSendAll() {
+    for (const entry of [...queuedMessages.value]) {
+      await handleQueueSendNow(entry.id);
+    }
+  }
+
   async function flushQueue() {
     const s = session.value;
     if (!s || flushingQueue || isBusy.value || queuedMessages.value.length === 0) return;
@@ -629,6 +697,16 @@
     handler: togglePermissionMode,
     allowInEditable: true,
     priority: 100,
+  });
+
+  // Ctrl+U sends the queued prompts now, like their "Send immediately" buttons.
+  // Only with a queue: otherwise the key goes on to the workbench as before.
+  useKeybinding({
+    keys: 'ctrl+u',
+    handler: () => void handleQueueSendAll(),
+    allowInEditable: true,
+    priority: 50,
+    when: () => queuedMessages.value.length > 0 && !pendingPermission.value,
   });
 
   // Esc stops the running turn (or bash-mode command), as in Claude Code. Not

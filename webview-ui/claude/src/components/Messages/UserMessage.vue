@@ -50,6 +50,7 @@ import type { Message } from '../../models/Message';
 import type { ToolContext } from '../../types/tool';
 import Tooltip from '../Common/Tooltip.vue';
 import ImageLightbox from '../Common/ImageLightbox.vue';
+import { userMessageText } from '../../utils/userText';
 
 interface Props {
   message: Message;
@@ -59,24 +60,7 @@ interface Props {
 const props = defineProps<Props>();
 
 // Display content (plain text)
-const displayContent = computed(() => {
-  if (typeof props.message.message.content === 'string') {
-    return props.message.message.content;
-  }
-  // For content blocks, extract the text
-  if (Array.isArray(props.message.message.content)) {
-    return props.message.message.content
-      .map(wrapper => {
-        const block = wrapper.content;
-        if (block.type === 'text') {
-          return block.text;
-        }
-        return '';
-      })
-      .join(' ');
-  }
-  return '';
-});
+const displayContent = computed(() => userMessageText(props.message));
 
 // Images the user attached (data: URLs), shown as thumbnails above the text
 const images = computed(() => {

@@ -271,7 +271,9 @@ async function kill(taskId: string) {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 2px 8px 2px 6px;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 4px 8px 4px 6px;
   border-radius: 4px;
 }
 

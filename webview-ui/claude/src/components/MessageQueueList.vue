@@ -15,7 +15,7 @@
           <span>{{ queuedMessages.length }} Queued</span>
         </div>
       </div>
-      <span class="queue-hint">↑ to edit</span>
+      <span class="queue-hint">Ctrl+U send now&nbsp;&nbsp;↑ to edit</span>
     </div>
 
     <!-- Queue list (when expanded) -->
@@ -60,7 +60,7 @@
             </div>
           </Tooltip>
           <!-- Send now button -->
-          <Tooltip content="Send immediately">
+          <Tooltip content="Send immediately (Ctrl+U sends all)">
             <div
               class="anysphere-icon-button"
               @click="$emit('sendNow', message.id)"
@@ -119,7 +119,9 @@ function toggleExpanded() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 8px 3px 6px;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 4px 8px 4px 6px;
   border-radius: 4px;
   transition: background-color 0.1s ease;
   cursor: pointer;
