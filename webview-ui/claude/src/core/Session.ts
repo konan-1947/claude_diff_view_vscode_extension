@@ -900,7 +900,15 @@ export class Session {
 
     // 6. Update other state
     if (event?.type === 'system') {
-      this.sessionId(event.session_id);
+      // SessionStart hooks run when the CLI is launched ahead of the first
+      // prompt (preloadConnection) and their events already carry the id the
+      // CLI picked. Taking it then would make an empty tab look like an open
+      // conversation (no "Continue last conversation", restored as a
+      // conversation with no transcript); system/init with the prompt brings it.
+      const preStartHook = !this.sessionId() && typeof event.subtype === 'string' && event.subtype.startsWith('hook_');
+      if (!preStartHook) {
+        this.sessionId(event.session_id);
+      }
       // system/init and system/status carry the mode the CLI is actually in
       // (its settings default, or a switch it made itself, e.g. leaving plan mode).
       if (typeof event.permissionMode === 'string' && event.permissionMode) {

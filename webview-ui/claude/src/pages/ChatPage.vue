@@ -56,7 +56,16 @@
           </template>
         </div>
 
-        <StickyPrompt v-if="stickyText" :text="stickyText" @jump="jumpToStickyPrompt" />
+        <StickyPrompt
+          :turn-key="stickyKey ?? -1"
+          :visible="!!stickyText && (stickyScrolling || stickyHovered)"
+          :text="stickyText"
+          :left="stickyBox.left"
+          :width="stickyBox.width"
+          :shift="stickyShift"
+          @jump="jumpToStickyPrompt"
+          @hover="onStickyHover"
+        />
 
         <div ref="inputContainerEl" class="inputContainer">
           <SessionConflictPrompt
@@ -126,20 +135,27 @@
             :read-task-output="readTaskOutput"
             @exit="chatInputRef?.focus()"
           />
-          <!-- `claude --continue`: under the input, so the centered empty-state
-               input does not move when this appears (it is found asynchronously) -->
-          <button
-            v-if="continueTarget && messages.length === 0 && !openConflict"
-            type="button"
-            class="continue-last"
-            :title="continueTarget.summary() || 'Continue the most recent conversation'"
-            @click="continueLast"
-          >
-            <span class="codicon codicon-history"></span>
-            <span>Continue last conversation</span>
-            <span class="continue-name">{{ continueTarget.summary() }}</span>
-            <span class="continue-ago">{{ formatAgo(continueTarget.lastModifiedTime()) }}</span>
-          </button>
+          <!-- Recent conversations (`claude --continue` for the first): under the
+               input, so the centered empty-state input does not move when they
+               appear (they are found asynchronously) -->
+          <div v-if="recentSessions.length && messages.length === 0 && !openConflict" class="recent-sessions">
+            <div class="recent-header">
+              <span class="codicon codicon-history"></span>
+              <span>Recent conversations</span>
+              <button type="button" class="recent-all" @click="$emit('switchToSessions')">View all</button>
+            </div>
+            <button
+              v-for="s in recentSessions"
+              :key="s.sessionId() ?? ''"
+              type="button"
+              class="recent-row"
+              :title="s.summary() || 'Untitled conversation'"
+              @click="openRecent(s)"
+            >
+              <span class="recent-name">{{ s.summary() || 'Untitled conversation' }}</span>
+              <span class="recent-ago">{{ formatAgo(s.lastModifiedTime()) }}</span>
+            </button>
+          </div>
         </div>
       <!-- </div> -->
     </div>
@@ -389,9 +405,24 @@
 
   // ---- Sticky prompt: the user message of the turn at the top of the view ----
 
-  /** Key of the turn whose prompt is pinned; null while that prompt's own bubble is visible */
+  /** Key of the turn whose prompt is pinned; null while that prompt's own bubble is fully in view */
   const stickyKey = ref<number | null>(null);
+  /** The real bubble's box, relative to .main: the pinned copy takes the same left edge and width */
+  const stickyBox = ref({ left: 0, width: 0 });
+  /** px the next turn's bubble pushes the pinned copy up by (<= 0) */
+  const stickyShift = ref(0);
+  /** The copy shows only while the transcript scrolls (and while the pointer is on it) */
+  const stickyScrolling = ref(false);
+  const stickyHovered = ref(false);
   let stickyFrame = 0;
+  let stickyIdle: ReturnType<typeof setTimeout> | undefined;
+
+  /** Gap between the top of the transcript and the pinned copy (StickyPrompt's top) */
+  const STICKY_TOP = 2;
+  /** Height of the one-line copy (22px line + 2 × 8px padding + 2 × 1px border) */
+  const STICKY_HEIGHT = 40;
+  /** Hidden this long after the last scroll, like an overlay scrollbar */
+  const STICKY_IDLE_MS = 800;
 
   function updateStickyPrompt(): void {
     stickyFrame = 0;
@@ -403,16 +434,40 @@
       return;
     }
     const top = container.getBoundingClientRect().top;
-    let current: HTMLElement | null = null;
+    const pin = top + STICKY_TOP;
+    let current: { key: number; bubble: HTMLElement } | null = null;
+    let nextTop: number | null = null;
     for (const el of container.querySelectorAll<HTMLElement>('[data-turn-key]')) {
-      if (el.getBoundingClientRect().top > top) break;
-      current = el;
+      const bubble = el.querySelector<HTMLElement>('.user-message .message-text');
+      if (!bubble) continue;
+      const bubbleTop = bubble.getBoundingClientRect().top;
+      // Pinned once its top edge has gone under the top of the view
+      if (bubbleTop >= top) { nextTop = bubbleTop; break; }
+      current = { key: Number(el.dataset.turnKey), bubble };
     }
-    const bubble = current?.querySelector<HTMLElement>('.user-message');
-    stickyKey.value = current && bubble && bubble.getBoundingClientRect().bottom <= top
-      ? Number(current.dataset.turnKey)
-      : null;
+    if (!current) { stickyKey.value = null; return; }
+    const host = container.parentElement!.getBoundingClientRect();
+    const rect = current.bubble.getBoundingClientRect();
+    stickyKey.value = current.key;
+    stickyBox.value = { left: rect.left - host.left, width: rect.width };
+    stickyShift.value = nextTop === null ? 0 : Math.min(0, nextTop - pin - STICKY_HEIGHT - 6);
   }
+
+  function onStickyScroll(): void {
+    stickyScrolling.value = true;
+    clearTimeout(stickyIdle);
+    stickyIdle = setTimeout(() => (stickyScrolling.value = false), STICKY_IDLE_MS);
+    scheduleStickyPrompt();
+  }
+
+  function onStickyHover(on: boolean): void {
+    stickyHovered.value = on;
+    // Leaving the copy starts the idle countdown over, so it does not vanish under the pointer's exit
+    if (!on) onStickyScroll();
+  }
+
+  // The copy can go away under the pointer (jump, scrolled back down) without a mouseleave
+  watch(stickyKey, (key) => { if (key === null) stickyHovered.value = false; });
 
   function scheduleStickyPrompt(): void {
     if (!stickyFrame) stickyFrame = requestAnimationFrame(updateStickyPrompt);
@@ -435,10 +490,10 @@
 
   let stickyResize: ResizeObserver | undefined;
   watch(containerEl, (el, old) => {
-    old?.removeEventListener('scroll', scheduleStickyPrompt);
+    old?.removeEventListener('scroll', onStickyScroll);
     stickyResize?.disconnect();
     if (!el) return;
-    el.addEventListener('scroll', scheduleStickyPrompt, { passive: true });
+    el.addEventListener('scroll', onStickyScroll, { passive: true });
     stickyResize = new ResizeObserver(scheduleStickyPrompt);
     stickyResize.observe(el);
     scheduleStickyPrompt();
@@ -446,7 +501,8 @@
   watch(chatItems, () => nextTick(scheduleStickyPrompt));
 
   onUnmounted(() => {
-    containerEl.value?.removeEventListener('scroll', scheduleStickyPrompt);
+    containerEl.value?.removeEventListener('scroll', onStickyScroll);
+    clearTimeout(stickyIdle);
     stickyResize?.disconnect();
     if (stickyFrame) cancelAnimationFrame(stickyFrame);
     try { unregisterToggle?.(); } catch {}
@@ -472,46 +528,43 @@
     runtime!.sessionStore.openConflict(undefined);
   }
 
-  // ---- "Continue last conversation" (claude --continue) ----
+  // ---- Recent conversations (the first is `claude --continue`) ----
 
-  // The most recent conversation not open in another tab, offered while this
+  // The most recent conversations not open in another tab, offered while this
   // tab is still empty. Open ones are skipped: the newest is usually the one
-  // the user is working on next door, which --continue would collide with.
+  // the user is working on next door, which opening here would collide with.
+  const RECENT_COUNT = 5;
   const sessionsByRecent = useSignal(runtime.sessionStore.sessionsByLastModified);
-  const continueTarget = shallowRef<Session | undefined>(undefined);
-  let continueSeq = 0;
+  const recentSessions = shallowRef<Session[]>([]);
+  let recentSeq = 0;
   watch(
     () => [messages.value.length === 0 && !session.value?.sessionId.value, sessionsByRecent.value] as const,
     async ([fresh, all]) => {
-      const seq = ++continueSeq;
+      const seq = ++recentSeq;
       if (!fresh) {
-        continueTarget.value = undefined;
+        recentSessions.value = [];
         return;
       }
       const active = activeSessionRaw.value;
-      const candidates = (all as Session[]).filter((s) => s !== active && !!s.sessionId()).slice(0, 5);
-      let found: Session | undefined;
+      // A few spare in case some are open in other tabs
+      const candidates = (all as Session[])
+        .filter((s) => s !== active && !!s.sessionId())
+        .slice(0, RECENT_COUNT * 2);
+      let found: Session[];
       try {
         const connection = await runtime!.sessionStore.getConnection();
-        for (const candidate of candidates) {
-          const owner = await connection.getSessionOwner(candidate.sessionId()!);
-          if (seq !== continueSeq) return;
-          if (!owner) {
-            found = candidate;
-            break;
-          }
-        }
+        const owners = await Promise.all(candidates.map((c) => connection.getSessionOwner(c.sessionId()!)));
+        found = candidates.filter((_, i) => !owners[i]);
       } catch {
-        found = candidates[0];
+        found = candidates;
       }
-      if (seq === continueSeq) continueTarget.value = found;
+      if (seq === recentSeq) recentSessions.value = found.slice(0, RECENT_COUNT);
     },
     { immediate: true }
   );
 
-  function continueLast() {
-    const target = continueTarget.value;
-    if (target) void runtime!.sessionStore.openExisting(target);
+  function openRecent(target: Session) {
+    void runtime!.sessionStore.openExisting(target);
   }
 
   // "Restore checkpoint" on a sent message: Rewind, already on that message
@@ -1073,44 +1126,67 @@
      there (where the idle input's top is when centered), so a command panel
      or a longer prompt grows it downward only. With messages it is pinned to
      the bottom and grows upward. The spacer shrinks when space runs out. */
-  .continue-last {
+  .recent-sessions {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    flex-direction: column;
+    gap: 1px;
     width: 100%;
     min-width: 0;
     margin-top: 6px;
+    font-size: 12px;
+  }
+  .recent-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    color: var(--cs-fg-52);
+  }
+  .recent-header .codicon {
+    font-size: 13px;
+  }
+  .recent-all {
+    margin-left: auto;
+    padding: 0 4px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--cs-fg-52);
+    font: inherit;
+    cursor: pointer;
+  }
+  .recent-all:hover {
+    color: var(--cs-fg);
+    background: var(--cs-fg-8);
+  }
+  .recent-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
     padding: 4px 8px;
     border: none;
     border-radius: 6px;
     background: transparent;
     color: var(--cs-fg-66);
     font: inherit;
-    font-size: 12px;
     text-align: left;
     cursor: pointer;
   }
-  .continue-last:hover {
+  .recent-row:hover,
+  .recent-row:focus-visible {
     background: var(--cs-fg-8);
     color: var(--cs-fg);
   }
-  .continue-last .codicon {
-    flex-shrink: 0;
-    font-size: 13px;
-  }
-  .continue-last > span:nth-child(2) {
-    flex-shrink: 0;
-  }
-  .continue-name {
+  .recent-name {
     flex: 1;
     min-width: 0;
-    margin-left: 6px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--cs-fg-52);
   }
-  .continue-ago {
+  .recent-ago {
     flex-shrink: 0;
     color: var(--cs-fg-36);
   }
