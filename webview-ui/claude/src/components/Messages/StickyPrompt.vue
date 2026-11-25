@@ -27,12 +27,15 @@ const emit = defineEmits<{ jump: [] }>();
   padding: 6px var(--cs-edge) 0;
   box-sizing: border-box;
   pointer-events: none;
+  /* Right-aligned like the user message bubble */
+  display: flex;
+  justify-content: flex-end;
 }
 
 .sticky-prompt__bubble {
   pointer-events: auto;
   display: block;
-  width: 100%;
+  max-width: 85%;
   min-width: 0;
   padding: 6px 10px;
   box-sizing: border-box;

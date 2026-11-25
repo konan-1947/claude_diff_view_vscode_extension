@@ -397,6 +397,11 @@
     stickyFrame = 0;
     const container = containerEl.value;
     if (!container) { stickyKey.value = null; return; }
+    // Scrolled all the way down: reading the latest output, pin nothing
+    if (container.scrollHeight - container.scrollTop - container.clientHeight <= 2) {
+      stickyKey.value = null;
+      return;
+    }
     const top = container.getBoundingClientRect().top;
     let current: HTMLElement | null = null;
     for (const el of container.querySelectorAll<HTMLElement>('[data-turn-key]')) {

@@ -145,11 +145,11 @@ function handleRestore() {
   border: 1px solid var(--cs-fg-20);
   outline: none;
   border-radius: 12px;
-  width: 100%;
+  /* Right-aligned and as wide as its content, like a chat bubble */
+  max-width: 85%;
   padding: 8px 10px;
   box-sizing: border-box;
   min-width: 0;
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
