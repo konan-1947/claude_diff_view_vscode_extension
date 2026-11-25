@@ -148,15 +148,17 @@ const finalText = computed(() => {
 });
 
 const override = ref<boolean | undefined>(undefined);
-const expanded = computed(() => (hasWork.value ? override.value ?? props.defaultOpen : true));
+// Steps show while the turn runs and fold by themselves once it ends
+const expanded = computed(() => (hasWork.value ? override.value ?? (props.defaultOpen && props.running) : true));
 function toggle() {
   override.value = !expanded.value;
 }
-// A turn that starts running unfolds itself; the user's own toggle still wins afterwards
+// A turn that starts or ends running drops the user's toggle: it unfolds on
+// start and folds on end; a toggle in between still wins until then
 watch(
   () => props.running,
-  (r) => {
-    if (r) override.value = undefined;
+  () => {
+    override.value = undefined;
   }
 );
 

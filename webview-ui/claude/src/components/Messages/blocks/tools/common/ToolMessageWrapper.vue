@@ -109,8 +109,9 @@ const isExpanded = computed({
     if (userToggled.value) {
       return userToggledState.value;
     }
-    // Tools decide via defaultExpanded (permission previews, diffs); errors always open
-    return props.defaultExpanded || !!props.toolResult?.is_error;
+    // Every card starts closed (diffs, errors and permission previews too): the
+    // user opens what they want to see. An error still shows its red dot.
+    return false;
   },
   set: (value) => {
     userToggled.value = true;

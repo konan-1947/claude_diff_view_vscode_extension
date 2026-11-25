@@ -68,6 +68,17 @@
         />
 
         <div ref="inputContainerEl" class="inputContainer">
+          <!-- Over the transcript, above the input: showing it never moves a row -->
+          <button
+            v-if="newBelow && !dimTranscript"
+            type="button"
+            class="new-below"
+            title="Scroll to the latest message"
+            @click="followLatest"
+          >
+            <span class="codicon codicon-arrow-down"></span>
+            <span>New messages</span>
+          </button>
           <SessionConflictPrompt
             v-if="openConflict && !pendingPermission"
             :summary="openConflict.session.summary()"
@@ -349,8 +360,67 @@
   // Attachment state
   const attachments = ref<AttachmentItem[]>([]);
 
-  // Remember the last message count, to decide whether to scroll
+  // Remember the last message count, to tell new rows from re-renders
   let prevCount = 0;
+
+  // ---- Following the latest output ----
+  // While the view is at the bottom it stays there: new rows and text streaming
+  // into the last one keep it pinned. Scrolled up, nothing moves it (except the
+  // user's own message and a permission prompt); new rows only light up the
+  // "↓" button, which goes back to the bottom.
+
+  /** Distance from the bottom (px) still counted as "at the bottom" */
+  const FOLLOW_SLACK = 10;
+  /** The view is at the bottom and follows new output */
+  let following = true;
+  /** New rows arrived while scrolled up */
+  const newBelow = ref(false);
+
+  function atBottom(el: HTMLElement): boolean {
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK;
+  }
+
+  function onFollowScroll(): void {
+    const el = containerEl.value;
+    if (!el) return;
+    following = atBottom(el);
+    if (following) newBelow.value = false;
+  }
+
+  /** Synchronous: called from ResizeObserver, before the frame is painted */
+  function stickToBottom(): void {
+    const el = containerEl.value;
+    if (following && el) el.scrollTop = el.scrollHeight;
+  }
+
+  /** Back to the bottom and following again (session switch, own message, "↓") */
+  function followLatest(): void {
+    following = true;
+    newBelow.value = false;
+    scrollToBottom();
+  }
+
+  // Rows grow without a scroll event (streaming text, a tool result, a block
+  // opening): watch every row's size, plus the container's (the input growing).
+  let followResize: ResizeObserver | undefined;
+  let followRows: MutationObserver | undefined;
+  watch(containerEl, (el, old) => {
+    old?.removeEventListener('scroll', onFollowScroll);
+    followResize?.disconnect();
+    followRows?.disconnect();
+    if (!el) return;
+    el.addEventListener('scroll', onFollowScroll, { passive: true });
+    const resize = (followResize = new ResizeObserver(stickToBottom));
+    resize.observe(el);
+    for (const child of el.children) resize.observe(child);
+    followRows = new MutationObserver(records => {
+      for (const r of records) {
+        for (const n of r.addedNodes) if (n instanceof Element) resize.observe(n);
+        for (const n of r.removedNodes) if (n instanceof Element) resize.unobserve(n);
+      }
+    });
+    followRows.observe(el, { childList: true });
+  });
 
   function stringify(m: any): string {
     try {
@@ -374,7 +444,7 @@
     // Session switch: reset and scroll to the bottom
     prevCount = 0;
     await nextTick();
-    scrollToBottom();
+    followLatest();
   });
 
   // moved above
@@ -384,23 +454,23 @@
     async len => {
       const increased = len > prevCount;
       prevCount = len;
-      if (increased) {
-        await nextTick();
-        scrollToBottom();
-      }
+      if (!increased) return;
+      await nextTick();
+      if (following) scrollToBottom();
+      else newBelow.value = true;
     }
   );
 
   watch(permissionRequestsLen, async () => {
-    // Also scroll to the bottom when a permission request appears
+    // A permission request waits for the user: always show the tool call it is about
     await nextTick();
-    scrollToBottom();
+    followLatest();
   });
 
   onMounted(async () => {
     prevCount = messages.value.length;
     await nextTick();
-    scrollToBottom();
+    followLatest();
   });
 
   // ---- Sticky prompt: the user message of the turn at the top of the view ----
@@ -504,6 +574,9 @@
     containerEl.value?.removeEventListener('scroll', onStickyScroll);
     clearTimeout(stickyIdle);
     stickyResize?.disconnect();
+    containerEl.value?.removeEventListener('scroll', onFollowScroll);
+    followResize?.disconnect();
+    followRows?.disconnect();
     if (stickyFrame) cancelAnimationFrame(stickyFrame);
     try { unregisterToggle?.(); } catch {}
   });
@@ -580,6 +653,7 @@
     const s = session.value;
     const trimmed = (content || '').trim();
     if (!s || (!trimmed && attachments.value.length === 0) || isBusy.value) return;
+    followLatest();
 
     try {
       // Pass the attachments to send
@@ -629,6 +703,7 @@
     const entry = queuedMessages.value.find((m) => m.id === id);
     if (!s || !entry) return;
     handleQueueRemove(id);
+    followLatest();
     try {
       await s.send(entry.content || ' ', entry.attachments);
     } catch (e) {
@@ -682,6 +757,7 @@
   async function handleBash(command: string) {
     const s = session.value;
     if (!s) return;
+    followLatest();
     try {
       await s.__session.runShell(command);
     } catch (e) {
@@ -1116,6 +1192,33 @@
   /* Input area container */
   .inputContainer {
     padding: 0 var(--cs-edge) 10px;
+    position: relative;
+  }
+
+  .new-below {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--cs-fg-20);
+    border-radius: 999px;
+    box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.35);
+    transition: border-color 0.15s ease;
+  }
+
+  .new-below:hover {
+    border-color: var(--cs-fg-36);
   }
 
   .queueList {
