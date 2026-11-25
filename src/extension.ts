@@ -228,7 +228,11 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   // Claude UI tabs (uic chat app): one backend shared by the side bar view and the
   // Agent mode panel. Give every file Claude is about to write a baseline, so the
   // diff that opens afterwards compares against the state before the edit.
-  const claudeUi = createClaudeUiBackend(context, (filePath) => diffManager.snapshotBefore(filePath));
+  const claudeUi = createClaudeUiBackend(
+    context,
+    (filePath) => diffManager.snapshotBefore(filePath),
+    (filePath) => diffManager.notifyPendingContentChanged(filePath),
+  );
   context.subscriptions.push(
     claudeUi,
     claudeUi.webViews.onTabRequest((request) => {

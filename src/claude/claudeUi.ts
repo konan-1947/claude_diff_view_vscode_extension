@@ -28,6 +28,7 @@ export interface ClaudeUiBackend extends vscode.Disposable {
 export function createClaudeUiBackend(
   context: vscode.ExtensionContext,
   beforeFileWrite: (filePath: string) => Promise<void> | void,
+  afterFileWrite: (filePath: string) => void,
 ): ClaudeUiBackend {
   const builder = new InstantiationServiceBuilder();
   registerServices(builder, context);
@@ -48,6 +49,7 @@ export function createClaudeUiBackend(
     agent = started.agent;
     sdk = started.sdk;
     sdk.setBeforeFileWrite(beforeFileWrite);
+    sdk.setAfterFileWrite(afterFileWrite);
     agent.setTransport(instantiation.createInstance(VSCodeTransport));
     agent.start();
     return agent;
@@ -62,6 +64,7 @@ export function createClaudeUiBackend(
     webViews,
     dispose: () => {
       sdk?.setBeforeFileWrite(undefined);
+      sdk?.setAfterFileWrite(undefined);
       void agent?.shutdown();
     },
   };

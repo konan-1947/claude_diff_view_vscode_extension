@@ -126,9 +126,23 @@ export class DiffManager {
    */
   private static readonly PENDING_ACTIVE_TAB_TTL_MS = 15000;
 
+  /**
+   * Gõ phím / save trong editor hay preview đổi nội dung bên phải của file pending
+   * mà không đi qua watcher: báo onDidChangeDiffs để số +/− ở PENDING FILES cập
+   * nhật. Gộp lại, không fire theo từng phím.
+   */
+  private readonly contentChangedSoon = coalesce(() => this._onDidChangeDiffs.fire(), 300, 1000);
+  private readonly disposables: vscode.Disposable[] = [];
+
   constructor(private readonly context: vscode.ExtensionContext) {
     this.store = new SnapshotStore(context.workspaceState);
     this.snapshots = this.store.load();
+    this.disposables.push(vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.contentChanges.length === 0 || event.document.uri.scheme !== 'file') { return; }
+      if (this.snapshots.has(normalizePath(event.document.uri.fsPath))) {
+        this.contentChangedSoon.schedule();
+      }
+    }));
   }
 
   async snapshotBefore(filePath: string): Promise<void> {
@@ -247,6 +261,20 @@ export class DiffManager {
       this.setSnapshot(absPath,{ content, fileExistedBefore });
       this.rememberDisplayPath(filePath);
       this.scheduleSave();
+    }
+    // Fire cả khi snapshot đã có sẵn (snapshotBefore() của hook PreToolUse / built-in
+    // runner tạo nó trước khi file được ghi, và không fire): đây là lúc nội dung
+    // bên phải thực sự đổi, PENDING FILES / nav bar phải refresh.
+    this._onDidChangeDiffs.fire();
+  }
+
+  /**
+   * Watcher thấy một lần ghi mới vào file đã pending: snapshot giữ nguyên, chỉ
+   * nội dung hiện tại đổi. Ở Agent mode không có openDiff() nào fire thay, nên
+   * nếu không báo ở đây thì PENDING FILES đứng yên ở trạng thái cũ.
+   */
+  notifyPendingContentChanged(filePath: string): void {
+    if (this.snapshots.has(normalizePath(filePath))) {
       this._onDidChangeDiffs.fire();
     }
   }
@@ -689,6 +717,9 @@ export class DiffManager {
   }
 
   disposeAll(): void {
+    this.contentChangedSoon.dispose();
+    for (const d of this.disposables) { d.dispose(); }
+    this.disposables.length = 0;
     this.clearSnapshots();
     this.displayPaths.clear();
     this.lastCursors.clear();

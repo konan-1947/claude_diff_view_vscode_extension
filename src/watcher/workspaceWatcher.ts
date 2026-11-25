@@ -31,6 +31,12 @@ export class WorkspaceWatcher {
   private disposables: vscode.Disposable[] = [];
   /** Debounce: thời điểm lần cuối xử lý mỗi file */
   private lastProcessed = new Map<string, number>();
+  /**
+   * Lần ghi rơi vào cửa sổ debounce không bị bỏ hẳn: xử lý lại một lần khi cửa sổ
+   * hết, nếu không lần ghi cuối của một chuỗi ghi liên tiếp (vd: CLI ghi 2 lần
+   * trong 500ms) bị nuốt và PENDING FILES giữ số +/− của lần ghi trước.
+   */
+  private readonly trailingWrites = new Map<string, NodeJS.Timeout>();
   /** Lưu thời điểm VS Code vừa Save file (để bỏ qua watcher trigger từ chính VS Code) */
   private savedFilesByVsCode = new Map<string, number>();
   private readonly snapshots: BaselineStore;
@@ -426,9 +432,19 @@ export class WorkspaceWatcher {
       return;
     }
 
-    // 2. Debounce: bỏ qua nếu vừa xử lý file này trong 500ms
+    // 2. Debounce: gộp các event trong 500ms; event rơi vào cửa sổ được xử lý lại
+    // đúng một lần khi cửa sổ hết (trailing), không bị bỏ.
     const lastTime = this.lastProcessed.get(absPath) ?? 0;
-    if (now - lastTime < 500) { return; }
+    if (now - lastTime < 500) {
+      if (!this.trailingWrites.has(absPath)) {
+        const timer = setTimeout(() => {
+          this.trailingWrites.delete(absPath);
+          this.handleExternalWrite(uri, { burstHoldOverride: burstHold, readDelayMs });
+        }, lastTime + 500 - now + 1);
+        this.trailingWrites.set(absPath, timer);
+      }
+      return;
+    }
     this.lastProcessed.set(absPath, now);
     this.pruneStaleMapEntries();
 
@@ -526,6 +542,8 @@ export class WorkspaceWatcher {
 
       if (!this.diffManager.hasPendingDiff(absPath)) {
         this.resolveOrHold(absPath, oldContentRaw!, newContentRaw, true, burstHold);
+      } else {
+        this.diffManager.notifyPendingContentChanged(absPath);
       }
     } catch {
       // file đang bị lock, không có quyền đọc hoặc đã bị xóa — bỏ qua
@@ -617,6 +635,10 @@ export class WorkspaceWatcher {
       clearTimeout(timer);
     }
     this.pendingTimers.clear();
+    for (const timer of this.trailingWrites.values()) {
+      clearTimeout(timer);
+    }
+    this.trailingWrites.clear();
     for (const timer of this.pendingDirectoryScans.values()) {
       clearTimeout(timer);
     }

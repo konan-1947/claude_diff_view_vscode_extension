@@ -136,8 +136,21 @@ export interface IClaudeSdkService {
      */
     setBeforeFileWrite(callback: ((filePath: string) => Promise<void> | void) | undefined): void;
 
+    /**
+     * Called after Claude wrote a file (PostToolUse), so the diff view refreshes
+     * even for files the workspace watcher does not see.
+     */
+    setAfterFileWrite(callback: ((filePath: string) => void) | undefined): void;
+
     /** The CLI the SDK runs, to start it directly for a subcommand */
     getCliInvocation(): Promise<CliInvocation>;
+}
+
+/** file_path (Edit/Write/MultiEdit) or notebook_path (NotebookEdit) of a hook's tool input. */
+function toolFilePath(input: unknown): string | undefined {
+    const toolInput = (input as { tool_input?: Record<string, unknown> } | undefined)?.tool_input;
+    const filePath = toolInput?.file_path ?? toolInput?.notebook_path;
+    return typeof filePath === 'string' && filePath ? filePath : undefined;
 }
 
 /** CLI flag-settings overlay, passed with --settings (profile switching writes here). */
@@ -174,6 +187,7 @@ export class ClaudeSdkService implements IClaudeSdkService {
     readonly _serviceBrand: undefined;
 
     private beforeFileWrite?: (filePath: string) => Promise<void> | void;
+    private afterFileWrite?: (filePath: string) => void;
 
     constructor(
         private readonly context: vscode.ExtensionContext,
@@ -344,11 +358,12 @@ export class ClaudeSdkService implements IClaudeSdkService {
                 }] as HookCallbackMatcher[],
                 // PostToolUse: after a tool runs
                 PostToolUse: [{
-                    matcher: "Edit|Write|MultiEdit",
+                    matcher: "Edit|Write|MultiEdit|NotebookEdit",
                     hooks: [async (input, toolUseID, options) => {
                         if ('tool_name' in input) {
                             this.logService.info(`[Hook] PostToolUse: ${input.tool_name}`);
                         }
+                        this.notifyAfterWrite(input);
                         return { continue: true };
                     }]
                 }] as HookCallbackMatcher[]
@@ -619,6 +634,10 @@ export class ClaudeSdkService implements IClaudeSdkService {
         this.beforeFileWrite = callback;
     }
 
+    setAfterFileWrite(callback: ((filePath: string) => void) | undefined): void {
+        this.afterFileWrite = callback;
+    }
+
     async getCliInvocation(): Promise<CliInvocation> {
         const cliPath = await this.getClaudeExecutablePath();
         const env = await this.getMergedEnvironmentVariables();
@@ -646,13 +665,24 @@ export class ClaudeSdkService implements IClaudeSdkService {
         env.CLAUDE_CODE_ENTRYPOINT = codeMode ? 'sdk-ts' : 'claude-vscode';
     }
 
+    private notifyAfterWrite(input: unknown): void {
+        const filePath = toolFilePath(input);
+        if (!this.afterFileWrite || !filePath) {
+            return;
+        }
+        try {
+            this.afterFileWrite(filePath);
+        } catch {
+            // A missed refresh only leaves the pending list stale, never breaks the edit.
+        }
+    }
+
     private async snapshotBeforeWrite(input: unknown): Promise<void> {
         if (!this.beforeFileWrite) {
             return;
         }
-        const toolInput = (input as { tool_input?: Record<string, unknown> } | undefined)?.tool_input;
-        const filePath = toolInput?.file_path ?? toolInput?.notebook_path;
-        if (typeof filePath !== 'string' || !filePath) {
+        const filePath = toolFilePath(input);
+        if (!filePath) {
             return;
         }
         try {
