@@ -78,6 +78,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const monacoBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'node_modules', 'monaco-editor', 'min', 'vs'));
   const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
   const claudeFrameJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'claudeFrame.js'));
+  const paneLayoutJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'paneLayout.js'));
   const claudeUiDir = vscode.Uri.joinPath(extensionUri, 'dist', 'claude-ui');
   const claudeUi = {
     js: webview.asWebviewUri(vscode.Uri.joinPath(claudeUiDir, 'main.js')).toString(),
@@ -196,11 +197,11 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   .view-diff-btn.preview-open .icon-diff { display: none; }
   /* Narrow sidebar: the labelled buttons turn icon-only one by one (View diff
      first, then Agent mode), so the tab strip keeps room for the tab titles. */
-  @media (max-width: 560px) {
+  @container group (max-width: 560px) {
     .view-diff-btn { width: 26px; min-width: 26px; padding: 0; }
     .view-diff-btn .btn-label { display: none; }
   }
-  @media (max-width: 420px) {
+  @container group (max-width: 420px) {
     .agent-mode-btn { width: 26px; min-width: 26px; padding: 0; }
     .agent-mode-btn .btn-label { display: none; }
   }
@@ -227,13 +228,13 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   .header-btn svg { display: block; }
   .header-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18)); color: var(--vscode-foreground); opacity: 1; }
-  body.page-terminal #tab-strip .header-btn:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); color: var(--chrome-fg, var(--vscode-foreground)); }
-  body.page-terminal #tab-strip .header-btn { color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground))); }
-  body.page-terminal #tab-strip .header-separator { background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.45))); }
+  body.page-terminal .tab-strip .header-btn:hover { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); color: var(--chrome-fg, var(--vscode-foreground)); }
+  body.page-terminal .tab-strip .header-btn { color: var(--chrome-fg, var(--vscode-icon-foreground, var(--vscode-foreground))); }
+  body.page-terminal .tab-strip .header-separator { background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.45))); }
   .header-btn:active { background: var(--vscode-toolbar-activeBackground, rgba(128,128,128,0.28)); }
 
   /* Tab strip — rounded pills, a raised active tab and a "+" that opens the launcher menu. */
-  #tab-strip {
+  .tab-strip {
     flex: 0 0 38px;
     height: 38px;
     display: flex;
@@ -327,16 +328,17 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     transition: background 0.12s, opacity 0.12s;
   }
   .tab-add:hover, .tab-add[aria-expanded="true"] { background: var(--chrome-hover, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.18))); opacity: 1; }
-  /* Very narrow side bar: tighter strip (after the base rules above, which
-     would otherwise win at equal specificity) */
-  @media (max-width: 320px) {
-    #tab-strip { padding: 0 6px; }
+  /* Very narrow group: tighter strip (after the base rules above, which
+     would otherwise win at equal specificity). Container queries: each pane
+     group measures its own width, not the whole view. */
+  @container group (max-width: 320px) {
+    .tab-strip { padding: 0 6px; }
     #header-actions { gap: 2px; }
     .header-separator { display: none; }
   }
-  @media (max-width: 260px) {
-    #tab-strip { gap: 2px; }
-    #tab-strip .header-btn,
+  @container group (max-width: 260px) {
+    .tab-strip { gap: 2px; }
+    .tab-strip .header-btn,
     .agent-mode-btn,
     .view-diff-btn { width: 24px; min-width: 24px; }
     .tab-add { flex-basis: 22px; width: 22px; }
@@ -372,9 +374,19 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     border-radius: 50%;
     background: #3fb950;
   }
-  @media (max-width: 560px) {
-    #tab-strip .tabs { display: none; }
-    #tab-strip .tabs-btn { display: inline-flex; }
+  /* The group holding the header buttons gives up its tab row early (as the whole
+     side bar used to); other groups keep their tabs until they are really narrow. */
+  @container group (max-width: 560px) {
+    #layout-root:not(.multi) .group.has-actions > .tab-strip .tabs { display: none; }
+    #layout-root:not(.multi) .group.has-actions > .tab-strip .tabs-btn { display: inline-flex; }
+  }
+  @container group (max-width: 400px) {
+    #layout-root.multi .group.has-actions > .tab-strip .tabs { display: none; }
+    #layout-root.multi .group.has-actions > .tab-strip .tabs-btn { display: inline-flex; }
+  }
+  @container group (max-width: 220px) {
+    .tab-strip .tabs { display: none; }
+    .tab-strip .tabs-btn { display: inline-flex; }
   }
   .tabs-menu .agent-item.active { background: var(--vscode-list-inactiveSelectionBackground, rgba(128,128,128,0.16)); }
   .tabs-menu .agent-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -446,17 +458,116 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     overflow: hidden;
     min-height: 0;
   }
-  #term-wrap {
+  /* Pane groups (res/webview/paneLayout.js): a split tree of groups, each a tab
+     strip over an empty body. The panes themselves live in #term-host and are only
+     positioned over their group's body: moving an iframe in the DOM reloads it. */
+  #layout-root {
     position: absolute;
     inset: 0;
-    overflow: hidden;
+    z-index: 0;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+  }
+  .split { display: flex; flex: 1 1 0px; min-width: 0; min-height: 0; }
+  .split-row { flex-direction: row; }
+  .split-col { flex-direction: column; }
+  .group {
+    container: group / inline-size;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0px;
+    min-width: 0;
+    min-height: 0;
+  }
+  .group-body {
+    flex: 1 1 auto;
+    min-height: 0;
     background: var(--term-bg, var(--vscode-editor-background));
   }
-  #term-host { width: 100%; height: 100%; position: relative; }
+  .sash {
+    flex: 0 0 4px;
+    position: relative;
+    background: var(--chrome-bg, var(--vscode-sideBar-background));
+    z-index: 1;
+    touch-action: none;
+  }
+  .sash-v { cursor: col-resize; }
+  .sash-h { cursor: row-resize; }
+  .sash::after {
+    content: '';
+    position: absolute;
+    background: var(--chrome-border, var(--vscode-panel-border, rgba(128,128,128,0.35)));
+    transition: background 0.1s;
+  }
+  .sash-v::after { top: 0; bottom: 0; left: 1.5px; width: 1px; }
+  .sash-h::after { left: 0; right: 0; top: 1.5px; height: 1px; }
+  .sash:hover::after { transition-delay: 0.3s; }
+  .sash:hover::after, .sash.active::after { background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder, #007fd4)); }
+  .sash-v:hover::after, .sash-v.active::after { left: 0; width: 4px; }
+  .sash-h:hover::after, .sash-h.active::after { top: 0; height: 4px; }
+  /* With several groups, the one taking input keeps a crisp active tab; the others dim theirs. */
+  #layout-root.multi .group:not(.focused) .tab.active { opacity: 0.72; box-shadow: none; }
+  #layout-root.multi .group.focused .tab.active { border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 55%, transparent); }
+  /* Drag and drop */
+  .pl-shield { position: fixed; inset: 0; z-index: 1000; background: transparent; }
+  .pl-shield[hidden] { display: none; }
+  body.pl-dragging, body.pl-dragging * { user-select: none !important; }
+  .pl-drop-overlay {
+    position: fixed;
+    left: 0; top: 0; width: 0; height: 0;
+    box-sizing: border-box;
+    border-radius: 6px;
+    background: var(--vscode-editorGroup-dropBackground, rgba(83, 89, 93, 0.5));
+    border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 45%, transparent);
+    opacity: 0;
+    pointer-events: none;
+    transition: left 0.14s cubic-bezier(.2,.8,.2,1), top 0.14s cubic-bezier(.2,.8,.2,1),
+      width 0.14s cubic-bezier(.2,.8,.2,1), height 0.14s cubic-bezier(.2,.8,.2,1), opacity 0.1s;
+  }
+  .pl-drop-overlay.show { opacity: 1; }
+  .pl-drop-overlay.no-anim { transition: none; }
+  .tab-ghost {
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+    background: var(--chrome-active, var(--vscode-editor-background));
+    position: fixed !important;
+    left: 0; top: 0;
+    margin: 0;
+    z-index: 2;
+    pointer-events: none;
+    opacity: 0.95 !important;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28) !important;
+    will-change: transform;
+    transition: none;
+  }
+  .tab-ghost.landing { transition: transform 0.16s cubic-bezier(.2,.8,.2,1), width 0.16s, box-shadow 0.16s; box-shadow: none !important; }
+  .tab.dragging { opacity: 0.35 !important; }
+  .tab.dragging.drag-hidden { opacity: 0 !important; }
+  #layout-root .tab { transition: background 0.12s, border-color 0.12s, opacity 0.12s, transform 0.16s cubic-bezier(.2,.8,.2,1); }
+  #layout-root.pl-no-anim .tab { transition: none !important; }
+  .tab-strip.pl-drop-target { background: color-mix(in srgb, var(--chrome-bg, var(--vscode-sideBar-background)) 80%, var(--vscode-focusBorder, #007fd4) 20%); }
+  .pl-tab-menu { min-width: 180px; }
+
+  /* Overlays and the pane host start below the top row of tab strips (38px), so
+     the strips (and their buttons) stay usable while an overlay is open. */
+  #term-wrap {
+    position: absolute;
+    inset: 38px 0 0 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  #term-wrap > * { pointer-events: auto; }
+  #term-host { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
   .term-pane {
     position: absolute;
-    inset: 0;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
     display: none;
+    pointer-events: auto;
+    overflow: hidden;
   }
   .term-pane.active { display: block; }
   /* Claude UI tab: an iframe running the uic chat app (res/webview/claudeFrame.js). */
@@ -610,7 +721,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   /* Pending Files is drawn over the terminal; the terminal keeps running underneath. */
   #pending-overlay {
     position: absolute;
-    inset: 0;
+    inset: 38px 0 0 0;
     z-index: 5;
     display: flex;
     flex-direction: column;
@@ -1279,37 +1390,32 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
 </style>
 </head>
 <body class="page-terminal">
-  <div id="tab-strip">
-    <button id="btn-tabs" class="header-btn tabs-btn" type="button" title="Tabs" aria-label="Tabs" aria-haspopup="menu" aria-expanded="false">
-      ${TAB_ICON_TABS}<span class="tabs-count" aria-hidden="true"></span>
-    </button>
-    <div id="tabs" class="tabs"></div>
-    <button id="tab-add" class="tab-add" type="button" title="New terminal or agent" aria-label="New terminal or agent" aria-haspopup="menu" aria-expanded="false">+</button>
-    <div id="header-actions">
-      <button id="btn-view-diff" class="view-diff-btn" type="button" title="Preview all pending changes" aria-label="Preview all pending changes" hidden>
-        ${viewDiffIcon}
-        ${TAB_ICON_BACK}
-        <span class="btn-label">View diff</span>
-      </button>
-      <button id="btn-toggle-page" class="header-btn" title="Switch view" aria-label="Switch view">
-        ${TAB_ICON_LIST}
-      </button>
-      <button id="btn-introduce" class="header-btn" title="Introduce" aria-label="Introduce">
-        ${TAB_ICON_INFO}
-      </button>
-      <button id="btn-settings" class="header-btn" title="Settings" aria-label="Settings">
-        ${TAB_ICON_SETTINGS}
-      </button>
-      <span class="header-separator" aria-hidden="true"></span>
-      <button id="btn-agent-mode" class="agent-mode-btn" type="button" title="Open Agent mode" aria-label="Open Agent mode">
-        ${agentModeIcon}
-        <span class="btn-label">Agent mode</span>
-      </button>
-    </div>
-  </div>
   <div id="agent-menu" class="agent-menu" role="menu" hidden></div>
   <div id="tabs-menu" class="agent-menu tabs-menu" role="menu" hidden></div>
   <div id="content">
+    <div id="layout-root">
+      <div id="header-actions">
+        <button id="btn-view-diff" class="view-diff-btn" type="button" title="Preview all pending changes" aria-label="Preview all pending changes" hidden>
+          ${viewDiffIcon}
+          ${TAB_ICON_BACK}
+          <span class="btn-label">View diff</span>
+        </button>
+        <button id="btn-toggle-page" class="header-btn" title="Switch view" aria-label="Switch view">
+          ${TAB_ICON_LIST}
+        </button>
+        <button id="btn-introduce" class="header-btn" title="Introduce" aria-label="Introduce">
+          ${TAB_ICON_INFO}
+        </button>
+        <button id="btn-settings" class="header-btn" title="Settings" aria-label="Settings">
+          ${TAB_ICON_SETTINGS}
+        </button>
+        <span class="header-separator" aria-hidden="true"></span>
+        <button id="btn-agent-mode" class="agent-mode-btn" type="button" title="Open Agent mode" aria-label="Open Agent mode">
+          ${agentModeIcon}
+          <span class="btn-label">Agent mode</span>
+        </button>
+      </div>
+    </div>
     <div id="pending-overlay" hidden>
       <div class="pending-head">
         <h2>Pending files</h2>
@@ -1722,6 +1828,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
     window.__AI_CLI_CLAUDE_UI__ = ${JSON.stringify({ ...claudeUi, nonce })};
   </script>
   <script nonce="${nonce}" src="${claudeFrameJs}"></script>
+  <script nonce="${nonce}" src="${paneLayoutJs}"></script>
   <script nonce="${nonce}">
     (function () {
       const vscode = window.__AI_CLI_VSCODE_API__ || (
@@ -1743,8 +1850,12 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       let currentSettings = JSON.parse(JSON.stringify(DEFAULTS));
 
       const termHost = document.getElementById('term-host');
-      const tabsEl = document.getElementById('tabs');
-      const btnAddTab = document.getElementById('tab-add');
+      const layoutRoot = document.getElementById('layout-root');
+      const headerActions = document.getElementById('header-actions');
+      // The "+" / tabs buttons are per pane group; these point at the one last clicked.
+      let btnAddTab = null;
+      let btnTabs = null;
+      let tabsMenuGroup = null;
       const btnAgentMode = document.getElementById('btn-agent-mode');
       const btnViewDiff = document.getElementById('btn-view-diff');
       const diffPreviewOverlay = document.getElementById('diff-preview-overlay');
@@ -1770,7 +1881,77 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       // id -> { id, term, fit, host, tab, dataDisp, exited }
       const sessions = new Map();
+      // Active tab of the focused pane group (what the host knows as the active session).
       let activeId = null;
+      // Terminals whose restored screen is still being replayed: not fitted until done,
+      // otherwise lines wrap at the wrong width.
+      const replaying = new Set();
+      const pendingResize = new Set();
+      let resizeTimer = 0;
+
+      function flushResize() {
+        clearTimeout(resizeTimer);
+        resizeTimer = 0;
+        pendingResize.forEach((id) => {
+          const s = sessions.get(id);
+          if (s && s.term) vscode.postMessage({ type: 'resize', id, cols: s.term.cols, rows: s.term.rows });
+        });
+        pendingResize.clear();
+      }
+
+      // Panes were moved/resized by the layout. xterm is refitted at once (every frame while
+      // a sash is dragged); the PTY hears about it at most every 100 ms until the drag ends,
+      // so a TUI is not flooded with SIGWINCH redraws.
+      function onPanesLayout(ids, final) {
+        ids.forEach((id) => {
+          const s = sessions.get(id);
+          if (!s || !s.term || replaying.has(id)) return;
+          const cols = s.term.cols;
+          const rows = s.term.rows;
+          safeFitSession(s);
+          if (final || s.term.cols !== cols || s.term.rows !== rows) pendingResize.add(id);
+        });
+        if (final) flushResize();
+        else if (pendingResize.size && !resizeTimer) resizeTimer = setTimeout(flushResize, 100);
+      }
+
+      function focusActive() {
+        const sess = sessions.get(activeId);
+        if (!sess) return;
+        requestAnimationFrame(() => {
+          if (sess.claude) { sess.claude.focus(); return; }
+          try { sess.term.focus(); } catch (_) {}
+        });
+      }
+
+      // The focused group's active tab changed (click, drag, split, close, focus moved).
+      function onLayoutActive(id, o) {
+        activeId = id;
+        const next = id ? sessions.get(id) : null;
+        if (!next) { reportPanelTitle(); return; }
+        next.tab.classList.remove('done');
+        vscode.postMessage({ type: 'activeSession', id });
+        try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
+        reportPanelTitle();
+        if (o && o.focus) focusActive();
+      }
+
+      const layout = window.PaneLayout.create({
+        root: layoutRoot,
+        paneHost: termHost,
+        actionsEl: headerActions,
+        tabsIcon: ${JSON.stringify(TAB_ICON_TABS)},
+        tabEl: (id) => { const s = sessions.get(id); return s ? s.tab : null; },
+        paneEl: (id) => { const s = sessions.get(id); return s ? s.host : null; },
+        onActive: onLayoutActive,
+        onPanesLayout,
+        onAddButton: (gid, btn) => toggleAgentMenu(btn),
+        onTabsButton: (gid, btn) => toggleTabsMenu(gid, btn),
+        onCloseTab: (id) => vscode.postMessage({ type: 'closeSession', id }),
+        // Nothing to keep before the first session exists (an empty layout would
+        // overwrite the one the host is about to restore).
+        onLayoutChange: (data) => { if (sessions.size > 0) vscode.postMessage({ type: 'layout', layout: data }); },
+      });
 
       function safeFitSession(sess) { try { if (sess.term) sess.fit.fit(); } catch (_) { /* ignore */ } }
 
@@ -1866,8 +2047,6 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const theme = resolveTheme(s);
         applyChromeColors(s, theme);
         document.documentElement.style.setProperty('--term-bg', theme.background);
-        const wrap = document.getElementById('term-wrap');
-        if (wrap) wrap.style.background = theme.background;
         for (const sess of sessions.values()) {
           if (!sess.term) continue;
           sess.term.options.fontFamily = s.fontFamily;
@@ -1971,29 +2150,11 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         if (sess.id === activeId) reportPanelTitle();
       }
 
+      // Shows the tab in its pane group and makes that group the focused one;
+      // onLayoutActive does the rest (host notice, title, focus).
       function activateTab(id) {
         if (!sessions.has(id)) return;
-        if (activeId === id) return;
-        const old = sessions.get(activeId);
-        if (old) {
-          old.host.classList.remove('active');
-          old.tab.classList.remove('active');
-        }
-        const next = sessions.get(id);
-        next.host.classList.add('active');
-        next.tab.classList.add('active');
-        next.tab.classList.remove('done');
-        activeId = id;
-        vscode.postMessage({ type: 'activeSession', id });
-        // scroll the tab into view
-        try { next.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
-        reportPanelTitle();
-        requestAnimationFrame(() => {
-          if (next.claude) { next.claude.focus(); return; }
-          safeFitSession(next);
-          vscode.postMessage({ type: 'resize', id, cols: next.term.cols, rows: next.term.rows });
-          try { next.term.focus(); } catch (_) {}
-        });
+        layout.activate(id);
       }
 
       let focusOnSessionCreated = false;
@@ -2014,14 +2175,13 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           host.appendChild(claude.el);
           const label = title || 'Claude Code';
           const tab = buildTabDom(id, label);
-          tabsEl.appendChild(tab);
           sessions.set(id, {
             id, kind: 'claude', claude, host, tab, exited: false,
             defaultTitle: label, shownTitle: label, rawTitle: '',
           });
-          // A restored tab is activated by onRestoreSessions with the rest.
+          // A restored tab is placed by onRestoreSessions with the rest.
           if (restoring) return;
-          activateTab(id);
+          layout.addTab(id);
           if (focusOnSessionCreated) {
             focusOnSessionCreated = false;
             requestAnimationFrame(() => claude.focus());
@@ -2058,7 +2218,6 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         }
 
         const tab = buildTabDom(id, title);
-        tabsEl.appendChild(tab);
 
         const sess = {
           id, kind: 'terminal', term: t, fit: f, host, tab, dataDisp: null, exited: false,
@@ -2074,9 +2233,9 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           vscode.postMessage({ type: 'input', id, data });
         });
         sessions.set(id, sess);
-        // A restored tab is activated by onRestoreSessions after its screen is replayed.
+        // A restored tab is placed by onRestoreSessions after its screen is replayed.
         if (restoring) return;
-        activateTab(id);
+        layout.addTab(id);
         // also fit + report dims (activateTab already does this on the rAF tick)
         if (focusOnSessionCreated) {
           focusOnSessionCreated = false;
@@ -2098,14 +2257,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         sess.host.remove();
         sess.tab.remove();
         sessions.delete(id);
-        if (activeId === id) {
-          activeId = null;
-          const remaining = Array.from(sessions.keys());
-          if (remaining.length > 0) {
-            activateTab(remaining[remaining.length - 1]);
-          }
-          // if zero remain, extension auto-spawns a replacement and we receive sessionCreated.
-        }
+        pendingResize.delete(id);
+        // The group shows its neighbouring tab; an emptied group closes. If no tab is left
+        // at all, the extension spawns a replacement and we receive sessionCreated.
+        layout.removeTab(id);
       }
 
       function isFontInstalled(family) {
@@ -2152,7 +2307,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         });
       }
 
-      function onRestoreSessions(list, restoreActiveId) {
+      function onRestoreSessions(list, restoreActiveId, savedLayout) {
         const written = [];
         for (const snap of list) {
           if (sessions.has(snap.id)) continue;
@@ -2170,6 +2325,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           // Replay at the size it was serialized at; activateTab fits and reflows
           // only once the replay is parsed, otherwise lines wrap at the wrong width.
           try { s.term.resize(snap.cols, snap.rows); } catch (_) {}
+          replaying.add(snap.id);
           written.push(new Promise((resolve) => s.term.write(snap.serialized, resolve)).then(() => {
             if (snap.exited) markExited(s, snap.id, snap.exitCode);
           }));
@@ -2178,22 +2334,19 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
             applySessionTitle(s);
           }
         }
+        // Groups and splits come back as they were; tabs it does not know join the focused group.
+        layout.restore(savedLayout, Array.from(sessions.keys()));
         Promise.all(written).then(() => {
+          replaying.clear();
           const ids = Array.from(sessions.keys());
           const target = restoreActiveId && sessions.has(restoreActiveId) ? restoreActiveId : ids[ids.length - 1];
-          // activateTab focuses the terminal itself.
           focusOnSessionCreated = false;
-          if (target) activateTab(target);
+          if (target) layout.activate(target, false);
+          // Fit every visible terminal now that its screen is parsed, then take focus.
+          layout.relayout();
+          focusActive();
         });
       }
-
-      const ro = new ResizeObserver(() => {
-        const sess = sessions.get(activeId);
-        if (!sess || !sess.term) return;
-        safeFitSession(sess);
-        vscode.postMessage({ type: 'resize', id: activeId, cols: sess.term.cols, rows: sess.term.rows });
-      });
-      ro.observe(termHost);
 
       // "+" opens a launcher menu: a plain shell or one of the AI CLIs. Availability is
       // looked up by the extension each time the menu opens (PATH can change at any time).
@@ -2228,6 +2381,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       function closeAgentMenu(refocus) {
         if (agentMenu.hidden) return;
         agentMenu.hidden = true;
+        if (!btnAddTab) return;
         btnAddTab.setAttribute('aria-expanded', 'false');
         if (refocus) { try { btnAddTab.focus(); } catch (_) {} }
       }
@@ -2285,8 +2439,14 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         agentMenu.style.top = (rect.bottom + 4) + 'px';
       }
 
-      btnAddTab.addEventListener('click', () => {
-        if (!agentMenu.hidden) { closeAgentMenu(false); return; }
+      function toggleAgentMenu(btn) {
+        const same = btn === btnAddTab;
+        if (!agentMenu.hidden) {
+          closeAgentMenu(false);
+          if (same) return;
+        }
+        closeTabsMenu(false);
+        btnAddTab = btn;
         renderAgentMenu();
         agentMenu.hidden = false;
         btnAddTab.setAttribute('aria-expanded', 'true');
@@ -2294,10 +2454,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const first = agentMenu.querySelector('.agent-item:not(:disabled)');
         if (first) first.focus();
         vscode.postMessage({ type: 'requestAgents' });
-      });
+      }
       document.addEventListener('mousedown', (e) => {
         if (agentMenu.hidden) return;
-        if (agentMenu.contains(e.target) || btnAddTab.contains(e.target)) return;
+        if (agentMenu.contains(e.target) || (btnAddTab && btnAddTab.contains(e.target))) return;
         closeAgentMenu(false);
       });
       window.addEventListener('blur', () => closeAgentMenu(false));
@@ -2322,26 +2482,42 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       // Narrow side bar: the tab row is replaced by one button (CSS) whose menu lists
       // the tabs. The tab elements stay the source of truth (order, title, state).
-      const btnTabs = document.getElementById('btn-tabs');
+      // Each pane group has its own button (shown when that group is narrow).
       const tabsMenu = document.getElementById('tabs-menu');
-      const tabsCount = btnTabs.querySelector('.tabs-count');
 
-      function syncTabsButton() {
-        const tabs = Array.from(tabsEl.children);
-        tabsCount.textContent = tabs.length > 1 ? String(tabs.length) : '';
-        btnTabs.classList.toggle('has-done', tabs.some((t) => t.classList.contains('done')));
-        const active = tabs.find((t) => t.classList.contains('active'));
-        const title = active ? (active.querySelector('.tab-title') || active).textContent : '';
-        btnTabs.title = title ? 'Tabs: ' + title : 'Tabs';
-        if (!tabsMenu.hidden) renderTabsMenu();
+      function menuTabsEl() {
+        const g = layout.groups().find((x) => x.id === tabsMenuGroup);
+        return g ? g.tabsEl : null;
       }
-      new MutationObserver(syncTabsButton).observe(tabsEl, {
+
+      let syncTabsRaf = 0;
+      function syncTabsButton() {
+        syncTabsRaf = 0;
+        layout.groups().forEach((g) => {
+          if (!g.tabsBtn || !g.tabsEl) return;
+          const tabs = Array.from(g.tabsEl.children);
+          const count = g.tabsBtn.querySelector('.tabs-count');
+          if (count) count.textContent = tabs.length > 1 ? String(tabs.length) : '';
+          g.tabsBtn.classList.toggle('has-done', tabs.some((t) => t.classList.contains('done')));
+          const active = tabs.find((t) => t.classList.contains('active'));
+          const title = active ? (active.querySelector('.tab-title') || active).textContent : '';
+          g.tabsBtn.title = title ? 'Tabs: ' + title : 'Tabs';
+        });
+        if (!tabsMenu.hidden) {
+          if (menuTabsEl()) renderTabsMenu();
+          else closeTabsMenu(false);
+        }
+      }
+      new MutationObserver(() => {
+        if (!syncTabsRaf) syncTabsRaf = requestAnimationFrame(syncTabsButton);
+      }).observe(layoutRoot, {
         childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'],
       });
 
       function closeTabsMenu(refocus) {
         if (tabsMenu.hidden) return;
         tabsMenu.hidden = true;
+        if (!btnTabs) return;
         btnTabs.setAttribute('aria-expanded', 'false');
         if (refocus) { try { btnTabs.focus(); } catch (_) {} }
       }
@@ -2350,7 +2526,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const focusedId = document.activeElement && tabsMenu.contains(document.activeElement)
           ? document.activeElement.dataset.id : undefined;
         tabsMenu.textContent = '';
-        Array.from(tabsEl.children).forEach((tab) => {
+        const list = menuTabsEl();
+        Array.from(list ? list.children : []).forEach((tab) => {
           const id = tab.dataset.id;
           const sess = sessions.get(id);
           const item = document.createElement('button');
@@ -2395,23 +2572,29 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         tabsMenu.style.top = (rect.bottom + 4) + 'px';
       }
 
-      btnTabs.addEventListener('click', () => {
-        if (!tabsMenu.hidden) { closeTabsMenu(false); return; }
+      function toggleTabsMenu(gid, btn) {
+        const same = btn === btnTabs;
+        if (!tabsMenu.hidden) {
+          closeTabsMenu(false);
+          if (same) return;
+        }
         closeAgentMenu(false);
+        btnTabs = btn;
+        tabsMenuGroup = gid;
         tabsMenu.hidden = false;
         btnTabs.setAttribute('aria-expanded', 'true');
         renderTabsMenu();
         const current = tabsMenu.querySelector('.agent-item.active') || tabsMenu.querySelector('.agent-item');
         if (current) current.focus();
-      });
+      }
       document.addEventListener('mousedown', (e) => {
         if (tabsMenu.hidden) return;
-        if (tabsMenu.contains(e.target) || btnTabs.contains(e.target)) return;
+        if (tabsMenu.contains(e.target) || (btnTabs && btnTabs.contains(e.target))) return;
         closeTabsMenu(false);
       });
       window.addEventListener('blur', () => closeTabsMenu(false));
       // Widened past the breakpoint: the button is gone, so is its menu
-      window.addEventListener('resize', () => { if (!btnTabs.offsetParent) closeTabsMenu(false); });
+      window.addEventListener('resize', () => { if (!btnTabs || !btnTabs.offsetParent) closeTabsMenu(false); });
       tabsMenu.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') { e.preventDefault(); closeTabsMenu(true); return; }
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -2536,7 +2719,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         } else if (msg.type === 'pendingFiles') {
           onPendingFiles(msg.html || '');
         } else if (msg.type === 'restoreSessions') {
-          onRestoreSessions(msg.sessions || [], msg.activeId);
+          onRestoreSessions(msg.sessions || [], msg.activeId, msg.layout);
         } else if (msg.type === 'sessionClosed') {
           onSessionClosed(msg.id);
         } else if (msg.type === 'data') {

@@ -261,7 +261,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.restoreQueue = [];
     try {
       const sessions = await this.sessions.snapshot();
-      this.post({ type: 'restoreSessions', sessions, activeId: this.sessions.activeId });
+      this.post({ type: 'restoreSessions', sessions, activeId: this.sessions.activeId, layout: this.sessions.layout });
     } finally {
       const queued = this.restoreQueue ?? [];
       this.restoreQueue = undefined;
@@ -685,6 +685,9 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         case 'activeSession':
           this.sessions.activeId = msg.id;
+          return;
+        case 'layout':
+          this.sessions.layout = msg.layout;
           return;
         case 'restart':
           this.sessions.restart(msg.id);

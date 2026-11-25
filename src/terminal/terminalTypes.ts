@@ -127,6 +127,15 @@ export const MAX_AUTO_OPEN_DIFFS_CEILING = 1000;
 
 export type SessionKind = 'terminal' | 'claude';
 
+/**
+ * Pane layout of the terminal webview (res/webview/paneLayout.js): a split tree whose
+ * leaves are tab groups. Kept by the host only so a rebuilt webview (Agent mode toggle)
+ * gets its splits back; the webview validates it against the live session ids.
+ */
+export type LayoutNode =
+  | { type: 'split'; dir: 'row' | 'col'; sizes: number[]; children: LayoutNode[] }
+  | { type: 'group'; tabs: string[]; active: string | null; focused?: boolean };
+
 export type IncomingMessage =
   | { type: 'ready' }
   | { type: 'toggleAgentMode' }
@@ -164,6 +173,7 @@ export type IncomingMessage =
   | { type: 'terminalFocusState'; focused: boolean }
   | { type: 'sessionTitle'; title: string }
   | { type: 'activeSession'; id: string }
+  | { type: 'layout'; layout: LayoutNode }
   | { type: 'viewTooNarrow' };
 
 /** One running session, as sent to a newly attached webview so it can redraw the tab. */

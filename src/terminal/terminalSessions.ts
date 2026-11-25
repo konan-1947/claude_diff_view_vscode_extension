@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { Terminal as HeadlessTerminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { PtySession } from './ptySession';
-import { SessionKind, SessionSnapshot } from './terminalTypes';
+import { LayoutNode, SessionKind, SessionSnapshot } from './terminalTypes';
 
 const SCROLLBACK_LINES = 3000;
 const CLAUDE_TITLE_FALLBACK = 'Claude Code';
@@ -55,6 +55,8 @@ export class TerminalSessionStore implements vscode.Disposable {
   private readonly sessions = new Map<string, SessionRecord>();
   private nextSessionNum = 0;
   activeId: string | undefined;
+  /** Split layout of the tab groups, as last reported by a terminal webview. */
+  layout: LayoutNode | undefined;
 
   private readonly _onCreated = new vscode.EventEmitter<{ id: string; title: string; kind: SessionKind }>();
   readonly onCreated = this._onCreated.event;
