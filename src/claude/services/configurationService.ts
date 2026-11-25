@@ -108,6 +108,48 @@ export interface IConfigurationService {
   // Extension-specific configuration (~/.claude/ai-cli-diff-view-ui.json)
   getExtensionConfig(): Promise<ExtensionConfig>;
   updateExtensionConfig<K extends keyof ExtensionConfig>(key: K, value: ExtensionConfig[K]): Promise<void>;
+
+  /**
+   * Re-read ~/.claude/settings.json (and the active profile) and rewrite
+   * ai-cli-diff-view-settings.json when its content changed. Called before each
+   * SDK query, so a Code Mode switch in settings.json reaches the next session.
+   */
+  syncFlagSettings(): Promise<void>;
+
+  /** Whether ai-cli-diff-view-settings.json turns Code Mode on (its env value is "1") */
+  isCodeModeOn(): Promise<boolean>;
+}
+
+/**
+ * Code Mode switch. `claude -p` and Agent SDK apps only read it from the env
+ * block of `--settings` (flagSettings), never from settings.json or the shell
+ * as the interactive CLI does, so it is copied into the flagSettings file.
+ */
+export const CODE_MODE_ENV = 'CLAUDE_CODE_EXPERIMENTAL_CODE_MODE';
+
+/**
+ * `flagContent` with the user's Code Mode switch added to its env block: the
+ * value from the merged user settings (settings.json + profile), else from the
+ * extension host's environment. Copied verbatim, so an "off" value stays off.
+ * A value the flag content already sets wins.
+ */
+export function withCodeModePassthrough(
+  flagContent: Record<string, any>,
+  userSettings: Record<string, any>,
+  processEnv: Record<string, string | undefined> = process.env
+): Record<string, any> {
+  const flagEnv = flagContent.env;
+  if (flagEnv && typeof flagEnv === 'object' && flagEnv[CODE_MODE_ENV] !== undefined) {
+    return flagContent;
+  }
+  const userEnv = userSettings.env;
+  const fromSettings = userEnv && typeof userEnv === 'object' ? userEnv[CODE_MODE_ENV] : undefined;
+  const value = fromSettings ?? processEnv[CODE_MODE_ENV];
+  if (value === undefined || value === null) {
+    return flagContent;
+  }
+  const env = flagEnv && typeof flagEnv === 'object' && !Array.isArray(flagEnv) ? flagEnv : {};
+  return { ...flagContent, env: { ...env, [CODE_MODE_ENV]: String(value) } };
 }
 
 export class ConfigurationService implements IConfigurationService {
@@ -349,28 +391,44 @@ export class ConfigurationService implements IConfigurationService {
    * SDK already reads ~/.claude/settings.json as userSettings (lower priority).
    * So ai-cli-diff-view-settings.json only needs profile-specific overrides, NOT a full copy.
    *
-   * - No profile (Default): write empty object — SDK uses settings.json directly
-   * - With profile: write profile file content — SDK merges over settings.json
+   * - No profile (Default): empty object — SDK uses settings.json directly
+   * - With profile: profile file content — SDK merges over settings.json
+   * - Either way plus the Code Mode switch (see withCodeModePassthrough)
+   *
+   * Written only when the content changed: the CLI hot-reloads this file in
+   * every running session.
    */
   async syncProfileToUic(): Promise<void> {
     const uicPath = this.getUicConfigPath();
 
-    if (!this._activeProfile) {
-      // Default Profile: no overrides needed, SDK reads settings.json via userSettings
-      await this.writeJsonFile(uicPath, {});
+    let content: any = {};
+    if (this._activeProfile) {
+      // Named profile: profile-specific content as flagSettings overlay
+      const profilePath = this.getGlobalSettingsPath(this._activeProfile);
+      if (await this.fileSystemService.pathExists(profilePath)) {
+        content = await this.readJsonFile(profilePath);
+      }
+    }
+    content = withCodeModePassthrough(content, this._globalSettings);
+
+    const current = await this.fileSystemService.pathExists(uicPath)
+      ? await this.readJsonFile(uicPath)
+      : undefined;
+    if (current !== undefined && this.deepEqual(current, content)) {
       return;
     }
+    await this.writeJsonFile(uicPath, content);
+  }
 
-    // Named profile: write profile-specific content as flagSettings overlay
-    const profilePath = this.getGlobalSettingsPath(this._activeProfile);
-    let profileContent: any;
-    if (await this.fileSystemService.pathExists(profilePath)) {
-      profileContent = await this.readJsonFile(profilePath);
-    } else {
-      profileContent = {};
-    }
+  async syncFlagSettings(): Promise<void> {
+    this._globalSettings = await this.loadGlobalSettings();
+    await this.syncProfileToUic();
+  }
 
-    await this.writeJsonFile(uicPath, profileContent);
+  async isCodeModeOn(): Promise<boolean> {
+    const content = await this.readJsonFile(this.getUicConfigPath());
+    // The CLI turns Code Mode on only for "1" (any other value is off or refused)
+    return String(content?.env?.[CODE_MODE_ENV] ?? '').trim() === '1';
   }
 
   // --- Loaders ---

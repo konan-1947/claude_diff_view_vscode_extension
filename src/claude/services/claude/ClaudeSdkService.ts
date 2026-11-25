@@ -217,6 +217,8 @@ export class ClaudeSdkService implements IClaudeSdkService {
         // Get environment variables
         const env = await this.getMergedEnvironmentVariables();
 
+        await this.prepareCliSettings(env);
+
         // Values are never logged: the environment carries API keys and tokens.
         this.logService.info(`🌍 Environment variables: ${Object.keys(env).length} entries`);
 
@@ -380,10 +382,8 @@ export class ClaudeSdkService implements IClaudeSdkService {
         this.logService.info('🚀 Preparing to call the Claude Agent SDK');
         this.logService.info('----------------------------------------');
 
-        // Set the entrypoint environment variable
-        process.env.CLAUDE_CODE_ENTRYPOINT = 'claude-vscode';
         this.logService.info(`🔧 Environment variables:`);
-        this.logService.info(`  - CLAUDE_CODE_ENTRYPOINT: ${process.env.CLAUDE_CODE_ENTRYPOINT}`);
+        this.logService.info(`  - CLAUDE_CODE_ENTRYPOINT: ${env.CLAUDE_CODE_ENTRYPOINT}`);
 
         this.logService.info('');
         this.logService.info('📦 Importing SDK...');
@@ -543,6 +543,8 @@ export class ClaudeSdkService implements IClaudeSdkService {
         // `availableModels`, so a bare probe could describe different models.
         const env = await this.getMergedEnvironmentVariables();
 
+        await this.prepareCliSettings(env);
+
         const options: Options = {
             // Minimal config
             cwd,
@@ -624,6 +626,24 @@ export class ClaudeSdkService implements IClaudeSdkService {
         return /\.(c|m)?js$/i.test(cliPath)
             ? { command: 'node', prefixArgs: [cliPath], env }
             : { command: cliPath, prefixArgs: [], env };
+    }
+
+    /**
+     * Before the CLI starts: brings FLAG_SETTINGS_PATH up to date (profile
+     * overlay + the Code Mode switch from settings.json; `claude -p` / SDK
+     * sessions only enable Code Mode from the env block of `--settings`) and
+     * picks the entrypoint. The CLI refuses Code Mode for the `claude-vscode`
+     * entrypoint ("only works in the terminal, with claude -p, and in Agent SDK
+     * apps"), so a Code Mode session runs as the SDK's own `sdk-ts`.
+     */
+    private async prepareCliSettings(env: Record<string, string>): Promise<void> {
+        try {
+            await this.configService.syncFlagSettings();
+        } catch (e) {
+            this.logService.warn(`[ClaudeSdkService] Could not sync ${FLAG_SETTINGS_PATH}: ${e}`);
+        }
+        const codeMode = await this.configService.isCodeModeOn().catch(() => false);
+        env.CLAUDE_CODE_ENTRYPOINT = codeMode ? 'sdk-ts' : 'claude-vscode';
     }
 
     private async snapshotBeforeWrite(input: unknown): Promise<void> {

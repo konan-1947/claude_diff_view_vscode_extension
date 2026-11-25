@@ -35,6 +35,8 @@ import WebFetchTool from './tools/WebFetch.vue';
 import WebSearchTool from './tools/WebSearch.vue';
 import DefaultTool from './tools/Default.vue';
 import AskUserQuestionTool from './tools/AskUserQuestion.vue';
+import ReplTool from './tools/REPL.vue';
+import PollTool from './tools/Poll.vue';
 
 interface Props {
   block: ToolUseContentBlock;
@@ -109,6 +111,10 @@ const toolComponent = computed(() => {
       return WebFetchTool;
     case 'WebSearch':
       return WebSearchTool;
+    case 'REPL':  // Code Mode
+      return ReplTool;
+    case 'Poll':
+      return PollTool;
     default:
       return DefaultTool;
   }

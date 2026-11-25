@@ -533,6 +533,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
             );
             this.logService.info('  ✓ spawnClaude() done, Query object created');
 
+            // The CLI reports nothing about Code Mode to SDK clients, so the
+            // value this session was started with (flagSettings) is passed on
+            // with system/init for the UI's start-of-session notice.
+            const codeModeOn = await this.configService.isCodeModeOn().catch(() => false);
+
             // 3. Store in the channels Map
             this.logService.info('');
             this.logService.info('📝 Step 3: register Channel');
@@ -562,7 +567,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
                         this.transport!.send({
                             type: "io_message",
                             channelId,
-                            message,
+                            message: codeModeOn && message.type === 'system' && message.subtype === 'init'
+                                ? ({ ...message, uic_code_mode: true } as typeof message)
+                                : message,
                             done: false
                         });
                     }

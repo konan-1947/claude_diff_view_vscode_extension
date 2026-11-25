@@ -7,6 +7,8 @@ import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
 import { LiveActivity } from './LiveActivity';
 import { Message as MessageModel } from '../models/Message';
+import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
+import type { NoticeBlock } from '../models/ContentBlock';
 import type { Message } from '../models/Message';
 
 export interface SelectionRange {
@@ -918,6 +920,9 @@ export class Session {
         }
         void this.refreshContextUsage();
         void this.refreshAppliedEffort();
+        if (event.uic_code_mode === true) {
+          this.showCodeModeNotice();
+        }
       } else if (event.subtype === 'compact_boundary') {
         // Compaction shrinks the context; the CLI knows the new size.
         void this.refreshContextUsage();
@@ -962,6 +967,39 @@ export class Session {
       // keep the last known value
     }
     return this.appliedEffort();
+  }
+
+  /**
+   * The CLI's start-of-session line for Code Mode, which SDK sessions don't
+   * print: once per conversation shown (system/init comes every turn, and a
+   * relaunched CLI process, e.g. after `/add-dir`, sends it again), placed
+   * before the prompt that started the session.
+   */
+  private showCodeModeNotice(): void {
+    if (this.messages().some((m) => m.subtype === 'code_mode')) return;
+
+    const block: NoticeBlock = {
+      type: 'notice',
+      icon: 'code',
+      message: 'Code Mode (experimental) is on',
+      detail: 'this session can be resumed only with Code Mode on',
+    };
+    const notice = new MessageModel(
+      'tip',
+      { role: 'system', content: [new ContentBlockWrapper(block)] },
+      Date.now(),
+      { subtype: 'code_mode' }
+    );
+    const messages = [...this.messages()] as Message[];
+    let at = messages.length;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].type === 'user') {
+        at = i;
+        break;
+      }
+    }
+    messages.splice(at, 0, notice);
+    this.messages(messages);
   }
 
   /** Forget the shown conversation after the CLI reset it (see conversation_reset). */

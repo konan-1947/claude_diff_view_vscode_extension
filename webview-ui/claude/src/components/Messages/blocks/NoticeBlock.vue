@@ -2,7 +2,7 @@
   <div class="notice-block">
     <span v-if="block.icon" :class="['codicon', `codicon-${block.icon}`]"></span>
     <span class="notice-message">{{ block.message }}</span>
-    <span v-if="block.detail" class="notice-detail">· {{ block.detail }}</span>
+    <span v-if="block.detail" class="notice-detail">{{ block.detail }}</span>
   </div>
 </template>
 
