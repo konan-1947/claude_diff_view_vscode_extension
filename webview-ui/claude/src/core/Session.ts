@@ -11,6 +11,15 @@ import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 import type { NoticeBlock } from '../models/ContentBlock';
 import type { Message } from '../models/Message';
 
+/** A prompt sent mid-turn, waiting in the CLI's queue (see Session.inFlightPrompts) */
+export interface InFlightPrompt {
+  uuid: string;
+  text: string;
+  raw: any;
+  attachments: AttachmentPayload[];
+  afterTurn: boolean;
+}
+
 export interface SelectionRange {
   filePath: string;
   startLine: number;
@@ -85,6 +94,11 @@ export interface SessionContext {
 
 export class Session {
   private readonly claudeChannelId = signal<string | undefined>(undefined);
+
+  /** A CLI process is attached (a running or idle query), for SessionStore's duplicate check */
+  hasChannel(): boolean {
+    return !!this.claudeChannelId();
+  }
   private currentConnectionPromise?: Promise<BaseTransport>;
   private lastSentSelection?: SelectionRange;
   private effectCleanup?: () => void;
@@ -117,6 +131,16 @@ export class Session {
   private shellAbort?: AbortController;
   /** The last prompt sent, as typed: Esc before any tool ran gives it back to the input */
   private lastPrompt?: { input: string; attachments: AttachmentPayload[]; message: Message };
+  /**
+   * Prompts sent while a turn runs. As in the CLI they wait in its queue (shown
+   * under the input) and enter the transcript only when the CLI takes them in
+   * (`command_lifecycle` "started", matched on the uuid we sent): between two
+   * tool rounds of the running turn, where the model reads them, or as the next
+   * turn when that turn ended first (`afterTurn`, set by its `result`).
+   */
+  readonly inFlightPrompts = signal<InFlightPrompt[]>([]);
+  /** The CLI reports command_lifecycle (seen on the first prompt); older CLIs do not, so nothing is held back */
+  private lifecycleSupported = false;
 
   readonly connection = signal<BaseTransport | undefined>(undefined);
 
@@ -295,9 +319,12 @@ export class Session {
     }
 
     const userMessage = this.buildUserMessage(input, attachments, selectionPayload);
-    const messageModel = MessageModel.fromRaw(userMessage);
+    const deferred = this.busy() && this.lifecycleSupported;
+    const messageModel = deferred ? null : MessageModel.fromRaw(userMessage);
 
-    if (messageModel) {
+    if (deferred) {
+      this.inFlightPrompts([...this.inFlightPrompts(), { uuid: userMessage.uuid, text: input, raw: userMessage, attachments, afterTurn: false }]);
+    } else if (messageModel) {
       this.messages([...this.messages(), messageModel]);
       this.lastPrompt = { input, attachments, message: messageModel };
     }
@@ -315,6 +342,7 @@ export class Session {
       connection.sendInput(channelId, userMessage, false);
     } catch (error) {
       this.busy(false);
+      if (deferred) this.inFlightPrompts(this.inFlightPrompts().filter((p) => p.uuid !== userMessage.uuid));
       throw error;
     }
   }
@@ -399,6 +427,24 @@ export class Session {
     const connection = await this.getConnection();
     const { error } = await connection.stopTask(channelId, taskId);
     if (error) throw new Error(error);
+  }
+
+  /**
+   * Esc, as in the CLI: prompts still waiting in its queue come back (for the
+   * input) instead of running after the interrupt. One the CLI already took in
+   * stays where it is; it shows in the turn.
+   */
+  async withdrawInFlight(): Promise<InFlightPrompt[]> {
+    const channelId = this.claudeChannelId();
+    const pending = this.inFlightPrompts();
+    if (!channelId || pending.length === 0) return [];
+    const connection = await this.getConnection();
+    const results = await Promise.all(
+      pending.map((p) => connection.cancelQueuedPrompt(channelId, p.uuid).catch(() => false))
+    );
+    const withdrawn = pending.filter((_, i) => results[i]);
+    this.inFlightPrompts(this.inFlightPrompts().filter((p) => !withdrawn.includes(p)));
+    return withdrawn;
   }
 
   async interrupt(): Promise<void> {
@@ -616,6 +662,7 @@ export class Session {
       connection.closeChannel(old);
     }
     this.silentInputs = 0;
+    this.inFlightPrompts([]);
     this.messages(this.messages().slice(0, index));
     this.todos([]);
     this.lastSentSelection = undefined;
@@ -832,6 +879,8 @@ export class Session {
       // A channel replaced by a relaunch (`/add-dir`) ends after the new one started
       if (this.claudeChannelId() === channelId) {
         this.claudeChannelId(undefined);
+        // Its queue went with the CLI process
+        this.inFlightPrompts([]);
       }
     }
   }
@@ -870,6 +919,15 @@ export class Session {
     if (event?.type === 'conversation_reset') {
       this.resetConversation();
       return;
+    }
+
+    if (event?.type === 'command_lifecycle') {
+      this.onCommandLifecycle(event);
+      return;
+    }
+    // A prompt still queued when the turn ends runs as the next turn
+    if (event?.type === 'result' && this.inFlightPrompts().some((p) => !p.afterTurn)) {
+      this.inFlightPrompts(this.inFlightPrompts().map((p) => ({ ...p, afterTurn: true })));
     }
 
     // Subagent messages (shown inside their Agent card) and stream events
@@ -1010,8 +1068,33 @@ export class Session {
     this.messages(messages);
   }
 
+  private onCommandLifecycle(event: any): void {
+    this.lifecycleSupported = true;
+    const list = this.inFlightPrompts();
+    const entry = list.find((p) => p.uuid === event.command_uuid);
+    if (!entry) return;
+    if (event.state === 'started') {
+      this.inFlightPrompts(list.filter((p) => p !== entry));
+      // Folded into the running turn: shown inside it, and without a uuid, since
+      // the CLI stores it as a queued_command attachment, not a message to rewind to
+      const model = MessageModel.fromRaw(
+        entry.afterTurn ? entry.raw : { ...entry.raw, uuid: undefined, midTurn: true }
+      );
+      if (model) {
+        this.messages([...this.messages(), model]);
+        if (entry.afterTurn) {
+          this.lastPrompt = { input: entry.text, attachments: entry.attachments, message: model };
+        }
+      }
+      if (entry.afterTurn) this.busy(true);
+    } else if (event.state === 'cancelled' || event.state === 'failed') {
+      this.inFlightPrompts(list.filter((p) => p !== entry));
+    }
+  }
+
   /** Forget the shown conversation after the CLI reset it (see conversation_reset). */
   private resetConversation(): void {
+    this.inFlightPrompts([]);
     this.messages([]);
     this.activity.resetConversation();
     this.todos([]);

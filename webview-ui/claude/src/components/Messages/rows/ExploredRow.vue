@@ -17,7 +17,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { transcriptDetail } from '../../../composables/useTranscriptDetail';
 import type { ToolContext } from '../../../types/tool';
 
 interface ToolUse {
@@ -26,7 +27,11 @@ interface ToolUse {
 }
 
 const props = defineProps<{ tools: ToolUse[]; context?: ToolContext }>();
-const open = ref(false);
+// Ctrl+O (detailed transcript) lists every file read or searched
+const open = ref(transcriptDetail.value);
+watch(transcriptDetail, (v) => {
+  open.value = v;
+});
 
 function baseName(p: string) {
   return p.split(/[\\/]/).pop() || p;

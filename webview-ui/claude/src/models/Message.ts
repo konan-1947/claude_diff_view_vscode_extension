@@ -43,6 +43,8 @@ export class Message {
   is_error?: boolean;
   /** Transcript id of a user message (set by the UI on send, read back from history): rewind points at it */
   uuid?: string;
+  /** A prompt the CLI took in during a running turn: shown inside that turn, not as a new one */
+  midTurn?: boolean;
 
   constructor(
     type: MessageRole,
@@ -158,6 +160,9 @@ export class Message {
       );
       if (raw.type === 'user' && typeof raw.uuid === 'string') {
         message.uuid = raw.uuid;
+      }
+      if (raw.type === 'user' && raw.midTurn === true) {
+        message.midTurn = true;
       }
       return message;
     }

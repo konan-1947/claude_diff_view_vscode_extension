@@ -37,6 +37,7 @@ import type {
   RunShellCommandResponse,
   RewindFilesResponse,
   StopTaskResponse,
+  CancelQueuedPromptResponse,
 } from "@shared/messages";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -434,6 +435,10 @@ export abstract class BaseTransport {
   async stopTask(channelId: string, taskId: string): Promise<{ error?: string }> {
     const response = (await this.sendRequest({ type: "stop_task", taskId }, channelId)) as StopTaskResponse;
     return { error: response?.error };
+  }
+  async cancelQueuedPrompt(channelId: string, uuid: string): Promise<boolean> {
+    const response = (await this.sendRequest({ type: "cancel_queued_prompt", uuid }, channelId)) as CancelQueuedPromptResponse;
+    return response?.cancelled === true;
   }
   async getRewindPoint(sessionId: string, userMessageId: string, cwd?: string): Promise<{ found: boolean; parentUuid: string | null }> {
     const response = await this.sendRequest({ type: "get_rewind_point", sessionId, userMessageId, cwd });

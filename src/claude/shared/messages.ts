@@ -957,6 +957,18 @@ export interface StopTaskResponse {
     error?: string;
 }
 
+/** Take back a prompt sent mid-turn that the CLI has not folded in yet (Esc): `Query.cancelAsyncMessage` */
+export interface CancelQueuedPromptRequest {
+    type: "cancel_queued_prompt";
+    uuid: string;
+}
+
+export interface CancelQueuedPromptResponse {
+    type: "cancel_queued_prompt_response";
+    /** False when the CLI already took it in (it then shows in the turn) */
+    cancelled: boolean;
+}
+
 /**
  * Output so far of a background Bash task: the tail of the file the CLI
  * writes it to (`.../tasks/<id>.output`, named in the Bash tool result).
@@ -1451,6 +1463,7 @@ export type WebViewRequest =
     | RunShellCommandRequest
     | RewindFilesRequest
     | StopTaskRequest
+    | CancelQueuedPromptRequest
     | GetRewindPointRequest
     | ReadTaskOutputRequest
     | ListFilesRequest
@@ -1514,6 +1527,7 @@ export type WebViewRequestResponse =
     | RunShellCommandResponse
     | RewindFilesResponse
     | StopTaskResponse
+    | CancelQueuedPromptResponse
     | GetRewindPointResponse
     | ReadTaskOutputResponse
     | ListFilesResponse

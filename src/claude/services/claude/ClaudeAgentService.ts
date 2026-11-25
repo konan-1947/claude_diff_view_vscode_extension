@@ -30,6 +30,7 @@ import { HandlerContext } from './handlers/types';
 import { IWebViewService } from '../webViewService';
 import { readConfigValues } from './configValues';
 import { memoryFiles, settingsFiles } from './claudeFiles';
+import { showSessionInCliResume } from './resumeVisibility';
 
 // Message type imports
 import type {
@@ -54,6 +55,8 @@ import type {
     RewindFilesResponse,
     StopTaskRequest,
     StopTaskResponse,
+    CancelQueuedPromptRequest,
+    CancelQueuedPromptResponse,
 } from '../../shared/messages';
 
 // SDK type imports
@@ -572,6 +575,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
                                 : message,
                             done: false
                         });
+
+                        // Listed by the terminal's `claude --resume` too (see resumeVisibility.ts)
+                        if (message.type === 'result' && typeof message.session_id === 'string') {
+                            void showSessionInCliResume(channel.init?.cwd || cwd, message.session_id);
+                        }
                     }
 
                     // Finished normally
@@ -1032,6 +1040,8 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "stop_task":
                 return this.stopTask(channelId, request as StopTaskRequest);
+            case "cancel_queued_prompt":
+                return this.cancelQueuedPrompt(channelId, request as CancelQueuedPromptRequest);
 
             // case "open_claude_in_terminal":
             //     return handleOpenClaudeInTerminal(request, this.handlerContext);
@@ -1443,6 +1453,26 @@ export class ClaudeAgentService implements IClaudeAgentService {
             const message = error instanceof Error ? error.message : String(error);
             this.logService.warn(`[stopTask] ${message}`);
             return { type: "stop_task_response", error: message };
+        }
+    }
+
+    /**
+     * Drop a prompt from the CLI's command queue (Esc gives it back to the input,
+     * as the CLI does). `cancelAsyncMessage` is in the SDK runtime but not in
+     * its typings yet.
+     */
+    async cancelQueuedPrompt(channelId: string | undefined, request: CancelQueuedPromptRequest): Promise<CancelQueuedPromptResponse> {
+        const query = channelId ? this.channels.get(channelId)?.query : undefined;
+        const cancel = (query as any)?.cancelAsyncMessage;
+        if (typeof cancel !== 'function') {
+            return { type: "cancel_queued_prompt_response", cancelled: false };
+        }
+        try {
+            const cancelled = await cancel.call(query, request.uuid);
+            return { type: "cancel_queued_prompt_response", cancelled: cancelled === true };
+        } catch (error) {
+            this.logService.warn(`[cancelQueuedPrompt] ${error instanceof Error ? error.message : String(error)}`);
+            return { type: "cancel_queued_prompt_response", cancelled: false };
         }
     }
 

@@ -19,7 +19,7 @@ import { computed } from 'vue';
 import type { ComputedRef, Ref } from 'vue';
 import { useSignal } from '@gn8/alien-signals-vue';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
-import type { Session, SelectionRange } from '../core/Session';
+import type { Session, SelectionRange, InFlightPrompt } from '../core/Session';
 import type { PermissionRequest } from '../core/PermissionRequest';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { McpServerInfo, ModelOption } from '@shared/messages';
@@ -41,6 +41,8 @@ export interface UseSessionReturn {
 
   // Core data
   messages: Ref<any[]>;
+  /** Prompts sent mid-turn that the CLI has not taken in yet (shown under the input) */
+  inFlightPrompts: Ref<InFlightPrompt[]>;
   messageCount: Ref<number>;
   cwd: Ref<string | undefined>;
   permissionMode: Ref<PermissionMode>;
@@ -116,6 +118,7 @@ export function useSession(session: Session): UseSessionReturn {
   const isExplicit = useSignal(session.isExplicit);
   const lastModifiedTime = useSignal(session.lastModifiedTime);
   const messages = useSignal(session.messages);
+  const inFlightPrompts = useSignal(session.inFlightPrompts);
   const messageCount = useSignal(session.messageCount);
   const cwd = useSignal(session.cwd);
   const permissionMode = useSignal(session.permissionMode);
@@ -171,6 +174,7 @@ export function useSession(session: Session): UseSessionReturn {
     isExplicit,
     lastModifiedTime,
     messages,
+    inFlightPrompts,
     messageCount,
     cwd,
     permissionMode,

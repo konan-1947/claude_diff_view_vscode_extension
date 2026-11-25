@@ -20,7 +20,9 @@
               </div>
               <div v-if="displayContent.trim()" class="message-body">{{ displayContent }}</div>
             </div>
-            <div class="message-actions">
+          </div>
+          <!-- Under the bubble, right-aligned; always takes its height so hover never shifts rows -->
+          <div class="message-actions">
               <Tooltip :content="copied ? 'Copied' : 'Copy message'">
                 <button class="restore-button" :class="{ copied }" @click.stop="copy">
                   <span class="codicon" :class="copied ? 'codicon-check' : 'codicon-copy'"></span>
@@ -34,7 +36,6 @@
                   <span class="codicon codicon-restore"></span>
                 </button>
               </Tooltip>
-            </div>
           </div>
         </div>
       </div>
@@ -147,13 +148,12 @@ function handleRestore() {
   border-radius: 12px;
   /* Right-aligned and as wide as its content, like a chat bubble */
   max-width: 85%;
-  padding: 8px 10px;
+  /* Same padding on both sides now that the buttons sit under the bubble */
+  padding: 8px 12px;
   box-sizing: border-box;
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
@@ -225,12 +225,13 @@ function handleRestore() {
   object-fit: cover;
 }
 
-/* copy / restore checkpoint buttons, shown on hover */
+/* copy / restore checkpoint buttons under the bubble, shown on hover */
 .message-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 2px;
-  align-self: flex-end;
+  margin-top: 2px;
   flex-shrink: 0;
 }
 
@@ -253,7 +254,7 @@ function handleRestore() {
   transition: background-color 0.1s ease, opacity 0.15s ease;
 }
 
-.message-text:hover .restore-button,
+.message-view:hover .restore-button,
 .restore-button:focus-visible,
 .restore-button.copied {
   opacity: 1;

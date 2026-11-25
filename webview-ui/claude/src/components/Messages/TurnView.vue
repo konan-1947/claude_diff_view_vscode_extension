@@ -14,12 +14,17 @@
         >
           <span class="cs-step__action">{{ finished ? 'Worked' : 'Working' }}</span>
           <span v-if="finished" class="cs-step__action">for {{ duration }}</span>
+          <!-- As the CLI hints "(ctrl+o to expand)" on what it folds -->
+          <span v-if="!expanded" class="cs-step__details turn-hint">Ctrl+O to expand</span>
           <span class="codicon codicon-chevron-down cs-step__chevron" />
         </button>
       </div>
 
       <template v-for="row in visibleRows" :key="row.key">
-        <div v-if="row.kind === 'thought'" class="turn-row">
+        <div v-if="row.kind === 'prompt'" class="turn-row turn-prompt">
+          <UserMessage :message="row.message" :context="context" />
+        </div>
+        <div v-else-if="row.kind === 'thought'" class="turn-row">
           <ThoughtRow :text="row.text" />
         </div>
         <div v-else-if="row.kind === 'explore'" class="turn-row">
@@ -46,6 +51,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import type { Turn } from '../../utils/turns';
+import type { Message } from '../../models/Message';
+import { transcriptDetail } from '../../composables/useTranscriptDetail';
 import { formatAgo, formatDuration } from '../../utils/turns';
 import type { ToolContext } from '../../types/tool';
 import type { ContentBlockType } from '../../models/ContentBlock';
@@ -58,15 +65,14 @@ import ExploredRow from './rows/ExploredRow.vue';
 interface Props {
   turn: Turn;
   context: ToolContext;
-  /** Steps start unfolded (the turn that is being worked on, or just finished) */
-  defaultOpen?: boolean;
   /** The assistant is still producing this turn */
   running?: boolean;
 }
 
-const props = withDefaults(defineProps<Props>(), { defaultOpen: false, running: false });
+const props = withDefaults(defineProps<Props>(), { running: false });
 
 type Row =
+  | { kind: 'prompt'; key: string; message: Message }
   | { kind: 'thought'; key: string; text: string }
   | { kind: 'explore'; key: string; tools: { name: string; input?: any }[] }
   | { kind: 'tool'; key: string; block: ContentBlockType; wrapper?: ContentBlockWrapper }
@@ -75,6 +81,8 @@ type Row =
 
 const EXPLORE_TOOLS = new Set(['Read', 'Glob', 'Grep']);
 const PLAN_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
+// Cards the user answers (the plan to approve, the questions asked): never folded away
+const ALWAYS_SHOWN_TOOLS = new Set(['ExitPlanMode', 'AskUserQuestion']);
 
 const normPath = (p: string) => p.replace(/\\/g, '/').toLowerCase();
 
@@ -106,6 +114,11 @@ function isPlanFileWrite(b: any): boolean {
 const rows = computed<Row[]>(() => {
   const out: Row[] = [];
   props.turn.assistant.forEach((msg, mi) => {
+    // A prompt sent mid-turn (see buildChatItems)
+    if (msg.type === 'user') {
+      out.push({ kind: 'prompt', key: `${mi}`, message: msg });
+      return;
+    }
     const content = msg.message.content;
     const items: { block: ContentBlockType; wrapper?: ContentBlockWrapper }[] =
       typeof content === 'string'
@@ -148,23 +161,33 @@ const finalText = computed(() => {
 });
 
 const override = ref<boolean | undefined>(undefined);
-// Steps show while the turn runs and fold by themselves once it ends
-const expanded = computed(() => (hasWork.value ? override.value ?? (props.defaultOpen && props.running) : true));
+// Steps start folded, even while the turn runs (as the CLI hides them behind
+// "ctrl+o to expand"): Ctrl+O or a click on "Working" / "Worked for" opens them
+const expanded = computed(() => (hasWork.value ? override.value ?? transcriptDetail.value : true));
 function toggle() {
   override.value = !expanded.value;
 }
-// A turn that starts or ends running drops the user's toggle: it unfolds on
-// start and folds on end; a toggle in between still wins until then
+// A turn that starts or ends running drops the user's toggle: a turn opened
+// while it ran folds again once it ends
 watch(
   () => props.running,
   () => {
     override.value = undefined;
   }
 );
+watch(transcriptDetail, () => {
+  override.value = undefined;
+});
 
 const visibleRows = computed(() => {
   if (expanded.value) return rows.value;
-  return rows.value.filter((r, i) => r.kind === 'other' || (r.kind === 'text' && i === lastTextIndex.value));
+  return rows.value.filter(
+    (r, i) =>
+      r.kind === 'other' ||
+      r.kind === 'prompt' ||
+      (r.kind === 'tool' && ALWAYS_SHOWN_TOOLS.has((r.block as any).name)) ||
+      (r.kind === 'text' && i === lastTextIndex.value)
+  );
 });
 
 const finished = computed(() => !props.running);
@@ -190,6 +213,10 @@ async function copy() {
 </script>
 
 <style scoped>
+.turn-hint {
+  margin-left: 6px;
+  font-size: 0.9em;
+}
 .turn {
   display: flex;
   flex-direction: column;

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible && queuedMessages.length > 0" class="message-queue-section">
+  <div v-if="visible && total > 0" class="message-queue-section">
     <!-- Message Queue header -->
     <div
       style="display: flex; justify-content: space-between; align-items: center; height: 24px; cursor: pointer;"
@@ -12,10 +12,10 @@
           style="color: var(--vscode-foreground); opacity: 0.6; font-size: 12px;"
         />
         <div style="font-size: 12px; color: var(--vscode-input-placeholderForeground); opacity: 0.8;">
-          <span>{{ queuedMessages.length }} Queued</span>
+          <span>{{ total }} Queued</span>
         </div>
       </div>
-      <span class="queue-hint">Ctrl+U send now&nbsp;&nbsp;↑ to edit</span>
+      <span class="queue-hint"><template v-if="queuedMessages.length > 0">Ctrl+U send now&nbsp;&nbsp;</template>↑ to edit</span>
     </div>
 
     <!-- Queue list (when expanded) -->
@@ -24,6 +24,23 @@
       class="queue-item-list"
       style="padding: 4px 0;"
     >
+      <!-- Already with the CLI: it takes them in after the current step, then
+           they move into the conversation (as the CLI shows its queue) -->
+      <div
+        v-for="message in sentMessages"
+        :key="message.id"
+        class="queue-item sent"
+        title="Sent: Claude reads it after the current step"
+      >
+        <div class="queue-item-indicator sent-indicator"></div>
+        <div style="display: flex; flex-direction: column;">
+          <div style="max-height: 56px; mask-image: none;">
+            <div class="aislash-editor-input-readonly" contenteditable="false">
+              <p><span>{{ message.content }}</span></p>
+            </div>
+          </div>
+        </div>
+      </div>
       <div
         v-for="message in queuedMessages"
         :key="message.id"
@@ -75,12 +92,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import Tooltip from './Common/Tooltip.vue'
 import type { QueuedMessage } from '../types/queue'
 
 interface Props {
   queuedMessages?: QueuedMessage[]
+  /** Sent mid-turn, waiting in the CLI's queue (no actions: they are no longer ours to edit) */
+  sentMessages?: { id: string; content: string }[]
   visible?: boolean
   initialExpanded?: boolean
 }
@@ -92,6 +111,7 @@ interface Emits {
 
 const props = withDefaults(defineProps<Props>(), {
   queuedMessages: () => [],
+  sentMessages: () => [],
   visible: false,
   initialExpanded: true
 })
@@ -99,6 +119,7 @@ const props = withDefaults(defineProps<Props>(), {
 defineEmits<Emits>()
 
 const expanded = ref(props.initialExpanded)
+const total = computed(() => props.sentMessages.length + props.queuedMessages.length)
 
 function toggleExpanded() {
   expanded.value = !expanded.value
@@ -138,6 +159,15 @@ function toggleExpanded() {
   flex-shrink: 0;
   transition: opacity 0.1s;
   color: var(--vscode-foreground);
+}
+
+.queue-item.sent {
+  cursor: default;
+}
+
+.sent-indicator {
+  opacity: 0.4;
+  background: var(--vscode-foreground);
 }
 
 .aislash-editor-input-readonly {

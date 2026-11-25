@@ -18,6 +18,8 @@
       :class="{ 'is-empty': messages.length === 0 }"
       :style="emptyInputHeight ? { '--empty-input-height': `${emptyInputHeight}px` } : undefined"
     >
+      <!-- Ctrl+O, as the CLI marks its detailed transcript; over the transcript so nothing moves -->
+      <div v-if="transcriptDetail" class="detail-badge">Detailed transcript&nbsp;&nbsp;Ctrl+O to go back</div>
       <!-- <div class="chatContainer"> -->
         <div
           ref="containerEl"
@@ -32,8 +34,7 @@
                   :data-turn-key="item.key"
                   :turn="item"
                   :context="toolContext"
-                  :default-open="item.key === liveTurnKey"
-                  :running="isBusy && item.key === lastTurnKey"
+                  :running="isBusy && item.key >= runningFromKey"
                 />
                 <MessageRenderer
                   v-else
@@ -96,7 +97,8 @@
           <RateLimitBanner :info="activity.rateLimit.value" />
           <MessageQueueList
             :queued-messages="queuedMessages"
-            :visible="queuedMessages.length > 0"
+            :sent-messages="inFlight"
+            :visible="queuedMessages.length + inFlight.length > 0"
             class="queueList"
             @remove="handleQueueRemove"
             @send-now="handleQueueSendNow"
@@ -107,7 +109,7 @@
             :progress-percentage="progressPercentage"
             :context-tooltip="contextTooltip"
             :conversation-working="isBusy"
-            :has-queued="queuedMessages.length > 0"
+            :has-queued="queuedMessages.length + inFlight.length > 0"
             :has-tasks-below="hasRunningTasks"
             :attachments="attachments"
             :thinking-level="session?.thinkingLevel.value"
@@ -199,6 +201,7 @@
   import { userMessageText } from '../utils/userText';
   import { buildChatItems, formatAgo } from '../utils/turns';
   import { useKeybinding } from '../utils/useKeybinding';
+  import { transcriptDetail, toggleTranscriptDetail } from '../composables/useTranscriptDetail';
   import { useSignal } from '@gn8/alien-signals-vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
   import { useModelCatalog } from '../composables/useModelCatalog';
@@ -236,6 +239,10 @@
   // All access now goes through Vue Refs (.value)
   const messages = computed<any[]>(() => session.value?.messages.value ?? []);
   const isBusy = computed(() => session.value?.busy.value ?? false);
+  // Prompts sent mid-turn, until the CLI takes them in (then they join the transcript)
+  const inFlight = computed(() =>
+    (session.value?.inFlightPrompts.value ?? []).map((p) => ({ id: p.uuid, content: p.text }))
+  );
   const shellRunning = computed(() => session.value?.shellRunning.value ?? false);
 
   // Turns shown the way Cursor does: one user message + everything the assistant did
@@ -246,9 +253,16 @@
     }
     return -1;
   });
-  // The turn worked on while this page was open keeps its steps unfolded (Cursor
-  // does the same); turns loaded from history start folded under "Worked for Ns".
+  // The turn the CLI started on while this page was open (see runningFromKey)
   const liveTurnKey = ref(-1);
+  // A prompt sent mid-turn (Ctrl+U, "Send immediately") starts a new turn in the
+  // transcript while the CLI's turn goes on: every turn from the one the CLI
+  // started on is still running, so the earlier one (its Agent cards...) must
+  // not fold until the CLI is done. Without a known start (page opened during
+  // the turn, stale key from another conversation) only the last turn runs.
+  const runningFromKey = computed(() =>
+    liveTurnKey.value >= 0 && liveTurnKey.value <= lastTurnKey.value ? liveTurnKey.value : lastTurnKey.value
+  );
   // Spinner line: time and tokens of the turn running now
   const activity = useLiveActivity();
   const turnStartedAt = ref<number | undefined>(undefined);
@@ -666,19 +680,33 @@
     }
   }
 
-  // Typed while Claude is working: held here (listed above the input, can be
-  // removed or sent at once) and sent when the turn ends, like the CLI's queue.
-  // Consecutive prompts go out as one message (the CLI joins them too); a
-  // `/command` always goes on its own.
+  // Typed while Claude is working: straight to the CLI's queue, as in the CLI.
+  // It folds the prompt into the running turn between two tool rounds (or runs
+  // it next, a `/command` always after the turn); until then it is listed above
+  // the input (Session.inFlightPrompts). Held here instead only when that send
+  // fails: then it goes out when the turn ends, or at once with Ctrl+U.
+  // Consecutive held prompts go out as one message; a `/command` on its own.
   type QueuedEntry = QueuedMessage & { attachments: AttachmentItem[] };
   const queuedMessages = ref<QueuedEntry[]>([]);
   const chatInputRef = ref<InstanceType<typeof ChatInputBox> | null>(null);
   let queueSeq = 0;
   let flushingQueue = false;
 
-  function handleQueueMessage(content: string) {
+  async function handleQueueMessage(content: string) {
     const trimmed = (content || '').trim();
     if (!trimmed && attachments.value.length === 0) return;
+    const s = session.value;
+    const files = attachments.value;
+    if (s) {
+      attachments.value = [];
+      try {
+        await s.send(trimmed || ' ', files);
+        return;
+      } catch (e) {
+        console.error('[ChatPage] send failed, holding the prompt', e);
+        attachments.value = files;
+      }
+    }
     queuedMessages.value = [
       ...queuedMessages.value,
       {
@@ -751,6 +779,7 @@
   // A conversation switch (/resume, /clear in a new tab...) does not carry the queue over
   watch(activeSessionRaw, () => {
     queuedMessages.value = [];
+    liveTurnKey.value = -1;
   });
 
   // `!command` (bash mode): runs outside the model, even while a turn runs
@@ -831,6 +860,14 @@
     handler: togglePermissionMode,
     allowInEditable: true,
     priority: 100,
+  });
+
+  // Ctrl+O, as in the CLI: the detailed transcript (everything unfolded) and back
+  useKeybinding({
+    keys: 'ctrl+o',
+    handler: toggleTranscriptDetail,
+    allowInEditable: true,
+    priority: 50,
   });
 
   // Ctrl+U sends the queued prompts now, like their "Send immediately" buttons.
@@ -951,16 +988,36 @@
     attachments.value = [...queued.flatMap((m) => m.attachments), ...attachments.value];
   }
 
-  function editQueued() {
+  /**
+   * Every queued prompt back into the input (Esc, ↑ to edit), as the CLI does:
+   * first those already in the CLI's queue (taken back, so they do not run),
+   * then any still held here. One the CLI already took in stays in the turn.
+   */
+  async function pullQueueToInput() {
+    const s = session.value;
+    const pulled = s ? await s.__session.withdrawInFlight() : [];
     restoreQueueToInput();
+    if (pulled.length === 0) return;
+    const current = chatInputRef.value?.getContent() ?? '';
+    chatInputRef.value?.setContent([...pulled.map((p) => p.text), current].filter((t) => t.trim()).join('\n'));
+    const restored: AttachmentItem[] = pulled.flatMap((p) => p.attachments).map((a, i) =>
+      'id' in a ? (a as AttachmentItem) : { ...a, id: `restored-q-${Date.now()}-${i}`, fileSize: a.fileSize ?? 0 }
+    );
+    attachments.value = [...restored, ...attachments.value];
+  }
+
+  async function editQueued() {
+    await pullQueueToInput();
     chatInputRef.value?.focus();
   }
 
   async function handleStop() {
     const s = session.value;
     // Interrupting gives the queued prompts back to the input (as the CLI
-    // does), instead of sending them as soon as the turn stops.
-    restoreQueueToInput();
+    // does), instead of sending them as soon as the turn stops: first those
+    // already in the CLI's queue (taken back before the interrupt, which would
+    // otherwise run them as the next turn), then the ones still held here.
+    await pullQueueToInput();
     if (!s) return;
     // No tool ran yet: like the CLI, the prompt leaves the chat and goes back
     // to the input instead of staying as an interrupted request
@@ -1146,6 +1203,20 @@
   /* The row already insets it to the text column; drop the spinner's own indent */
   .spinnerRow :deep(.spinner) {
     padding-left: 0;
+  }
+  .detail-badge {
+    position: absolute;
+    top: 4px;
+    right: 12px;
+    z-index: 2;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    line-height: 18px;
+    color: var(--vscode-descriptionForeground);
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    border: 1px solid var(--cs-fg-12);
+    pointer-events: none;
   }
   .messagesContainer.dimmed {
     filter: blur(1px);

@@ -32,6 +32,13 @@ export function buildChatItems(messages: Message[]): ChatItem[] {
   messages.forEach((m, i) => {
     if (!m || m.isEmpty) return;
 
+    // A prompt the CLI took in mid-turn stays inside that turn, where the model read it
+    if (m.type === 'user' && m.midTurn && current) {
+      current.assistant.push(m);
+      current.endedAt = Math.max(current.endedAt, m.timestamp);
+      return;
+    }
+
     if (m.type === 'user') {
       current = { kind: 'turn', key: i, user: m, assistant: [], startedAt: m.timestamp, endedAt: m.timestamp };
       items.push(current);

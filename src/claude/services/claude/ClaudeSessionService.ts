@@ -17,6 +17,7 @@ import * as os from 'os';
 import { createDecorator } from '../../di/instantiation';
 import { ILogService } from '../logService';
 import type { SessionSettings } from '../../shared/messages';
+import { sweepProject } from './resumeVisibility';
 
 export const IClaudeSessionService = createDecorator<IClaudeSessionService>('claudeSessionService');
 
@@ -220,6 +221,8 @@ function convertMessage(msg: SessionMessage): any | undefined {
                 message: { role: "user", content: queued },
                 session_id: msg.uuid,
                 parent_tool_use_id: null,
+                // Shown inside the turn it was folded into, as live
+                midTurn: true,
                 timestamp
             };
         }
@@ -513,6 +516,9 @@ export class ClaudeSessionService implements IClaudeSessionService {
     async listSessions(cwd: string): Promise<SessionInfo[]> {
         try {
             this.logService.info(`[ClaudeSessionService] Loading session list: ${cwd}`);
+
+            // Conversations Claude UI made earlier: listed by `claude --resume` too
+            await sweepProject(cwd);
 
             const data = await loadProjectData(cwd);
 

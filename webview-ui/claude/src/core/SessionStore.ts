@@ -105,9 +105,20 @@ export class SessionStore {
 
           const duplicate = seen.get(id);
           if (duplicate && duplicate !== session) {
-            this.mergeSessionMetadata(duplicate, session);
-            if (this.activeSession() === session) {
-              this.activeSession(duplicate);
+            // Keep the copy that holds the conversation (shown, running, with its
+            // transcript), not whichever sorts first: a history entry for the same
+            // id (newer file time) used to win over the live tab, which then
+            // showed a reloaded transcript while its CLI process ran on unseen.
+            const [keep, drop] = this.liveness(session) > this.liveness(duplicate)
+              ? [session, duplicate]
+              : [duplicate, session];
+            this.mergeSessionMetadata(keep, drop);
+            if (this.activeSession() === drop) {
+              this.activeSession(keep);
+            }
+            if (keep === session) {
+              deduped[deduped.indexOf(duplicate)] = session;
+              seen.set(id, session);
             }
             changed = true;
             continue;
@@ -270,6 +281,15 @@ export class SessionStore {
         this.activeSession(session);
       }
     });
+  }
+
+  /** Which of two copies of one conversation to keep: the shown one, then a running one, then one with a transcript */
+  private liveness(session: Session): number {
+    return (
+      (this.activeSession() === session ? 4 : 0) +
+      (session.hasChannel() ? 2 : 0) +
+      (session.messages().length > 0 ? 1 : 0)
+    );
   }
 
   private mergeSessionMetadata(target: Session, source: Session): void {

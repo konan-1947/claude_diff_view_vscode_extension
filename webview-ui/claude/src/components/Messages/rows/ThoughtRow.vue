@@ -10,10 +10,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { transcriptDetail } from '../../../composables/useTranscriptDetail';
 
 const props = defineProps<{ text: string }>();
-const open = ref(false);
+// Ctrl+O (detailed transcript) shows every thought
+const open = ref(transcriptDetail.value);
+watch(transcriptDetail, (v) => {
+  open.value = v;
+});
 
 // The SDK does not report how long the model thought, so only flag trivial ones
 const detail = computed(() => (props.text.trim().length < 160 ? 'briefly' : ''));

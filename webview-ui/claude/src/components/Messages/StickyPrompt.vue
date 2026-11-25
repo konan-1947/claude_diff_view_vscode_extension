@@ -48,7 +48,7 @@ const emit = defineEmits<{ jump: []; hover: [boolean] }>();
   display: block;
   width: 100%;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 8px 12px;
   box-sizing: border-box;
   overflow: hidden;
   text-align: left;
