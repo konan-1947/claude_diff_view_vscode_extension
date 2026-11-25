@@ -38,6 +38,7 @@ import type {
   RewindFilesResponse,
   StopTaskResponse,
   CancelQueuedPromptResponse,
+  ColdResumeQuota,
 } from "@shared/messages";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -298,6 +299,8 @@ export abstract class BaseTransport {
     rawMaxTokens: number;
     percentage: number;
     model: string;
+    coldResumeQuota?: ColdResumeQuota;
+    cacheKeepaliveWindowMs?: number;
   } | null> {
     const response = await this.sendRequest({ type: "get_context_usage" }, channelId);
     return (response as any)?.usage ?? null;

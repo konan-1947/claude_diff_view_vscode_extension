@@ -31,6 +31,7 @@ import { IWebViewService } from '../webViewService';
 import { readConfigValues } from './configValues';
 import { memoryFiles, settingsFiles } from './claudeFiles';
 import { showSessionInCliResume } from './resumeVisibility';
+import { cacheKeepaliveWindowMs, computeColdResumeQuota } from '../../coldResumePricing';
 
 // Message type imports
 import type {
@@ -43,6 +44,7 @@ import type {
     ToolPermissionResponse,
     ToolPermissionContext,
     GetContextUsageResponse,
+    ColdResumeQuota,
     GetAppliedEffortResponse,
     GetMcpServersResponse,
     McpServerActionRequest,
@@ -1281,7 +1283,10 @@ export class ClaudeAgentService implements IClaudeAgentService {
                     maxTokens: r.maxTokens,
                     rawMaxTokens: r.rawMaxTokens,
                     percentage: r.percentage,
-                    model: r.model
+                    model: r.model,
+                    // The CLI's own figure when it gives one (not to SDK sessions, as of 2.1.332)
+                    coldResumeQuota: readColdResumeQuota(r) ?? computeColdResumeQuota(r.model),
+                    cacheKeepaliveWindowMs: cacheKeepaliveWindowMs()
                 }
             };
         } catch (error) {
@@ -1565,4 +1570,20 @@ function permissionContext(options: Record<string, unknown>): ToolPermissionCont
         toolUseID: str('toolUseID'),
         agentID: str('agentID'),
     };
+}
+
+/**
+ * `coldResumeQuota` of a get_context_usage answer: an @internal field (not in
+ * the SDK's types) the CLI fills for hosts that decide themselves when to
+ * offer "Resume this conversation?". Anything malformed counts as absent.
+ */
+function readColdResumeQuota(r: unknown): ColdResumeQuota | undefined {
+    const q = (r as { coldResumeQuota?: Partial<ColdResumeQuota> } | null)?.coldResumeQuota;
+    if (!q || typeof q.percentPerMillionTokens !== 'number' || typeof q.minPercent !== 'number') {
+        return undefined;
+    }
+    if (!(q.percentPerMillionTokens > 0) || !Number.isFinite(q.minPercent)) {
+        return undefined;
+    }
+    return { percentPerMillionTokens: q.percentPerMillionTokens, minPercent: q.minPercent };
 }

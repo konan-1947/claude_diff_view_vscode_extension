@@ -88,6 +88,13 @@
             @fork="forkConflict"
             @cancel="cancelConflict"
           />
+          <ColdResumePrompt
+            v-if="coldResume && !openConflict && !pendingPermission"
+            :info="coldResume.info"
+            @resume="resumeCold"
+            @new-conversation="newConversationCold"
+            @dismiss="dismissCold"
+          />
           <PermissionRequestModal
             v-if="pendingPermission && toolContext"
             :request="pendingPermission"
@@ -192,6 +199,8 @@
   import type { QueuedMessage } from '../types/queue';
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import SessionConflictPrompt from '../components/SessionConflictPrompt.vue';
+  import ColdResumePrompt from '../components/ColdResumePrompt.vue';
+  import type { ColdResumeInfo } from '../core/Session';
   import type { Message } from '../models/Message';
   import { RestoreCheckpointKey } from '../composables/runtimeContext';
   import Spinner from '../components/Messages/WaitingIndicator.vue';
@@ -662,11 +671,66 @@
     runtime?.appContext.startNewConversationTab();
   }
 
+  // "Resume this conversation?" (the CLI's dialog): asked before a message
+  // that would re-send a long context whose prompt cache has expired.
+  const coldResume = ref<{ info: ColdResumeInfo; content: string } | null>(null);
+  let checkingCold = false;
+  // Another conversation in this view: the question was about the old one
+  watch(session, () => {
+    coldResume.value = null;
+  });
+
+  function closeCold(): string | undefined {
+    const pending = coldResume.value;
+    session.value?.markColdResumeAsked();
+    coldResume.value = null;
+    return pending?.content;
+  }
+
+  function resumeCold() {
+    const content = closeCold();
+    if (content === undefined) return;
+    chatInputRef.value?.setContent('');
+    void handleSubmit(content);
+  }
+
+  /** As in the CLI: a fresh conversation here, the typed message kept in the input */
+  function newConversationCold() {
+    closeCold();
+    void session.value?.send('/clear').catch((e) => console.error('[ChatPage] /clear failed', e));
+    chatInputRef.value?.focus();
+  }
+
+  function dismissCold() {
+    closeCold();
+    chatInputRef.value?.focus();
+  }
+
   // ChatInput event handling
   async function handleSubmit(content: string) {
     const s = session.value;
     const trimmed = (content || '').trim();
     if (!s || (!trimmed && attachments.value.length === 0) || isBusy.value) return;
+    if (coldResume.value || checkingCold) {
+      chatInputRef.value?.setContent(content);
+      return;
+    }
+    // Slash commands (/clear, /compact...) are the answer, not a message to price
+    if (!trimmed.startsWith('/')) {
+      checkingCold = true;
+      let cold: ColdResumeInfo | undefined;
+      try {
+        cold = await s.checkColdResume();
+      } finally {
+        checkingCold = false;
+      }
+      if (cold && s === session.value) {
+        // The input cleared itself on Enter: the message waits there
+        chatInputRef.value?.setContent(content);
+        coldResume.value = { info: cold, content };
+        return;
+      }
+    }
     followLatest();
 
     try {

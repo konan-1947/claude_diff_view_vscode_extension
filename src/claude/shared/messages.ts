@@ -751,7 +751,26 @@ export interface GetContextUsageResponse {
         rawMaxTokens: number;
         percentage: number;
         model: string;
+        /**
+         * How fast re-sending the context after its prompt cache expired uses
+         * the 5-hour usage limit (the CLI's "Resume this conversation?" price).
+         * Absent when the CLI would not ask: no subscription price, caching
+         * off, or idle compaction already holds a summary.
+         */
+        coldResumeQuota?: ColdResumeQuota;
+        /**
+         * How long the CLI's cache keepalive renews a 5-minute cache after the
+         * last activity: 0 = keepalive off, absent = unknown.
+         */
+        cacheKeepaliveWindowMs?: number;
     } | null;
+}
+
+export interface ColdResumeQuota {
+    /** Percent of the 5-hour usage limit one million re-sent tokens use */
+    percentPerMillionTokens: number;
+    /** Smallest percent worth telling the user about */
+    minPercent: number;
 }
 
 /**

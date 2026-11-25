@@ -19,7 +19,7 @@ import { computed } from 'vue';
 import type { ComputedRef, Ref } from 'vue';
 import { useSignal } from '@gn8/alien-signals-vue';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
-import type { Session, SelectionRange, InFlightPrompt } from '../core/Session';
+import type { Session, SelectionRange, InFlightPrompt, ColdResumeInfo } from '../core/Session';
 import type { PermissionRequest } from '../core/PermissionRequest';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { McpServerInfo, ModelOption } from '@shared/messages';
@@ -81,6 +81,9 @@ export interface UseSessionReturn {
     attachments?: Array<{ fileName: string; mediaType: string; data: string }>,
     includeSelection?: boolean
   ) => Promise<void>;
+  /** "Resume this conversation?" due before sending (see Session.checkColdResume) */
+  checkColdResume: () => Promise<ColdResumeInfo | undefined>;
+  markColdResumeAsked: () => void;
   launchClaude: () => Promise<string>;
   interrupt: () => Promise<void>;
   restartClaude: () => Promise<void>;
@@ -147,6 +150,8 @@ export function useSession(session: Session): UseSessionReturn {
   const preloadConnection = session.preloadConnection.bind(session);
   const loadFromServer = session.loadFromServer.bind(session);
   const send = session.send.bind(session);
+  const checkColdResume = session.checkColdResume.bind(session);
+  const markColdResumeAsked = session.markColdResumeAsked.bind(session);
   const launchClaude = session.launchClaude.bind(session);
   const interrupt = session.interrupt.bind(session);
   const restartClaude = session.restartClaude.bind(session);
@@ -201,6 +206,8 @@ export function useSession(session: Session): UseSessionReturn {
     preloadConnection,
     loadFromServer,
     send,
+    checkColdResume,
+    markColdResumeAsked,
     launchClaude,
     interrupt,
     restartClaude,

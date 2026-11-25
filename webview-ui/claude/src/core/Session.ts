@@ -1,7 +1,7 @@
 import { signal, computed, effect } from 'alien-signals';
 import type { BaseTransport } from '../transport/BaseTransport';
 import type { PermissionRequest } from './PermissionRequest';
-import type { GetConfigOptionsResponse, McpServerInfo, ModelOption, SessionSettings, StatusInfo } from '@shared/messages';
+import type { ColdResumeQuota, GetConfigOptionsResponse, McpServerInfo, ModelOption, SessionSettings, StatusInfo } from '@shared/messages';
 import type { SessionSummary } from './types';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
@@ -10,6 +10,25 @@ import { Message as MessageModel } from '../models/Message';
 import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
 import type { NoticeBlock } from '../models/ContentBlock';
 import type { Message } from '../models/Message';
+
+const CACHE_TTL_5M_MS = 5 * 60_000;
+const CACHE_TTL_1H_MS = 60 * 60_000;
+/** The CLI keepalive's default activityWindowMinutes, assumed when the host cannot tell whether it is on */
+const CACHE_KEEPALIVE_WINDOW_MS = 60 * 60_000;
+
+/** Model id without its `[1m]`-style suffix, for comparing models */
+function baseModelId(model: string): string {
+  return model.replace(/\[[^\]]*\]$/, '').trim().toLowerCase();
+}
+
+/** What "Resume this conversation?" shows (the CLI's dialog) */
+export interface ColdResumeInfo {
+  /** When the cache was last warm (ms) */
+  inactiveSince: number;
+  contextTokens: number;
+  /** Rounded percent of the 5-hour usage limit re-sending the context uses */
+  percent: number;
+}
 
 /** A prompt sent mid-turn, waiting in the CLI's queue (see Session.inFlightPrompts) */
 export interface InFlightPrompt {
@@ -107,6 +126,26 @@ export class Session {
   /** The mode is the UI's Auto default, not the user's pick: a resumed conversation's own mode wins */
   private permissionModeIsDefault = false;
   private contextUsageSeq = 0;
+  /** A context-usage read is running; another was asked for meanwhile */
+  private contextUsageInFlight = false;
+  private contextUsageAgain = false;
+  /** The CLI has answered get_context_usage at least once: no more local estimates */
+  private contextUsageFromCli = false;
+  /**
+   * Prompt cache of the main chain, for "Resume this conversation?" (see
+   * checkColdResume): when its last response arrived (the transcript's
+   * timestamp for a replayed one), the TTL that response was cached with, and
+   * the model that answered it.
+   */
+  private cacheWarmAt: number | undefined;
+  private cacheTtlMs: number | undefined;
+  private cacheModel: string | undefined;
+  /** From the last get_context_usage; absent = the CLI would not ask */
+  private coldResumeQuota: ColdResumeQuota | undefined;
+  /** The CLI's cache keepalive window (0 = off, undefined = unknown) */
+  private cacheKeepaliveWindowMs: number | undefined;
+  /** cacheWarmAt of the idle period already asked about (asked once per period, as the CLI does) */
+  private coldAskedFor: number | undefined;
   /**
    * Argument of an `/effort` sent and not answered yet ('' = no argument). The
    * CLI reads `auto` back as the model's default level, so the typed word is
@@ -286,6 +325,8 @@ export class Session {
       this.messages(accumulator);
       this.applyResumedSettings(response?.settings, connection);
       await this.launchClaude();
+      // Show the resumed conversation's context before its first turn
+      void this.refreshContextUsage();
     } finally {
       this.isLoading(false);
     }
@@ -757,9 +798,7 @@ export class Session {
       return false;
     }
 
-    // The window can change with the model (200K <-> 1M)
-    const window = this.windowFromModel(model.value);
-    this.usageData({ ...this.usageData(), contextWindow: window ?? 200000 });
+    // The window can change with the model (200K <-> 1M): the CLI says which
     void this.refreshContextUsage();
     return true;
   }
@@ -980,10 +1019,6 @@ export class Session {
         if (typeof event.output_style === 'string' && event.output_style) {
           this.outputStyle(event.output_style);
         }
-        const window = this.windowFromModel(event.model ?? this.modelSelection());
-        if (window) {
-          this.usageData({ ...this.usageData(), contextWindow: window });
-        }
         void this.refreshContextUsage();
         void this.refreshAppliedEffort();
         if (event.uic_code_mode === true) {
@@ -1102,6 +1137,9 @@ export class Session {
     this.lastSentSelection = undefined;
     this.pendingEffortArg = undefined;
     this.usageData({ ...this.usageData(), totalTokens: 0 });
+    this.cacheWarmAt = undefined;
+    this.cacheModel = undefined;
+    this.coldAskedFor = undefined;
     void this.refreshContextUsage();
   }
 
@@ -1160,11 +1198,12 @@ export class Session {
   }
 
   /**
-   * Live estimate while a turn streams. The CLI computes context as the last
-   * main-chain response's prompt (input + cache creation + cache read) plus
-   * its output; subagent (sidechain) messages carry their own, unrelated
-   * context and must not overwrite it. The authoritative figure replaces this
-   * via refreshContextUsage() as soon as the turn ends.
+   * A main-chain response arrived: the context changed, ask the CLI again
+   * (same numbers as `/context`). Subagent (sidechain) messages carry their
+   * own, unrelated context and are ignored. Until the CLI has answered once
+   * (history loaded before launch, or a CLI without get_context_usage) the
+   * figure is estimated the way the CLI does: the last main-chain response's
+   * prompt (input + cache creation + cache read) plus its output.
    */
   private updateUsage(event: any): void {
     if (event.parent_tool_use_id) {
@@ -1172,6 +1211,11 @@ export class Session {
     }
     const usage = event.message?.usage;
     if (!usage || typeof usage.input_tokens !== 'number') {
+      return;
+    }
+    this.noteCacheWarm(event, usage);
+    void this.refreshContextUsage();
+    if (this.contextUsageFromCli) {
       return;
     }
     const totalTokens =
@@ -1192,18 +1236,112 @@ export class Session {
   }
 
   /**
-   * Window size before the CLI has answered: `[1m]` model aliases are 1M,
-   * everything else keeps the last known window.
+   * Ask the CLI for its own context numbers (same source as `/context`):
+   * the total and the window it measures against (the autocompact window,
+   * e.g. 200K on a 1M model, never guessed from the model name). Calls made
+   * while a read runs fold into one more read after it, so the last answer
+   * shown is never older than the last change.
    */
-  private windowFromModel(model: string | undefined): number | undefined {
-    return model && /\[1m\]/i.test(model) ? 1_000_000 : undefined;
+  private async refreshContextUsage(): Promise<void> {
+    if (this.contextUsageInFlight) {
+      this.contextUsageAgain = true;
+      return;
+    }
+    this.contextUsageInFlight = true;
+    try {
+      do {
+        this.contextUsageAgain = false;
+        await this.readContextUsage();
+      } while (this.contextUsageAgain);
+    } finally {
+      this.contextUsageInFlight = false;
+    }
   }
 
   /**
-   * Ask the CLI for its own context numbers (same source as `/context`):
-   * exact total and the model's real window. Out-of-order answers are dropped.
+   * A main-chain response renewed the prompt cache. Its TTL is read from the
+   * response itself, as the CLI does: 5m tokens written → 5 minutes, 1h → 1
+   * hour; a response that wrote nothing keeps the last known TTL.
    */
-  private async refreshContextUsage(): Promise<void> {
+  private noteCacheWarm(event: any, usage: any): void {
+    const at = typeof event.timestamp === 'string' ? Date.parse(event.timestamp) : NaN;
+    this.cacheWarmAt = Number.isFinite(at) ? at : Date.now();
+    if ((usage.cache_creation?.ephemeral_5m_input_tokens ?? 0) > 0) {
+      this.cacheTtlMs = CACHE_TTL_5M_MS;
+    } else if ((usage.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0) {
+      this.cacheTtlMs = CACHE_TTL_1H_MS;
+    }
+    if (typeof event.message?.model === 'string') {
+      this.cacheModel = event.message.model;
+    }
+  }
+
+  /**
+   * Whether the main chain's prompt cache has likely gone cold. With the CLI's
+   * keepalive on, a 5-minute cache is renewed (invisibly to the host) for its
+   * activity window after the last activity, so it stays warm that long too;
+   * when the host cannot tell whether keepalive is on, it assumes it is, so
+   * the prompt may come late but never while the cache is still warm.
+   */
+  private cacheLikelyCold(now: number): boolean {
+    if (this.cacheWarmAt === undefined || !this.coldResumeQuota) {
+      return false;
+    }
+    // The CLI's own model id only: the picker may hold an alias ("opus")
+    const current = this.cliModel();
+    if (this.cacheModel && current && baseModelId(this.cacheModel) !== baseModelId(current)) {
+      // Another model has no cache for this conversation
+      return true;
+    }
+    if (this.cacheTtlMs === undefined) {
+      return false;
+    }
+    const ttl = this.cacheTtlMs === CACHE_TTL_5M_MS
+      ? CACHE_TTL_5M_MS + (this.cacheKeepaliveWindowMs ?? CACHE_KEEPALIVE_WINDOW_MS)
+      : this.cacheTtlMs;
+    return now - this.cacheWarmAt >= ttl;
+  }
+
+  /**
+   * Before sending: the CLI's "Resume this conversation?" check. When the
+   * cache looks cold, the CLI is asked again for the context and its price
+   * (idle compaction may have shrunk the context meanwhile) and the prompt is
+   * due only if re-sending costs at least the CLI's minPercent of the 5-hour
+   * limit. Asked once per idle period (markColdResumeAsked).
+   */
+  async checkColdResume(): Promise<ColdResumeInfo | undefined> {
+    if (this.busy() || this.cacheWarmAt === undefined || this.coldAskedFor === this.cacheWarmAt) {
+      return undefined;
+    }
+    if (!this.cacheLikelyCold(Date.now())) {
+      return undefined;
+    }
+    try {
+      await this.launchClaude();
+      await this.refreshContextUsage();
+    } catch {
+      return undefined;
+    }
+    const quota = this.coldResumeQuota;
+    const warmAt = this.cacheWarmAt;
+    if (!quota || warmAt === undefined || !this.cacheLikelyCold(Date.now())) {
+      return undefined;
+    }
+    const contextTokens = Math.min(this.usageData().totalTokens, this.usageData().contextWindow);
+    const percent = (contextTokens / 1_000_000) * quota.percentPerMillionTokens;
+    if (!(contextTokens > 0) || percent < quota.minPercent) {
+      return undefined;
+    }
+    return { inactiveSince: warmAt, contextTokens, percent: Math.round(percent) };
+  }
+
+  /** The user answered (or dismissed) the prompt for this idle period */
+  markColdResumeAsked(): void {
+    this.coldAskedFor = this.cacheWarmAt;
+  }
+
+  /** One get_context_usage read; an answer outdated by a model switch or relaunch is dropped. */
+  private async readContextUsage(): Promise<void> {
     const channelId = this.claudeChannelId();
     if (!channelId) {
       return;
@@ -1218,6 +1356,9 @@ export class Session {
       if (usage.model) {
         this.cliModel(usage.model);
       }
+      this.contextUsageFromCli = true;
+      this.coldResumeQuota = usage.coldResumeQuota;
+      this.cacheKeepaliveWindowMs = usage.cacheKeepaliveWindowMs;
       this.usageData({
         ...this.usageData(),
         totalTokens: usage.totalTokens,
