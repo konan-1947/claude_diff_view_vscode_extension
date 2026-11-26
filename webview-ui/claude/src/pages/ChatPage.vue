@@ -403,10 +403,21 @@
     return el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK;
   }
 
+  /** scrollTop at the previous scroll event: only a move up means the user left the bottom */
+  let lastScrollTop = 0;
+
   function onFollowScroll(): void {
     const el = containerEl.value;
     if (!el) return;
-    following = atBottom(el);
+    const top = el.scrollTop;
+    // A scroll event fires a frame after the scroll that caused it. If a row grew
+    // in between (streaming text, a new message), the view looks "not at the
+    // bottom" though nobody scrolled; judging by atBottom() alone used to drop
+    // following right then. Content growing never lowers scrollTop, so only a
+    // move up (wheel, keys, scrollbar, jumping to a prompt) stops following.
+    if (atBottom(el)) following = true;
+    else if (top < lastScrollTop - 1) following = false;
+    lastScrollTop = top;
     if (following) newBelow.value = false;
   }
 

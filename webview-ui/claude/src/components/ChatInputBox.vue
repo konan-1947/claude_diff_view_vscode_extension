@@ -1076,6 +1076,9 @@ const isSubmitDisabled = computed(() => {
 
 // === Using the new Completion Dropdown composable ===
 
+/** The slash command being picked was chosen with Tab (complete only, never run) */
+let slashPickedWithTab = false
+
 // Slash command completion
 const slashCompletion = useCompletionDropdown({
   mode: 'inline',
@@ -1089,6 +1092,17 @@ const slashCompletion = useCompletionDropdown({
     if (query) {
       // Replace the text
       const updated = slashCompletion.replaceText(content.value, `${command.label} `)
+
+      // Picked with Enter or a click, alone in the input and taking no
+      // arguments (no argument hint): run it, like the CLI. Tab only
+      // completes; a command with arguments goes into the input to finish.
+      if (!slashPickedWithTab && !command.argumentHint && updated.trim() === command.label) {
+        content.value = command.label
+        if (textareaRef.value) textareaRef.value.textContent = command.label
+        // After the dropdown has closed (it closes right after onSelect)
+        void nextTick(handleSubmit)
+        return
+      }
       content.value = updated
 
       // Update the DOM
@@ -1283,7 +1297,9 @@ function autoResizeTextarea() {
 function handleKeydown(event: KeyboardEvent) {
   // Handle completion menu keyboard events first
   if (slashCompletion.isOpen.value) {
+    slashPickedWithTab = event.key === 'Tab'
     slashCompletion.handleKeydown(event)
+    slashPickedWithTab = false
     return
   }
 
@@ -1776,8 +1792,12 @@ defineExpose({
   /** Set the input content and sync internal state */
   setContent(text: string) {
     content.value = text || ''
-    if (textareaRef.value) {
-      textareaRef.value.textContent = content.value
+    const el = textareaRef.value
+    if (el) {
+      el.textContent = content.value
+      // Replacing the text drops the caret to the start; text put back into
+      // the input (Esc, queue edit, cold resume) is continued at its end
+      if (document.activeElement === el) placeCaretAtEnd(el)
     }
     autoResizeTextarea()
   },

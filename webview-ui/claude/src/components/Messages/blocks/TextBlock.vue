@@ -5,10 +5,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import type { TextBlock as TextBlockType } from '../../../models/ContentBlock';
 import type { ToolContext } from '../../../types/tool';
-import { Marked } from 'marked';
+import { Marked, type Token, type Tokens } from 'marked';
+import { cachedMermaid, currentMermaidTheme, mermaidKey, renderMermaid } from '../../../utils/mermaid';
 // import DOMPurify from 'dompurify'; // TODO: enable once installed
 
 // Own instance: the renderer overrides below need this component's CSS, so
@@ -45,20 +46,104 @@ const markdownClasses = computed(() => {
   return classes;
 });
 
+// ---- Mermaid: a closed ```mermaid fence is drawn as a diagram ----
+// While the fence is still streaming it stays a code block (half a diagram is
+// a syntax error); a diagram that fails to render keeps its code, with the error.
+
+/** Bumped when a diagram finishes rendering, to re-run the markdown */
+const mermaidVersion = ref(0);
+/** Diagrams (by key) the user switched to their source */
+const mermaidShowCode = reactive(new Set<string>());
+/** Per render: the source and cache key of each diagram, by its data-mermaid index */
+let mermaidBlocks: { source: string; key: string }[] = [];
+/** Per render: diagrams with no result yet */
+let mermaidPending: { source: string; theme: ReturnType<typeof currentMermaidTheme> }[] = [];
+let disposed = false;
+onUnmounted(() => { disposed = true; });
+
+const MERMAID_TOGGLE = (showCode: boolean) =>
+  `<button type="button" class="mermaid-toggle" title="${showCode ? 'Show diagram' : 'Show code'}">` +
+  `<span class="codicon ${showCode ? 'codicon-type-hierarchy' : 'codicon-code'}"></span></button>`;
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function isMermaidFence(token: Token): token is Tokens.Code {
+  if (token.type !== 'code' || (token as Tokens.Code).codeBlockStyle === 'indented') return false;
+  return ((token as Tokens.Code).lang || '').trim().split(/\s+/)[0].toLowerCase() === 'mermaid';
+}
+
+/** marked closes an unterminated fence at the end of the text: only a closing fence line counts */
+function fenceClosed(raw: string): boolean {
+  const lines = raw.replace(/\n+$/, '').split('\n');
+  return lines.length > 1 && /^ {0,3}(`{3,}|~{3,})\s*$/.test(lines[lines.length - 1]);
+}
+
+function mermaidHtml(index: number): string {
+  const { source, key } = mermaidBlocks[index];
+  const result = cachedMermaid(key);
+  const showCode = !result?.svg || mermaidShowCode.has(key);
+  const body = showCode
+    ? `<pre><code class="language-mermaid">${escapeHtml(source)}</code></pre>`
+    : `<div class="mermaid-diagram">${result!.svg}</div>`;
+  const error = result?.error ? `<div class="mermaid-error">Mermaid: ${escapeHtml(result.error)}</div>` : '';
+  const tools = `<div class="code-tools">${result?.svg ? MERMAID_TOGGLE(showCode) : ''}${COPY_BUTTON}</div>`;
+  return `<div class="code-block mermaid-block${showCode ? '' : ' is-diagram'}" data-mermaid="${index}">${tools}${body}${error}</div>`;
+}
+
 // Render Markdown; every code block gets a wrapper holding its copy button
 const renderedMarkdown = computed(() => {
-  const rawHtml = (md.parse(props.block.text) as string)
+  void mermaidVersion.value;
+  const tokens = md.lexer(props.block.text);
+  const blocks: typeof mermaidBlocks = [];
+  const pending: typeof mermaidPending = [];
+  let theme: ReturnType<typeof currentMermaidTheme> | undefined;
+  md.walkTokens(tokens, token => {
+    if (!isMermaidFence(token) || !fenceClosed(token.raw) || !token.text.trim()) return;
+    theme ??= currentMermaidTheme();
+    const source = token.text;
+    const key = mermaidKey(source, theme);
+    if (!cachedMermaid(key)) pending.push({ source, theme });
+    blocks.push({ source, key });
+    // A placeholder, so the <pre> wrapping below leaves the diagram's own markup alone
+    Object.assign(token, { type: 'html', block: true, pre: false, text: `<!--mermaid:${blocks.length - 1}-->` });
+  });
+  mermaidBlocks = blocks;
+  mermaidPending = pending;
+  const rawHtml = (md.parser(tokens) as string)
     .replace(/<pre>/g, `<div class="code-block">${COPY_BUTTON}<pre>`)
-    .replace(/<\/pre>/g, '</pre></div>');
+    .replace(/<\/pre>/g, '</pre></div>')
+    .replace(/<!--mermaid:(\d+)-->/g, (_, i: string) => mermaidHtml(Number(i)));
   // TODO: sanitize with DOMPurify.sanitize(rawHtml)
   return rawHtml;
 });
 
+watch(
+  renderedMarkdown,
+  () => {
+    for (const { source, theme } of mermaidPending) {
+      void renderMermaid(source, theme).then(() => {
+        if (!disposed) mermaidVersion.value++;
+      });
+    }
+  },
+  { immediate: true }
+);
+
 // Delegated: the buttons live in v-html, and are rebuilt while text streams
 async function onClick(event: MouseEvent) {
-  const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('.code-copy');
+  const target = event.target as HTMLElement | null;
+  const holder = target?.closest<HTMLElement>('.code-block');
+  const diagram = holder?.dataset.mermaid != null ? mermaidBlocks[Number(holder.dataset.mermaid)] : undefined;
+  if (diagram && target?.closest('.mermaid-toggle')) {
+    if (mermaidShowCode.has(diagram.key)) mermaidShowCode.delete(diagram.key);
+    else mermaidShowCode.add(diagram.key);
+    return;
+  }
+  const button = target?.closest<HTMLButtonElement>('.code-copy');
   // marked keeps the fence's last newline; pasted into a shell it would run the command
-  const text = button?.parentElement?.querySelector('pre')?.textContent?.replace(/\n$/, '');
+  const text = diagram ? diagram.source : holder?.querySelector('pre')?.textContent?.replace(/\n$/, '');
   if (!button || text == null) return;
   try {
     await navigator.clipboard.writeText(text);
@@ -176,6 +261,72 @@ async function onClick(event: MouseEvent) {
 .markdown-content :deep(.code-copy:hover) {
   background-color: var(--cs-fg-12);
   color: var(--vscode-foreground);
+}
+
+/* Mermaid block: the diagram (or its source) with a code/diagram toggle beside Copy */
+.markdown-content :deep(.code-tools) {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+}
+
+.markdown-content :deep(.code-tools .code-copy) {
+  position: static;
+}
+
+.markdown-content :deep(.mermaid-block pre) {
+  /* room for both buttons */
+  padding-right: 60px;
+}
+
+.markdown-content :deep(.mermaid-toggle) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--cs-fg-52);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.markdown-content :deep(.code-block:hover .mermaid-toggle),
+.markdown-content :deep(.mermaid-toggle:focus-visible) {
+  opacity: 1;
+}
+
+.markdown-content :deep(.mermaid-toggle:hover) {
+  background-color: var(--cs-fg-12);
+  color: var(--vscode-foreground);
+}
+
+.markdown-content :deep(.mermaid-diagram) {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  padding: 12px;
+  border: 1px solid var(--cs-fg-12);
+  border-radius: var(--cs-radius-lg);
+}
+
+.markdown-content :deep(.mermaid-diagram svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.markdown-content :deep(.mermaid-error) {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--vscode-errorForeground);
 }
 
 .markdown-content :deep(pre code) {
