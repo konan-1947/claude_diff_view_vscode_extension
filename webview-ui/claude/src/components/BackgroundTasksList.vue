@@ -1,69 +1,87 @@
 <template>
-  <div
-    v-if="rows.length > 0"
-    ref="rootRef"
-    class="bg-tasks"
-    :class="{ focused }"
-    tabindex="-1"
-    @keydown="onKeydown"
-    @focusin="focused = true"
-    @focusout="onFocusOut"
-  >
-    <div class="bg-header" @click="expanded = !expanded">
-      <span class="codicon" :class="expanded ? 'codicon-chevron-down' : 'codicon-chevron-right'"></span>
+  <div v-if="rows.length > 0" class="bg-tasks">
+    <!-- Closed: one line under the input, as the CLI's "1 shell running ↓ to view" -->
+    <div v-if="!open" class="bg-header" @click="openDialog()">
       <span class="codicon codicon-loading codicon-modifier-spin bg-spin"></span>
       <span>{{ rows.length }} background task{{ rows.length === 1 ? '' : 's' }}</span>
-      <!-- Keys, in the header so showing them never changes the height -->
-      <span class="bg-keys">
-        <template v-if="confirmKill">press k again to stop</template>
-        <template v-else-if="focused">↑↓ select&nbsp;&nbsp;Enter view&nbsp;&nbsp;k stop&nbsp;&nbsp;Esc back</template>
-        <template v-else>↓ from the input</template>
-      </span>
+      <span class="bg-keys">↓ to view</span>
     </div>
-    <div v-if="expanded" class="bg-list">
-      <template v-for="(task, index) in rows" :key="task.taskId">
-        <div
-          class="bg-row"
-          :class="{ clickable: true, open: openTask === task.taskId, selected: focused && index === selected }"
-          :title="task.description"
-          @mousedown.prevent
-          @click="selected = index; focusList(); toggle(task.taskId)"
-        >
-          <img v-if="task.isAgent" :src="agentIcon" class="bg-kind bg-agent-icon" alt="" aria-hidden="true" />
-          <span v-else class="codicon codicon-terminal bg-kind"></span>
-          <span class="bg-desc">{{ task.description || task.taskId }}</span>
-          <span v-if="task.stats" class="bg-stats">{{ task.stats }}</span>
-          <span v-if="errors[task.taskId]" class="bg-error" :title="errors[task.taskId]">{{ errors[task.taskId] }}</span>
-          <span
-            class="codicon bg-chevron"
-            :class="openTask === task.taskId ? 'codicon-chevron-down' : 'codicon-chevron-right'"
-          ></span>
-          <Tooltip content="Stop task">
-            <div
-              class="anysphere-icon-button bg-kill"
-              :class="{ disabled: stopping[task.taskId] }"
-              @click.stop="kill(task.taskId)"
-            >
-              <span class="codicon codicon-debug-stop text-[12px]!"></span>
-            </div>
-          </Tooltip>
+
+    <!-- Open: takes the input's place, like the CLI's background tasks dialog.
+         Fixed height, so going between the list and a task never moves anything -->
+    <div
+      v-else
+      ref="dialogRef"
+      class="bg-dialog"
+      tabindex="-1"
+      @keydown="onKeydown"
+      @focusout="onFocusOut"
+    >
+      <template v-if="view === 'list' || !current">
+        <div class="bg-title-row">
+          <span class="bg-title">Background tasks</span>
+          <span class="codicon codicon-close bg-close" title="Close (Esc)" @click="close()"></span>
         </div>
-        <!-- What the subagent did so far (its tool calls), like opening its Agent card -->
-        <div v-if="task.isAgent && openTask === task.taskId" class="bg-detail">
+        <div class="bg-kind-line">{{ rows.length }} active</div>
+        <div class="bg-body bg-list">
+          <div
+            v-for="(task, index) in rows"
+            :key="task.taskId"
+            class="bg-row"
+            :class="{ selected: index === selected }"
+            :title="task.description"
+            @mousedown.prevent
+            @click="selected = index; showTask(task.taskId)"
+          >
+            <span class="bg-pointer">{{ index === selected ? '›' : '' }}</span>
+            <img v-if="task.isAgent" :src="agentIcon" class="bg-kind bg-agent-icon" alt="" aria-hidden="true" />
+            <span v-else class="codicon codicon-terminal bg-kind"></span>
+            <span class="bg-desc">{{ task.description || task.taskId }}</span>
+            <span v-if="task.stats" class="bg-stats">{{ task.stats }}</span>
+            <span v-if="errors[task.taskId]" class="bg-error" :title="errors[task.taskId]">{{ errors[task.taskId] }}</span>
+          </div>
+        </div>
+        <div class="bg-footer">↑/↓ to select&nbsp;&nbsp;&nbsp;Enter to view&nbsp;&nbsp;&nbsp;x to stop&nbsp;&nbsp;&nbsp;Esc to close</div>
+      </template>
+
+      <template v-else>
+        <div class="bg-title-row">
+          <span class="bg-title bg-title-task" :title="current.description">{{ current.description || current.taskId }}</span>
+          <span class="codicon codicon-close bg-close" title="Close (Esc)" @click="close()"></span>
+        </div>
+        <div class="bg-kind-line">{{ current.isAgent ? (current.subagentType || 'agent') : 'shell' }}</div>
+        <div class="bg-fields">
+          <span class="bg-field-name">Status:</span>
+          <span :class="{ 'bg-error-text': errors[current.taskId] }">{{ currentStatus }}</span>
+          <span class="bg-field-name">Runtime:</span>
+          <span>{{ current.runtime || '—' }}</span>
+          <template v-if="current.isAgent && current.info?.totalTokens">
+            <span class="bg-field-name">Tokens:</span>
+            <span>{{ formatTokenCount(current.info.totalTokens) }}</span>
+          </template>
+          <template v-if="!current.isAgent && currentShell?.command">
+            <span class="bg-field-name">Command:</span>
+            <span class="bg-command" :title="currentShell.command">{{ currentShell.command }}</span>
+          </template>
+        </div>
+        <div class="bg-section">{{ current.isAgent ? 'Progress' : 'Output' }}</div>
+        <div v-if="current.isAgent" class="bg-body bg-agent-body">
           <SubagentDetail
-            :task="task.info"
-            :messages="task.messages"
-            :prompt="task.info?.prompt"
-            :status="task.status"
+            :task="current.info"
+            :messages="current.messages"
+            :prompt="current.info?.prompt"
+            :status="current.status"
             :running="true"
           />
         </div>
-        <!-- Background shell: its command and what it printed so far -->
         <BackgroundShellDetail
-          v-else-if="!task.isAgent && openTask === task.taskId"
-          :resolve="() => findShell(task.taskId, task.info?.toolUseId)"
+          v-else
+          :key="current.taskId"
+          class="bg-body"
+          :resolve="() => findShell(current!.taskId, current!.info?.toolUseId)"
           :read-output="readTaskOutput"
         />
+        <div class="bg-footer">← to go back&nbsp;&nbsp;&nbsp;x to stop&nbsp;&nbsp;&nbsp;Enter/Space to close&nbsp;&nbsp;&nbsp;Esc to close</div>
       </template>
     </div>
   </div>
@@ -71,7 +89,6 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import Tooltip from './Common/Tooltip.vue';
 import SubagentDetail from './Messages/SubagentDetail.vue';
 import BackgroundShellDetail, { type BackgroundShell } from './BackgroundShellDetail.vue';
 import { subagentCalls, subagentStatus } from '../utils/subagentCalls';
@@ -81,8 +98,9 @@ import { formatDuration, formatTokenCount, isTaskFinished } from '../core/LiveAc
 
 /**
  * Tasks the CLI runs in the background (a Bash call with run_in_background, a
- * background subagent), listed above the input with a stop button each, the
- * way the CLI lists them under its prompt.
+ * background subagent). Closed, one line under the input; opened (↓ from the
+ * input, or a click), a dialog in the input's place, as the CLI does: a list
+ * (↑/↓ Enter x Esc), and one task's status, command and output (← x Enter Esc).
  */
 interface Props {
   tasks: BackgroundTask[];
@@ -98,130 +116,176 @@ interface Props {
 
 const props = defineProps<Props>();
 const emit = defineEmits<{
-  /** ↑ past the first task, or Esc: focus goes back to the chat input */
+  /** The dialog closed with the keyboard (or its last task ended): focus goes back to the chat input */
   (e: 'exit'): void;
+  /** The dialog opened or closed: the input hides while it is open */
+  (e: 'openChange', open: boolean): void;
 }>();
-const expanded = ref(true);
+
 const stopping = reactive<Record<string, boolean>>({});
 const errors = reactive<Record<string, string>>({});
-const openTask = ref<string | null>(null);
-
-function toggle(taskId: string) {
-  openTask.value = openTask.value === taskId ? null : taskId;
-}
 
 const now = ref(Date.now());
 let timer: ReturnType<typeof setInterval> | undefined;
 onMounted(() => { timer = setInterval(() => { now.value = Date.now(); }, 1000); });
-onBeforeUnmount(() => { if (timer) clearInterval(timer); });
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer);
+  if (open.value) emit('openChange', false);
+});
+
+const open = ref(false);
+const view = ref<'list' | 'task'>('list');
+const openTask = ref<string | null>(null);
+const selected = ref(0);
+const dialogRef = ref<HTMLElement>();
 
 const rows = computed(() =>
   props.tasks.filter((task) => !isTaskFinished(props.taskInfo[task.taskId])).map((task) => {
     const info = props.taskInfo[task.taskId];
-    const stats = [
-      info?.totalTokens ? `${formatTokenCount(info.totalTokens)} tokens` : '',
-      info ? formatDuration(now.value - info.startedAt) : '',
-    ].filter(Boolean).join('   ');
+    const runtime = info ? formatDuration(now.value - info.startedAt) : '';
+    const stats = [info?.totalTokens ? `${formatTokenCount(info.totalTokens)} tokens` : '', runtime]
+      .filter(Boolean).join('   ');
     const isAgent = task.taskType !== 'local_bash';
     const messages = (info?.toolUseId && props.subagentMessages[info.toolUseId]) || [];
     return {
       ...task,
       isAgent,
+      runtime,
       stats,
       info,
       messages,
-      status: isAgent && openTask.value === task.taskId
+      status: isAgent && open.value && view.value === 'task' && openTask.value === task.taskId
         ? subagentStatus(info, subagentCalls(messages), true, now.value)
         : null,
     };
   })
 );
 
-// ---- Keyboard (as the CLI's task list: ↓ from the prompt, ↑↓ Enter k Esc) ----
+const current = computed(() => rows.value.find((r) => r.taskId === openTask.value));
+const currentShell = computed(() =>
+  current.value && !current.value.isAgent ? props.findShell(current.value.taskId, current.value.info?.toolUseId) : undefined
+);
+const currentStatus = computed(() => {
+  const task = current.value;
+  if (!task) return '';
+  if (errors[task.taskId]) return errors[task.taskId];
+  if (stopping[task.taskId]) return 'stopping…';
+  return task.info?.status ?? 'running';
+});
 
-const rootRef = ref<HTMLElement>();
-const focused = ref(false);
-const selected = ref(0);
-/** Task waiting for the second `k` */
-const confirmKill = ref<string | null>(null);
+watch(open, (v) => emit('openChange', v));
 
 watch(
   () => rows.value.length,
   (n) => {
     if (selected.value >= n) selected.value = Math.max(0, n - 1);
-    // The last task ended while the list had the focus: give it back to the input
-    if (n === 0 && focused.value) {
-      focused.value = false;
-      exit();
-    }
+    if (!open.value) return;
+    // The last task ended: give the input back
+    if (n === 0) close();
+    // The task on screen ended: back to the list
+    else if (view.value === 'task' && !current.value) view.value = 'list';
   }
 );
 
-/** Focus the list (↓ from the chat input); false when there is nothing to focus */
-function focusList(): boolean {
+function focusDialog() {
+  void nextTick(() => dialogRef.value?.focus());
+}
+
+/** Open the dialog (↓ from the chat input); false when there is nothing to show */
+function openDialog(): boolean {
   if (rows.value.length === 0) return false;
-  expanded.value = true;
   if (selected.value >= rows.value.length) selected.value = 0;
-  void nextTick(() => rootRef.value?.focus());
+  // A single task opens straight on it, as in the CLI
+  if (rows.value.length === 1) {
+    openTask.value = rows.value[0].taskId;
+    view.value = 'task';
+  } else {
+    view.value = 'list';
+  }
+  open.value = true;
+  focusDialog();
   return true;
 }
 
-function onFocusOut(e: FocusEvent) {
-  if (rootRef.value?.contains(e.relatedTarget as Node | null)) return;
-  focused.value = false;
-  confirmKill.value = null;
+function showTask(taskId: string) {
+  openTask.value = taskId;
+  view.value = 'task';
+  focusDialog();
 }
 
-function exit() {
-  confirmKill.value = null;
-  emit('exit');
+function backToList() {
+  const index = rows.value.findIndex((r) => r.taskId === openTask.value);
+  if (index >= 0) selected.value = index;
+  view.value = 'list';
+}
+
+function close(toInput = true) {
+  if (!open.value) return;
+  open.value = false;
+  if (toInput) emit('exit');
+}
+
+// Focus left the dialog (a click in the transcript): close it, without taking
+// the focus back. Switching windows blurs too, and keeps it open.
+function onFocusOut() {
+  setTimeout(() => {
+    if (!open.value || !document.hasFocus()) return;
+    if (dialogRef.value?.contains(document.activeElement)) return;
+    close(false);
+  }, 0);
 }
 
 function onKeydown(e: KeyboardEvent) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-  const task = rows.value[selected.value];
   const key = e.key;
-  if (key !== 'k' && key !== 'K') confirmKill.value = null;
-  switch (key) {
-    case 'ArrowDown':
-      selected.value = Math.min(rows.value.length - 1, selected.value + 1);
-      break;
-    case 'ArrowUp':
-      if (selected.value === 0) exit();
-      else selected.value -= 1;
-      break;
-    case 'Enter':
-    case ' ':
-      if (task) toggle(task.taskId);
-      break;
-    case 'ArrowRight':
-      if (task) openTask.value = task.taskId;
-      break;
-    case 'ArrowLeft':
-      openTask.value = null;
-      break;
-    case 'Escape':
-      if (openTask.value) openTask.value = null;
-      else exit();
-      break;
-    case 'k':
-    case 'K':
-      if (!task) break;
-      if (confirmKill.value === task.taskId) {
-        confirmKill.value = null;
-        void kill(task.taskId);
-      } else {
-        confirmKill.value = task.taskId;
-      }
-      break;
-    default:
-      return;
+  if (view.value === 'list' || !current.value) {
+    const task = rows.value[selected.value];
+    switch (key) {
+      case 'ArrowDown':
+        selected.value = Math.min(rows.value.length - 1, selected.value + 1);
+        break;
+      case 'ArrowUp':
+        selected.value = Math.max(0, selected.value - 1);
+        break;
+      case 'Enter':
+      case ' ':
+      case 'ArrowRight':
+        if (task) showTask(task.taskId);
+        break;
+      case 'x':
+      case 'X':
+        if (task) void kill(task.taskId);
+        break;
+      case 'Escape':
+      case 'ArrowLeft':
+        close();
+        break;
+      default:
+        return;
+    }
+  } else {
+    switch (key) {
+      case 'ArrowLeft':
+        backToList();
+        break;
+      case 'x':
+      case 'X':
+        void kill(current.value.taskId);
+        break;
+      case 'Enter':
+      case ' ':
+      case 'Escape':
+        close();
+        break;
+      default:
+        return;
+    }
   }
   e.preventDefault();
   e.stopPropagation();
 }
 
-defineExpose({ focusList });
+defineExpose({ focusList: openDialog });
 
 async function kill(taskId: string) {
   if (stopping[taskId]) return;
@@ -236,7 +300,6 @@ async function kill(taskId: string) {
 <style scoped>
 .bg-tasks {
   margin-top: 4px;
-  outline: none;
   font-size: 12px;
   color: var(--vscode-input-placeholderForeground);
 }
@@ -244,37 +307,16 @@ async function kill(taskId: string) {
 .bg-header {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   height: 24px;
   padding-left: 4px;
   cursor: pointer;
   user-select: none;
 }
 
-.bg-header .codicon {
-  font-size: 12px;
-  opacity: 0.6;
-}
-
 .bg-spin {
   font-size: 11px !important;
-}
-
-.bg-list {
-  display: flex;
-  flex-direction: column;
-  padding: 2px 0 4px;
-}
-
-.bg-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 30px;
-  box-sizing: border-box;
-  padding: 4px 8px 4px 6px;
-  border-radius: 4px;
+  opacity: 0.6;
 }
 
 .bg-keys {
@@ -282,18 +324,138 @@ async function kill(taskId: string) {
   padding-right: 8px;
   font-size: 11px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   opacity: 0.7;
 }
 
-.bg-row.selected {
-  background-color: var(--vscode-list-activeSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
-  color: var(--vscode-list-activeSelectionForeground, inherit);
+/* The dialog: the CLI's rule above, then title, kind, fields, body, keys */
+.bg-dialog {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 300px;
+  padding: 10px 12px 8px;
+  border-top: 1px solid var(--vscode-focusBorder);
+  outline: none;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--vscode-editor-foreground);
+}
+
+.bg-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.bg-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--vscode-textLink-foreground);
+}
+
+.bg-title-task {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+}
+
+.bg-close {
+  flex-shrink: 0;
+  font-size: 14px;
+  opacity: 0.5;
+  cursor: pointer;
+}
+
+.bg-close:hover {
+  opacity: 1;
+}
+
+.bg-kind-line {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+  opacity: 0.7;
+}
+
+.bg-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 12px;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.bg-field-name {
+  font-weight: 600;
+}
+
+.bg-command {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.bg-section {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.bg-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.bg-agent-body {
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+}
+
+.bg-footer {
+  flex-shrink: 0;
+  padding-top: 8px;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.6;
+}
+
+.bg-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.bg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 6px 2px 0;
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .bg-row:hover {
   background-color: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.bg-row.selected {
+  color: var(--vscode-textLink-foreground);
+}
+
+.bg-pointer {
+  flex-shrink: 0;
+  width: 10px;
+  text-align: center;
 }
 
 .bg-kind {
@@ -309,37 +471,12 @@ async function kill(taskId: string) {
   opacity: 1;
 }
 
-.bg-row.clickable {
-  cursor: pointer;
-}
-
-.bg-chevron {
-  flex-shrink: 0;
-  font-size: 12px;
-  opacity: 0.6;
-}
-
-/* Same card as the Agent tool call; fixed height so opening it never
-   resizes as the subagent works (its content scrolls instead) */
-.bg-detail {
-  box-sizing: border-box;
-  height: 220px;
-  margin: 2px 0 6px;
-  padding: 8px 10px;
-  overflow-y: auto;
-  border: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent);
-  border-radius: 12px;
-  background: var(--vscode-editor-background);
-  font-size: 13px;
-}
-
 .bg-desc {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--vscode-input-foreground);
 }
 
 .bg-stats {
@@ -358,12 +495,7 @@ async function kill(taskId: string) {
   color: var(--vscode-errorForeground);
 }
 
-.bg-kill {
-  flex-shrink: 0;
-}
-
-.bg-kill.disabled {
-  opacity: 0.4;
-  pointer-events: none;
+.bg-error-text {
+  color: var(--vscode-errorForeground);
 }
 </style>

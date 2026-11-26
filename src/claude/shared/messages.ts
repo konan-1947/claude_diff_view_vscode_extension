@@ -685,6 +685,16 @@ export interface GetAuthStatusResponse {
     error?: string;
 }
 
+/** `claude --version`, for the logo of an empty chat */
+export interface GetCliVersionRequest {
+    type: "get_cli_version";
+}
+
+export interface GetCliVersionResponse {
+    type: "get_cli_version_response";
+    version?: string;
+}
+
 export type AuthLoginMethod = "claudeai" | "console" | "sso";
 
 /**
@@ -1467,6 +1477,7 @@ export type WebViewRequest =
     | MarketplaceActionRequest
     | OpenReleaseNotesRequest
     | GetAuthStatusRequest
+    | GetCliVersionRequest
     | AuthLoginRequest
     | AuthLoginActionRequest
     | AuthLogoutRequest
@@ -1532,6 +1543,7 @@ export type WebViewRequestResponse =
     | MarketplaceActionResponse
     | OpenReleaseNotesResponse
     | GetAuthStatusResponse
+    | GetCliVersionResponse
     | AuthLoginResponse
     | AuthLoginActionResponse
     | AuthLogoutResponse

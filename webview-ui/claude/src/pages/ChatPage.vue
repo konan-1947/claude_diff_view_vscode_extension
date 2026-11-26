@@ -18,8 +18,12 @@
       :class="{ 'is-empty': messages.length === 0 }"
       :style="emptyInputHeight ? { '--empty-input-height': `${emptyInputHeight}px` } : undefined"
     >
-      <!-- Ctrl+O, as the CLI marks its detailed transcript; over the transcript so nothing moves -->
-      <div v-if="transcriptDetail" class="detail-badge">Detailed transcript&nbsp;&nbsp;Ctrl+O to go back</div>
+      <!-- Empty chat: the space above the centered input, holding the logo at its bottom -->
+      <div v-if="messages.length === 0" class="empty-top">
+        <ClaudeCodeLogo :version="cliVersion" />
+      </div>
+      <!-- Steps folded (Ctrl+O, not the default); over the transcript so nothing moves -->
+      <div v-if="!transcriptDetail" class="detail-badge">Steps folded&nbsp;&nbsp;Ctrl+O to show</div>
       <!-- <div class="chatContainer"> -->
         <div
           ref="containerEl"
@@ -111,6 +115,7 @@
             @send-now="handleQueueSendNow"
           />
           <ChatInputBox
+            v-show="!tasksDialogOpen"
             ref="chatInputRef"
             :show-progress="true"
             :progress-percentage="progressPercentage"
@@ -154,6 +159,7 @@
             :find-shell="findBackgroundShell"
             :read-task-output="readTaskOutput"
             @exit="chatInputRef?.focus()"
+            @open-change="(v: boolean) => (tasksDialogOpen = v)"
           />
           <!-- Recent conversations (`claude --continue` for the first): under the
                input, so the centered empty-state input does not move when they
@@ -200,6 +206,7 @@
   import PermissionRequestModal from '../components/PermissionRequestModal.vue';
   import SessionConflictPrompt from '../components/SessionConflictPrompt.vue';
   import ColdResumePrompt from '../components/ColdResumePrompt.vue';
+import ClaudeCodeLogo from '../components/ClaudeCodeLogo.vue';
   import type { ColdResumeInfo } from '../core/Session';
   import type { Message } from '../models/Message';
   import { RestoreCheckpointKey } from '../composables/runtimeContext';
@@ -368,6 +375,12 @@
   // becomes empty: the CSS centers that height, so the input's top edge stays
   // put while a panel or a longer prompt makes it taller.
   const emptyInputHeight = ref(0);
+  // CLI version under the empty-chat logo (`claude --version`, cached by the host)
+  const cliVersion = ref<string | undefined>();
+  void runtime.sessionStore.getConnection()
+    .then((c) => c.getCliVersion())
+    .then((v) => { cliVersion.value = v; })
+    .catch(() => {});
   watch(
     () => messages.value.length === 0,
     async (empty) => {
@@ -937,7 +950,7 @@
     priority: 100,
   });
 
-  // Ctrl+O, as in the CLI: the detailed transcript (everything unfolded) and back
+  // Ctrl+O: fold every turn's steps behind "Worked for", and back
   useKeybinding({
     keys: 'ctrl+o',
     handler: toggleTranscriptDetail,
@@ -1114,6 +1127,8 @@
   // ---- Background shells (Bash with run_in_background) ----
 
   const tasksListRef = ref<InstanceType<typeof BackgroundTasksList> | null>(null);
+  /** The background tasks dialog is open, in the input's place */
+  const tasksDialogOpen = ref(false);
   const hasRunningTasks = computed(() =>
     activity.backgroundTasks.value.some((t) => !isTaskFinished(activity.tasks.value[t.taskId]))
   );
@@ -1443,10 +1458,20 @@
   .main.is-empty {
     justify-content: flex-start;
   }
-  .main.is-empty::before {
-    content: '';
+  .empty-top {
     flex: 0 1 calc(50% - var(--empty-input-height, 160px) / 2);
     min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    padding-bottom: 24px;
+    overflow: hidden;
+    container-type: size;
+  }
+  /* Too little room above the input: no half-clipped logo */
+  @container (max-height: 90px) {
+    .empty-top > * { visibility: hidden; }
   }
   .main.is-empty > .messagesContainer {
     display: none;

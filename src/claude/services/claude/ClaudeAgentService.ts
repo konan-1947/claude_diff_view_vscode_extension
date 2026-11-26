@@ -153,6 +153,7 @@ import {
     handleMarketplaceAction,
     handleOpenReleaseNotes,
     handleGetAuthStatus,
+    handleGetCliVersion,
     handleAuthLogin,
     handleAuthLoginAction,
     handleAuthLogout,
@@ -863,6 +864,9 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "get_auth_status":
                 return handleGetAuthStatus(request, this.handlerContext);
+
+            case "get_cli_version":
+                return handleGetCliVersion(request, this.handlerContext);
 
             case "auth_login":
                 return handleAuthLogin(request, this.handlerContext);

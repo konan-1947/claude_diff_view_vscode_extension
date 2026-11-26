@@ -260,6 +260,10 @@ export abstract class BaseTransport {
     const response = await this.sendRequest({ type: "open_release_notes" });
     return (response as any)?.error;
   }
+  async getCliVersion(): Promise<string | undefined> {
+    const response = await this.sendRequest({ type: "get_cli_version" });
+    return (response as any)?.version;
+  }
   async getAuthStatus(): Promise<{ status?: AuthStatusInfo; error?: string }> {
     const response = await this.sendRequest({ type: "get_auth_status" });
     return { status: (response as any)?.status, error: (response as any)?.error };

@@ -161,8 +161,8 @@ const finalText = computed(() => {
 });
 
 const override = ref<boolean | undefined>(undefined);
-// Steps start folded, even while the turn runs (as the CLI hides them behind
-// "ctrl+o to expand"): Ctrl+O or a click on "Working" / "Worked for" opens them
+// Steps start shown (transcriptDetail defaults to true); Ctrl+O folds every
+// turn's steps, a click on "Working" / "Worked for" folds or opens one turn
 const expanded = computed(() => (hasWork.value ? override.value ?? transcriptDetail.value : true));
 function toggle() {
   override.value = !expanded.value;

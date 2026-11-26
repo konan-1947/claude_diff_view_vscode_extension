@@ -10,15 +10,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import { transcriptDetail } from '../../../composables/useTranscriptDetail';
+import { computed, ref } from 'vue';
 
 const props = defineProps<{ text: string }>();
-// Ctrl+O (detailed transcript) shows every thought
-const open = ref(transcriptDetail.value);
-watch(transcriptDetail, (v) => {
-  open.value = v;
-});
+// Starts closed, also with Ctrl+O's step list shown: a click opens it
+const open = ref(false);
 
 // The SDK does not report how long the model thought, so only flag trivial ones
 const detail = computed(() => (props.text.trim().length < 160 ? 'briefly' : ''));

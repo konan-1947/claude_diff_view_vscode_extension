@@ -71,6 +71,8 @@ import type {
     OpenReleaseNotesResponse,
     GetAuthStatusRequest,
     GetAuthStatusResponse,
+    GetCliVersionRequest,
+    GetCliVersionResponse,
     AuthLoginRequest,
     AuthLoginResponse,
     AuthLoginActionRequest,
@@ -1130,6 +1132,29 @@ export async function handleOpenReleaseNotes(
     } catch (error) {
         context.logService.warn(`[openReleaseNotes] ${errorText(error)}`);
         return { type: "open_release_notes_response", error: errorText(error) };
+    }
+}
+
+/** `claude --version`, once per CLI path (it does not change while the extension runs) */
+const cliVersions = new Map<string, Promise<string | undefined>>();
+export async function handleGetCliVersion(
+    _request: GetCliVersionRequest,
+    context: HandlerContext
+): Promise<GetCliVersionResponse> {
+    try {
+        const cli = await context.sdkService.getCliInvocation();
+        const key = [cli.command, ...cli.prefixArgs].join(' ');
+        let pending = cliVersions.get(key);
+        if (!pending) {
+            pending = runClaudeCli(cli, ['--version'], workspaceCwd(context), 10000)
+                .then((r) => r.stdout.match(/\d+\.\d+\.\d+[\w.+-]*/)?.[0])
+                .catch(() => undefined);
+            cliVersions.set(key, pending);
+        }
+        return { type: "get_cli_version_response", version: await pending };
+    } catch (error) {
+        context.logService.warn(`[getCliVersion] ${errorText(error)}`);
+        return { type: "get_cli_version_response" };
     }
 }
 

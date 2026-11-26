@@ -67,8 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, useSlots, watch } from 'vue';
-import { transcriptDetail } from '../../../../../composables/useTranscriptDetail';
+import { ref, computed, useSlots } from 'vue';
 import Tooltip from '@/components/Common/Tooltip.vue';
 import ToolStatusIndicator from './ToolStatusIndicator.vue';
 
@@ -110,20 +109,15 @@ const isExpanded = computed({
     if (userToggled.value) {
       return userToggledState.value;
     }
-    // Every card starts closed (diffs, errors and permission previews too): the
-    // user opens what they want to see. An error still shows its red dot.
-    // Ctrl+O (detailed transcript) opens them all.
-    return transcriptDetail.value;
+    // Every card starts closed (diffs, errors and permission previews too), also
+    // with Ctrl+O's step list shown: the user opens what they want to see. An
+    // error still shows its red dot.
+    return false;
   },
   set: (value) => {
     userToggled.value = true;
     userToggledState.value = value;
   },
-});
-
-// Ctrl+O on or off drops the manual toggle: every card follows the switch
-watch(transcriptDetail, () => {
-  userToggled.value = false;
 });
 
 // State computation

@@ -1,6 +1,5 @@
 <template>
   <div ref="rootRef" class="shell-detail" @scroll="onScroll">
-    <div v-if="shell?.command" class="shell-command"><span class="shell-prompt">$</span> {{ shell.command }}</div>
     <div v-if="truncated" class="shell-note">Showing the last 64 KB</div>
     <pre v-if="output" class="shell-output">{{ output }}</pre>
     <div v-else-if="error" class="shell-note shell-error">{{ error }}</div>
@@ -83,29 +82,15 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .shell-detail {
-  box-sizing: border-box;
-  height: 220px;
-  margin: 2px 0 6px;
-  padding: 8px 10px;
+  /* Height comes from the dialog it sits in (BackgroundTasksList) */
+  min-height: 0;
   overflow-y: auto;
-  border: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent);
-  border-radius: 12px;
-  background: var(--vscode-editor-background);
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 12px;
   line-height: 18px;
   color: var(--vscode-editor-foreground);
 }
 
-.shell-command {
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin-bottom: 6px;
-}
-
-.shell-prompt {
-  opacity: 0.5;
-}
 
 .shell-output {
   margin: 0;
