@@ -10,7 +10,6 @@ import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { registerAllCommands } from './commands/commandsRegistry';
 import { applyAltMenuFocus } from './commands/altMenuFocus';
 import { NavigationManager } from './diff/navigationManager';
-import { NavBarPanel } from './views/navBarPanel';
 import { AgentChangesPanel } from './views/agentChangesPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
 import { TerminalSessionStore } from './terminal/terminalSessions';
@@ -93,11 +92,6 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   );
   debugLog('activate:custom editor provider registered');
 
-  const navBarPanel = new NavBarPanel(context.extensionUri);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(NavBarPanel.viewType, navBarPanel)
-  );
-  debugLog('activate:navigation webview provider registered');
 
   let activeRunner: IAiRunner | undefined;
   let agentModePanel: vscode.WebviewPanel | undefined;
@@ -502,29 +496,17 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     })
   );
 
-  function updateNavBarState(): void {
-    const pendingFiles = diffManager.getPendingFiles();
-    if (pendingFiles.length === 0) {
-      navBarPanel.setActiveFile(undefined);
-      navBarPanel.update(undefined);
-      void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.hasPendingDiff', false);
-      return;
-    }
-
-    const activePath = diffManager.getActiveFilePath();
-    navBarPanel.setActiveFile(activePath);
-    const navAnchor = activePath ?? pendingFiles[0];
-    navBarPanel.update(navigationManager.getNavigationInfo(navAnchor));
-    void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.hasPendingDiff', true);
+  function updatePendingContext(): void {
+    const hasPending = diffManager.getPendingFiles().length > 0;
+    void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.hasPendingDiff', hasPending);
   }
 
-  // Both events come in bursts (an agent writing many files opens many tabs):
-  // update the nav bar once per burst instead of once per event.
-  const navBarSoon = coalesce(updateNavBarState);
+  // Diff changes come in bursts (an agent writing many files):
+  // update the context key once per burst instead of once per event.
+  const pendingContextSoon = coalesce(updatePendingContext);
   context.subscriptions.push(
-    { dispose: () => navBarSoon.dispose() },
-    diffManager.onDidChangeDiffs(() => navBarSoon.schedule()),
-    vscode.window.tabGroups.onDidChangeTabs(() => navBarSoon.schedule())
+    { dispose: () => pendingContextSoon.dispose() },
+    diffManager.onDidChangeDiffs(() => pendingContextSoon.schedule())
   );
 
   // Agent mode hides the tab bar, so a file opened beside has no close button of its own.
@@ -611,7 +593,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     for (const tab of group.tabs) { autoRouteTab(tab); }
   }
 
-  updateNavBarState();
+  updatePendingContext();
   if (context.workspaceState.get<boolean>(AGENT_MODE_WAS_ACTIVE_KEY)) {
     debugLog('agent-mode:restoring previous session state');
     await enterAgentMode();

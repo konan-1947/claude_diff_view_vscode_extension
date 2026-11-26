@@ -595,6 +595,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const iconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons');
     const appIconsDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'icons');
     const introDir = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'introduce');
+    // Pending Files footer cat images; roots must be folders (VS Code only serves files strictly inside one).
+    const mediaDir = vscode.Uri.joinPath(this.context.extensionUri, 'media');
     const monacoDir = vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'monaco-editor', 'min');
     const webviewDir = vscode.Uri.joinPath(this.context.extensionUri, 'res', 'webview');
     const claudeUiDir = vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'claude-ui');
@@ -606,7 +608,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
 
     webview.options = {
       enableScripts: true,
-      localResourceRoots: [xtermDir, iconsDir, appIconsDir, introDir, monacoDir, webviewDir, claudeUiDir, ...previewLibDirs, ...workspaceDirs],
+      localResourceRoots: [xtermDir, iconsDir, appIconsDir, introDir, mediaDir, monacoDir, webviewDir, claudeUiDir, ...previewLibDirs, ...workspaceDirs],
     };
     this.attachClaudeUi(webview);
 
@@ -628,6 +630,9 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         case 'openPendingFile':
           void this.diffManager.openDiff(msg.path);
+          return;
+        case 'acceptAllChanges':
+          void vscode.commands.executeCommand('ai-cli-diff-view.acceptAllChanges');
           return;
         case 'ready':
           void this.restoreSessions();
@@ -877,7 +882,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const iconBase = this.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'media', 'file-icons'),
     ).toString() + '/';
-    this.post({ type: 'pendingFiles', html: renderPendingTree(metadata, undefined, iconBase) });
+    this.post({ type: 'pendingFiles', html: renderPendingTree(metadata, undefined, iconBase), count: metadata.length });
   }
 
   private postDiffPreviewFiles(): void {

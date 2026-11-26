@@ -141,6 +141,7 @@ export type IncomingMessage =
   | { type: 'toggleAgentMode' }
   | { type: 'pendingOverlay'; open: boolean }
   | { type: 'openPendingFile'; path: string }
+  | { type: 'acceptAllChanges' }
   | { type: 'createSession'; cols: number; rows: number; agent?: string; kind?: SessionKind }
   | { type: 'turnDone'; id: string; kind: SessionKind }
   | { type: 'requestAgents' }

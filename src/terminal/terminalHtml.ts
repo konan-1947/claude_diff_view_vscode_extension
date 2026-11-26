@@ -95,6 +95,8 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   };
 
   const introBase = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'introduce'));
+  const catDiffImg = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'meo_diff_wide.png')).toString();
+  const catIdleImg = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'meo_ngu_wide.png')).toString();
   const introSlides: IntroSlide[] = [
     { src: `${introBase}/sidebar-inline-diff.png`,   caption: 'Welcome to AI CLI Diff — every AI edit becomes a diff you accept or reject block by block.' },
     { src: `${introBase}/sidebar-pending-files.png`, caption: 'See every changed file in its real folder structure, with +/- line counts.' },
@@ -748,6 +750,42 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     opacity: 0.85;
   }
   #pending-tree { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; padding-bottom: 5px; }
+  /* Fixed-height footer: the cat and Accept All stay put whether or not files are pending. */
+  .pending-foot {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 12px 10px;
+    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+  }
+  .pending-cat {
+    height: 84px;
+    background: var(--pending-cat) center / contain no-repeat;
+    opacity: 0.65;
+    pointer-events: none;
+  }
+  .pending-cat { --pending-cat: var(--cat-diff); }
+  #pending-overlay.no-pending .pending-cat { --pending-cat: var(--cat-idle); opacity: 1; }
+  .pending-accept-all {
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    color: var(--vscode-foreground);
+    background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .pending-accept-all:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 18%, transparent);
+    border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 55%, transparent);
+  }
+  .pending-accept-all:active:not(:disabled) { opacity: 0.7; }
+  .pending-accept-all:disabled { opacity: 0.45; cursor: default; }
+  .pending-accept-all:focus-visible { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: 1px; }
   #pending-tree * { box-sizing: border-box; }
   ${PENDING_TREE_CSS}
   .settings-head {
@@ -1416,7 +1454,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
         </button>
       </div>
     </div>
-    <div id="pending-overlay" hidden>
+    <div id="pending-overlay" class="no-pending" hidden style="--cat-diff: url('${catDiffImg}'); --cat-idle: url('${catIdleImg}');">
       <div class="pending-head">
         <h2>Pending files</h2>
         <button id="btn-pending-back" class="header-btn" type="button" title="Back to terminal" aria-label="Back to terminal">
@@ -1427,6 +1465,10 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
         </button>
       </div>
       <div id="pending-tree" class="pending-tree"></div>
+      <div class="pending-foot">
+        <div class="pending-cat" aria-hidden="true"></div>
+        <button id="btn-pending-accept-all" class="pending-accept-all" type="button" disabled>Accept All Changes</button>
+      </div>
     </div>
     <div id="term-wrap">
       <div id="err"></div>
@@ -2717,7 +2759,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
             }
           }
         } else if (msg.type === 'pendingFiles') {
-          onPendingFiles(msg.html || '');
+          onPendingFiles(msg.html || '', msg.count || 0);
         } else if (msg.type === 'restoreSessions') {
           onRestoreSessions(msg.sessions || [], msg.activeId, msg.layout);
         } else if (msg.type === 'sessionClosed') {
@@ -2904,7 +2946,11 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const file = target.closest('[data-path]');
         if (file) vscode.postMessage({ type: 'openPendingFile', path: file.dataset.path });
       });
-      function onPendingFiles(html) {
+      const btnPendingAcceptAll = document.getElementById('btn-pending-accept-all');
+      btnPendingAcceptAll.addEventListener('click', () => vscode.postMessage({ type: 'acceptAllChanges' }));
+      function onPendingFiles(html, count) {
+        pendingOverlay.classList.toggle('no-pending', count === 0);
+        btnPendingAcceptAll.disabled = count === 0;
         // Keep folders the user collapsed collapsed across refreshes.
         const collapsed = new Set(Array.from(pendingTree.querySelectorAll('.folder-block.collapsed > .folder'))
           .map((el) => el.textContent));

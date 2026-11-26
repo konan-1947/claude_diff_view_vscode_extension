@@ -188,13 +188,6 @@
           "type": "webview",
           "when": "ai-cli-diff-view.agentModeActive"
         }
-      ],
-      "explorer": [
-        {
-          "id": "ai-cli-diff-view.navBar",
-          "name": "AI CLI Diff",
-          "type": "webview"
-        }
       ]
     },
     "commands": [

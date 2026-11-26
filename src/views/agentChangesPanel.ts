@@ -53,7 +53,12 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media', 'file-icons'), vscode.Uri.joinPath(this.extensionUri, 'media', 'icons')],
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.extensionUri, 'media', 'file-icons'),
+        vscode.Uri.joinPath(this.extensionUri, 'media', 'icons'),
+        // Roots must be folders: VS Code only serves files strictly inside a root.
+        vscode.Uri.joinPath(this.extensionUri, 'media'),
+      ],
     };
     this.viewMessageDisposable?.dispose();
     this.viewMessageDisposable = webviewView.webview.onDidReceiveMessage((message: unknown) => {
@@ -61,6 +66,8 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
       const msg = message as { type?: string; path?: unknown };
       if (msg.type === 'open' && typeof msg.path === 'string') {
         this.openPendingFile(msg.path);
+      } else if (msg.type === 'acceptAllChanges') {
+        void vscode.commands.executeCommand('ai-cli-diff-view.acceptAllChanges');
       } else if (msg.type === 'action') {
         const action = (message as { action?: string }).action;
         if (action === 'toggleDiff') { this.actions.toggleDiff(); }
@@ -128,6 +135,10 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     const toggleIcon = this.previewOpen
       ? ICON_TERMINAL
       : `<img class="btn-icon" src="${appIconBase}/view-diff.png" alt="" aria-hidden="true">`;
+    const hasPending = this.metadata.length > 0;
+    const catImg = this.view.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'media', hasPending ? 'meo_diff_wide.png' : 'meo_ngu_wide.png'),
+    ).toString();
     const agentIcon = `<img class="btn-icon" src="${appIconBase}/agent-mode.svg" alt="" aria-hidden="true">`;
     const header = this.showAgentActions ? `<header class="panel-header">
   <button class="view-diff" data-action="toggleDiff" title="${toggleLabel}" aria-label="${toggleLabel}">${toggleIcon}<span class="btn-label">${toggleLabel}</span></button>
@@ -144,8 +155,8 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
 
   * { box-sizing: border-box; }
   html, body { height: 100%; }
-  body { margin: 0; padding: 0 0 5px; overflow-x: hidden; overflow-y: auto; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: 12px var(--vscode-font-family); }
-  .panel-header { position: sticky; top: 0; z-index: 2; background: var(--vscode-sideBar-background); min-height: 38px; display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+  body { margin: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: 12px var(--vscode-font-family); }
+  .panel-header { flex: 0 0 auto; background: var(--vscode-sideBar-background); min-height: 38px; display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
   .panel-header button { min-width: 26px; height: 26px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-icon-foreground); background: transparent; border: 1px solid transparent; border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px; line-height: 1; opacity: .75; white-space: nowrap; transition: background .12s, border-color .12s, opacity .12s; }
   .panel-header button:hover { background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
   .panel-header button:active { transform: translateY(1px); }
@@ -161,17 +172,31 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     .panel-header .agent-mode { width: 26px; min-width: 26px; padding: 0; }
     .panel-header .btn-label { display: none; }
   }
+  body > .pending-tree { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; padding-bottom: 5px; }
+  /* Fixed-height footer: the cat and Accept All stay put whether or not files are pending. */
+  .pending-foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25)); }
+  .pending-cat { height: 84px; background: url('${catImg}') center / contain no-repeat; opacity: ${hasPending ? '0.65' : '1'}; pointer-events: none; }
+  .pending-accept-all { height: 30px; padding: 0 12px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px; color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 8%, transparent); border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent); transition: background .12s, border-color .12s; }
+  .pending-accept-all:hover:not(:disabled) { background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 18%, transparent); border-color: color-mix(in srgb, var(--vscode-button-background, #0e639c) 55%, transparent); }
+  .pending-accept-all:active:not(:disabled) { opacity: .7; }
+  .pending-accept-all:disabled { opacity: .45; cursor: default; }
+  .pending-accept-all:focus-visible { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: 1px; }
 ${PENDING_TREE_CSS}
 </style>
 </head>
 <body>
 ${header}
 <div class="pending-tree">${rows}</div>
+<div class="pending-foot">
+  <div class="pending-cat" aria-hidden="true"></div>
+  <button id="accept-all" class="pending-accept-all" type="button"${hasPending ? '' : ' disabled'}>Accept All Changes</button>
+</div>
 <script>
   const vscode = acquireVsCodeApi();
   document.querySelectorAll('[data-action]').forEach((el) => {
     el.addEventListener('click', () => vscode.postMessage({ type: 'action', action: el.dataset.action }));
   });
+  document.getElementById('accept-all').addEventListener('click', () => vscode.postMessage({ type: 'acceptAllChanges' }));
   document.querySelectorAll('[data-folder-toggle]').forEach((el) => {
     el.addEventListener('click', () => el.parentElement.classList.toggle('collapsed'));
   });
