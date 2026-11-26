@@ -750,6 +750,14 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     opacity: 0.85;
   }
   #pending-tree { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; padding-bottom: 5px; }
+  /* Thin rounded scrollbar instead of VS Code's 10px square default; the thumb brightens while the list is hovered. */
+  #pending-tree::-webkit-scrollbar { width: 6px; height: 6px; }
+  #pending-tree::-webkit-scrollbar-track { background: transparent; }
+  #pending-tree::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+  #pending-tree:hover::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(121,121,121,0.4)); }
+  #pending-tree::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100,100,100,0.7)); }
+  #pending-tree::-webkit-scrollbar-thumb:active { background: var(--vscode-scrollbarSlider-activeBackground, rgba(191,191,191,0.4)); }
+  #pending-tree::-webkit-scrollbar-corner { background: transparent; }
   /* Fixed-height footer: the cat and Accept All stay put whether or not files are pending. */
   .pending-foot {
     flex: 0 0 auto;
@@ -1072,6 +1080,9 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   }
   .diff-preview-head-actions { display: flex; align-items: center; gap: 6px; }
   .diff-preview-head-actions .btn { margin: 0; padding: 4px 9px; font-size: 11px; }
+  #btn-diff-back { display: inline-flex; align-items: center; gap: 5px; }
+  /* Outside Agent mode the header's View diff button already reads "Back to terminal". */
+  body:not(.agent-mode-active) #btn-diff-back { display: none; }
   .diff-preview-scroll {
     flex: 1 1 auto;
     min-height: 0;
@@ -1627,6 +1638,11 @@ ${CLAUDE_FONT_OPTIONS.map((f) => `            <option value="${escapeAttr(f.valu
           <input id="f-prevent-alt-menu-focus" type="checkbox">
         </div>
         <div class="setting-help">Stops Alt (e.g. Alt+Tab back to VS Code) from moving focus to the menu bar. Sets VS Code's <code>window.customMenuBarAltFocus</code> to off.</div>
+        <div class="field">
+          <label for="f-reveal-in-explorer">Reveal file in Explorer</label>
+          <input id="f-reveal-in-explorer" type="checkbox">
+        </div>
+        <div class="setting-help">Agent mode: clicking a pending file also selects it in Explorer. If this panel shares a side bar with Explorer, the side bar switches to Explorer.</div>
         </section>
 
         <section class="settings-card">
@@ -1803,6 +1819,13 @@ ${CLAUDE_FONT_OPTIONS.map((f) => `            <option value="${escapeAttr(f.valu
         </div>
         <div class="diff-preview-head-actions">
           <button id="btn-diff-toggle-all" class="btn btn-secondary" type="button">Collapse all</button>
+          <button id="btn-diff-back" class="btn btn-secondary" type="button" title="Back to terminal (Esc)" aria-label="Back to terminal">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="19" y1="12" x2="5" y2="12"/>
+              <polyline points="12 19 5 12 12 5"/>
+            </svg>
+            Back to terminal
+          </button>
         </div>
       </div>
       <div class="diff-preview-scroll">
@@ -2201,8 +2224,9 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       let focusOnSessionCreated = false;
 
-      function onSessionCreated(id, title, restoring, kind, resume) {
+      function onSessionCreated(id, title, restoring, kind, resume, backend) {
         if (kind === 'claude') {
+          const isOmp = backend === 'omp';
           const host = document.createElement('div');
           host.className = 'term-pane claude';
           host.dataset.id = id;
@@ -2212,13 +2236,14 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           const claude = window.ClaudeFrame.create({
             id,
             resume,
+            backend: isOmp ? 'omp' : 'claude',
             onMessage: (message) => vscode.postMessage({ type: 'claudeUi', id, message }),
           });
           host.appendChild(claude.el);
-          const label = title || 'Claude Code';
+          const label = title || (isOmp ? 'OMP' : 'Claude Code');
           const tab = buildTabDom(id, label);
           sessions.set(id, {
-            id, kind: 'claude', claude, host, tab, exited: false,
+            id, kind: 'claude', backend: isOmp ? 'omp' : 'claude', claude, host, tab, exited: false,
             defaultTitle: label, shownTitle: label, rawTitle: '',
           });
           // A restored tab is placed by onRestoreSessions with the rest.
@@ -2353,7 +2378,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const written = [];
         for (const snap of list) {
           if (sessions.has(snap.id)) continue;
-          onSessionCreated(snap.id, snap.title, true, snap.kind, snap.resume);
+          onSessionCreated(snap.id, snap.title, true, snap.kind, snap.resume, snap.backend);
           const s = sessions.get(snap.id);
           if (s.claude) {
             // The rebuilt iframe reopens the conversation from ~/.claude (snap.resume).
@@ -2412,6 +2437,14 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         vscode.postMessage({ type: 'createSession', kind: 'terminal', cols, rows, agent });
       }
 
+      function startOmpUI() {
+        const sess = sessions.get(activeId);
+        const cols = sess && sess.term ? sess.term.cols : 80;
+        const rows = sess && sess.term ? sess.term.rows : 24;
+        focusOnSessionCreated = true;
+        vscode.postMessage({ type: 'createSession', kind: 'claude', backend: 'omp', cols, rows });
+      }
+
       function startClaudeUI() {
         const sess = sessions.get(activeId);
         const cols = sess && sess.term ? sess.term.cols : 80;
@@ -2458,6 +2491,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         agentMenu.textContent = '';
         addMenuItem(agentMenu, ICON_TERMINAL, 'Terminal', '', false, () => startSession());
         addMenuItem(agentMenu, ICON_CLAUDE, 'Claude UI', '', false, () => startClaudeUI());
+        addMenuItem(agentMenu, ICON_CLAUDE, 'OMP UI', '', false, () => startOmpUI());
         if (agentList.length === 0) return;
         const sep = document.createElement('div');
         sep.className = 'agent-menu-sep';
@@ -2745,7 +2779,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const msg = e.data;
         if (!msg) return;
         if (msg.type === 'sessionCreated') {
-          onSessionCreated(msg.id, msg.title, false, msg.kind);
+          onSessionCreated(msg.id, msg.title, false, msg.kind, undefined, msg.backend);
         } else if (msg.type === 'agentAvailability') {
           agentList = msg.agents || [];
           // The menu may already be open (it opens first, availability arrives async).
@@ -2891,6 +2925,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         if (!filePreviewOverlay.hidden) closeFilePreview();
       }
 
+      document.getElementById('btn-diff-back').addEventListener('click', () => closeDiffPreview());
       btnViewDiff.addEventListener('click', () => {
         if (diffPreviewOverlay.hidden && filePreviewOverlay.hidden) openDiffPreview();
         else closeActivePreview();
@@ -2981,6 +3016,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const fCursorBlink = document.getElementById('f-cursor-blink');
       const fSoundNotifications = document.getElementById('f-sound-notifications');
       const fPreventAltMenuFocus = document.getElementById('f-prevent-alt-menu-focus');
+      const fRevealInExplorer = document.getElementById('f-reveal-in-explorer');
       const fRespectGitignore = document.getElementById('f-respect-gitignore');
       const fBurstEnabled = document.getElementById('f-burst-enabled');
       const fBurstWindow = document.getElementById('f-burst-window');
@@ -3226,6 +3262,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fCursorBlink.checked = s.cursorBlink;
         fSoundNotifications.checked = s.soundNotificationsEnabled;
         fPreventAltMenuFocus.checked = s.preventAltMenuFocus;
+        fRevealInExplorer.checked = s.revealInExplorer;
         listEditors.includedPaths.set(s.includedPaths);
         listEditors.excludedPaths.set(s.excludedPaths);
         fRespectGitignore.checked = s.respectGitignore;
@@ -3310,6 +3347,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           cursorBlink: !!fCursorBlink.checked,
           soundNotificationsEnabled: !!fSoundNotifications.checked,
           preventAltMenuFocus: !!fPreventAltMenuFocus.checked,
+          revealInExplorer: !!fRevealInExplorer.checked,
           includedPaths: listEditors.includedPaths.get(),
           burstDetectionEnabled: !!fBurstEnabled.checked,
           burstDetectionWindowMs: isFinite(burstWindow) ? Math.min(5000, Math.max(50, burstWindow)) : DEFAULTS.burstDetectionWindowMs,

@@ -30,7 +30,7 @@
         v-for="message in sentMessages"
         :key="message.id"
         class="queue-item sent"
-        title="Sent: Claude reads it after the current step"
+        :title="`Sent: ${agentName} reads it after the current step`"
       >
         <div class="queue-item-indicator sent-indicator"></div>
         <div style="display: flex; flex-direction: column;">
@@ -95,6 +95,7 @@
 import { computed, ref } from 'vue'
 import Tooltip from './Common/Tooltip.vue'
 import type { QueuedMessage } from '../types/queue'
+import { agentName } from '../utils/backend'
 
 interface Props {
   queuedMessages?: QueuedMessage[]

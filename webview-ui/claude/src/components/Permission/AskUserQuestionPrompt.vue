@@ -91,6 +91,8 @@ interface Question {
   header?: string
   options: QuestionOption[]
   multiSelect?: boolean
+  /** false: only the listed options (OMP UI `select`), no "Other" row */
+  allowOther?: boolean
 }
 
 const props = defineProps<{ request: PermissionRequest }>()
@@ -124,7 +126,7 @@ const questionOptions = computed<PromptOption[]>(() => {
     checked: q.multiSelect && chosen.includes(o.label),
   }))
   const other = custom.value[step.value]
-  list.push({
+  if (q.allowOther !== false) list.push({
     label: other ? `Other: ${other}` : q.multiSelect ? 'Other (type, Enter to add)' : 'Type something else',
     input: true,
     // Multi-select: ticked once Enter added the typed text to the answers

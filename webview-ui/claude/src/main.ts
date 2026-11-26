@@ -18,6 +18,8 @@ declare global {
       id?: string;
       /** Claude session id to reopen when the tab is rebuilt (webview reload, Agent mode toggle). */
       resume?: string;
+      /** Agent behind this tab: 'claude' (Agent SDK) or 'omp' (omp --mode rpc). Default 'claude'. */
+      backend?: 'claude' | 'omp';
     };
   }
 }

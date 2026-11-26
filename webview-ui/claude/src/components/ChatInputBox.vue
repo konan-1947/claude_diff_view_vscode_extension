@@ -334,6 +334,7 @@ import { transcriptToMarkdown, exportFileName } from '../utils/exportTranscript'
 import { IMAGE_MEDIA_TYPES, type AttachmentItem } from '../types/attachment'
 import ImageLightbox from './Common/ImageLightbox.vue'
 import type { ModeOption } from '../utils/permissionModes'
+import { isOmp } from '../utils/backend'
 import { Dropdown, DropdownItem } from './Dropdown'
 import { RuntimeKey } from '../composables/runtimeContext'
 import { useCompletionDropdown } from '../composables/useCompletionDropdown'
@@ -393,7 +394,7 @@ const props = withDefaults(defineProps<Props>(), {
   showProgress: true,
   progressPercentage: 48.7,
   contextTooltip: '',
-  placeholder: 'Plan, @ for context, / for commands, ! for bash',
+  placeholder: isOmp ? 'Plan, @ for context, / for commands' : 'Plan, @ for context, / for commands, ! for bash',
   readonly: false,
   showSearch: false,
   selectedModel: 'default',
@@ -490,20 +491,30 @@ const UI_ACTION_COMMANDS: Record<string, () => void> = {
   '/checkpoint': () => openRewind(),
 }
 
+// OMP tabs keep only the UI commands that need nothing from the Claude CLI
+const OMP_UI_PANELS = new Set<PanelName>(['resume', 'export', 'help'])
+
+// ... of the action commands, rewind needs only the conversation (no file restore)
+const OMP_UI_ACTION_COMMANDS: Record<string, () => void> = {
+  '/rewind': () => openRewind(),
+  '/undo': () => openRewind(),
+  '/checkpoint': () => openRewind(),
+}
+
 /** Argument typed after a UI command (`/resume <name>`, `/export <file>`) */
 const panelArg = ref('')
 
 function openUiPanel(command: string): boolean {
   const match = /^(\/\S+)(?:\s+([\s\S]*))?$/.exec(command.trim())
   const name = match?.[1].toLowerCase() ?? ''
-  const action = UI_ACTION_COMMANDS[name]
+  const action = isOmp ? OMP_UI_ACTION_COMMANDS[name] : UI_ACTION_COMMANDS[name]
   if (action) {
     clearInput()
     action()
     return true
   }
   const panel = UI_PANEL_COMMANDS[name]
-  if (!panel) return false
+  if (!panel || (isOmp && !OMP_UI_PANELS.has(panel))) return false
   const arg = (match?.[2] ?? '').trim()
   clearInput()
   panelArg.value = arg
@@ -537,7 +548,7 @@ function openPickerFor(command: string): boolean {
     emit('commandPanelOpen', 'effort')
     return true
   }
-  const panel = PANEL_COMMANDS[name]
+  const panel = isOmp ? undefined : PANEL_COMMANDS[name]
   if (panel) {
     clearInput()
     activePanel.value = panel
@@ -1068,7 +1079,7 @@ function clearInput() {
 }
 
 /** `!command`: the input runs a shell command (the CLI's bash mode) */
-const bashMode = computed(() => content.value.trimStart().startsWith('!'))
+const bashMode = computed(() => !isOmp && content.value.trimStart().startsWith('!'))
 
 const isSubmitDisabled = computed(() => {
   return !content.value.trim() || isLoading.value
@@ -1078,6 +1089,16 @@ const isSubmitDisabled = computed(() => {
 
 /** The slash command being picked was chosen with Tab (complete only, never run) */
 let slashPickedWithTab = false
+
+/**
+ * The command can run with nothing after it: no argument hint, or one made
+ * only of optional `[...]` parts (`/clear [name]`), as the CLI runs it on pick.
+ */
+function runsWithoutArguments(argumentHint: string | undefined): boolean {
+  const hint = argumentHint?.trim()
+  if (!hint) return true
+  return hint.replace(/\[[^\]]*\]/g, '').trim() === ''
+}
 
 // Slash command completion
 const slashCompletion = useCompletionDropdown({
@@ -1093,10 +1114,11 @@ const slashCompletion = useCompletionDropdown({
       // Replace the text
       const updated = slashCompletion.replaceText(content.value, `${command.label} `)
 
-      // Picked with Enter or a click, alone in the input and taking no
-      // arguments (no argument hint): run it, like the CLI. Tab only
-      // completes; a command with arguments goes into the input to finish.
-      if (!slashPickedWithTab && !command.argumentHint && updated.trim() === command.label) {
+      // Picked with Enter or a click, alone in the input and needing no
+      // arguments (none, or only optional `[...]` ones): run it, like the
+      // CLI. Tab only completes; a command with required arguments goes into
+      // the input to finish.
+      if (!slashPickedWithTab && runsWithoutArguments(command.argumentHint) && updated.trim() === command.label) {
         content.value = command.label
         if (textareaRef.value) textareaRef.value.textContent = command.label
         // After the dropdown has closed (it closes right after onSelect)

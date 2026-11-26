@@ -141,10 +141,20 @@
           "default": true,
           "description": "Keep focus in the terminal after Alt+Tab: sets VS Code's window.customMenuBarAltFocus to false, so releasing Alt no longer moves focus to the menu bar. Turning this off restores that setting if this extension changed it."
         },
+        "ai-cli-diff-view.revealInExplorer": {
+          "type": "boolean",
+          "default": false,
+          "description": "Agent mode: clicking a pending file also selects it in Explorer. When the AI CLI view shares a side bar with Explorer, this switches the side bar to Explorer."
+        },
         "ai-cli-diff-view.claudeCliPath": {
           "type": "string",
           "default": "",
           "description": "Full path to the `claude` executable used by the Claude UI tabs. Leave empty to use the `claude` found on PATH, a well-known install location, or the SDK's bundled binary."
+        },
+        "ai-cli-diff-view.ompCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Full path to the `omp` (oh-my-pi) executable used by the OMP UI tabs. Leave empty to use the `omp` found on PATH or in ~/.local/bin, ~/.bun/bin."
         },
         "ai-cli-diff-view.claudeAllowBypassPermissions": {
           "type": "boolean",

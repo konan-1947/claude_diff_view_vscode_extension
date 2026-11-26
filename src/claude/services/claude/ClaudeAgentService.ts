@@ -1175,13 +1175,15 @@ export class ClaudeAgentService implements IClaudeAgentService {
     }
 
     /**
-     * Thinking config for a level. "On" leaves the choice to the CLI (adaptive
-     * thinking on models that support it, otherwise the user's settings) rather
-     * than forcing a fixed budget; models that cannot turn thinking off
+     * Thinking config for a level. "On" asks for adaptive thinking rather than
+     * forcing a fixed budget; models that cannot turn thinking off
      * (ModelInfo.supportsThinkingOff === false) ignore "off" and the UI hides the toggle.
+     * display must be explicit: SDK (non-interactive) sessions otherwise get
+     * display "omitted", so every thinking block arrives with empty text and the
+     * chat's "Thought" row has nothing to show.
      */
     private getThinkingConfig(level: string): ThinkingConfig | undefined {
-        return level === 'off' ? { type: 'disabled' } : undefined;
+        return level === 'off' ? { type: 'disabled' } : { type: 'adaptive', display: 'summarized' };
     }
 
     /**
@@ -1194,8 +1196,13 @@ export class ClaudeAgentService implements IClaudeAgentService {
         // 0 disables thinking, null clears the limit (back to the CLI default).
         const channel = this.channels.get(channelId);
         if (channel?.query) {
-            const maxTokens = level === 'off' ? 0 : null;
-            await channel.query.setMaxThinkingTokens(maxTokens);
+            // A session started with thinking off has no display mode yet, so turning
+            // it on also asks for summaries (see getThinkingConfig)
+            if (level === 'off') {
+                await channel.query.setMaxThinkingTokens(0);
+            } else {
+                await channel.query.setMaxThinkingTokens(null, 'summarized');
+            }
             this.logService.info(`[setThinkingLevel] Updated channel ${channelId} to ${level}`);
         }
     }

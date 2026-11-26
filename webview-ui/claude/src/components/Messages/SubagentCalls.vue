@@ -1,7 +1,8 @@
 <template>
   <div v-if="calls.length > 0" class="child-calls">
     <div v-for="call in calls" :key="call.id" class="child-call" :title="call.detail">
-      <span class="codicon child-state" :class="call.icon"></span>
+      <OmpSpinner v-if="isOmp && call.icon.includes('codicon-loading')" class="child-state" />
+      <span v-else class="codicon child-state" :class="call.icon"></span>
       <span class="child-name">{{ call.name }}</span>
       <span v-if="call.detail" class="child-detail" :class="{ code: call.isCode }">{{ call.detail }}</span>
     </div>
@@ -12,6 +13,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { subagentCalls } from '../../utils/subagentCalls';
+import OmpSpinner from '../OmpSpinner.vue';
+import { isOmp } from '../../utils/backend';
 
 /** A subagent's own tool calls, one row each (Agent card, background task list) */
 const props = defineProps<{ messages: any[]; emptyText?: string }>();

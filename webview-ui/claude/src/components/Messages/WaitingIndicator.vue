@@ -1,7 +1,8 @@
 <template>
   <div class="spinner" :data-permission-mode="permissionMode">
     <span class="icon" :style="{ fontSize: size + 'px' }">
-      {{ currentIcon }}
+      <OmpSpinner v-if="isOmp" />
+      <template v-else>{{ currentIcon }}</template>
     </span>
     <span class="text">{{ animatedText }}</span>
     <!-- Like the CLI's status line: time spent and tokens of this turn, or the API retry -->
@@ -15,6 +16,8 @@
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
   import type { ApiRetryInfo } from '../../core/LiveActivity';
   import { formatDuration, formatTokenCount } from '../../core/LiveActivity';
+  import OmpSpinner from '../OmpSpinner.vue';
+  import { isOmp } from '../../utils/backend';
 
   interface Props {
     size?: number;
@@ -99,6 +102,11 @@
   const stepMs = 40;
 
   onMounted(() => {
+    // OMP tabs: omp's own line, a fixed "Working…" (no verbs, no text animation)
+    if (isOmp) {
+      animatedText.value = 'Working…';
+      return;
+    }
     iconTimer = setInterval(() => {
       iconIndex.value = (iconIndex.value + 1) % ANIMATION_ICONS.length;
     }, 120);

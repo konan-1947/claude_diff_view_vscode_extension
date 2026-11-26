@@ -1,5 +1,6 @@
 import type { Message } from '../models/Message'
 import type { ContentBlockWrapper } from '../models/ContentBlockWrapper'
+import { agentName } from './backend'
 
 /**
  * `/export`: the conversation as markdown. Text and thinking verbatim; a tool
@@ -98,7 +99,7 @@ function messageBody(message: Message): string {
 }
 
 export function transcriptToMarkdown(messages: Message[], title?: string): string {
-  const parts: string[] = [`# ${title?.trim() || 'Claude conversation'}`]
+  const parts: string[] = [`# ${title?.trim() || `${agentName} conversation`}`]
   let lastRole: string | undefined
   for (const message of messages) {
     if (!['user', 'assistant', 'slash_command_result', 'bash'].includes(message.type)) continue
@@ -106,7 +107,7 @@ export function transcriptToMarkdown(messages: Message[], title?: string): strin
     if (!body) continue
     // A slash command's output comes from the CLI, so it reads as the reply
     // Bash mode is typed by the user, output included (the CLI ran it, not Claude)
-    const role = message.type === 'user' || message.type === 'bash' ? 'User' : 'Claude'
+    const role = message.type === 'user' || message.type === 'bash' ? 'User' : agentName
     // Consecutive assistant messages are one reply
     if (role !== lastRole) parts.push(`## ${role}`)
     parts.push(body)

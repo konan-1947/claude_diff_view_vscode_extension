@@ -39,6 +39,7 @@ import { computed } from 'vue'
 import type { PermissionRequest } from '../../core/PermissionRequest'
 import type { ToolContext } from '../../types/tool'
 import { alwaysAllowLabel } from '../../utils/permissionSuggestions'
+import { agentName } from '../../utils/backend'
 import PromptFrame from './PromptFrame.vue'
 import PromptOptions, { type PromptOption } from './PromptOptions.vue'
 
@@ -112,7 +113,7 @@ const alwaysLabel = computed(() =>
 const options = computed<PromptOption[]>(() => {
   const list: PromptOption[] = [{ label: 'Yes' }]
   if (alwaysLabel.value) list.push({ label: alwaysLabel.value })
-  list.push({ label: 'No, and tell Claude what to do differently', input: true, hint: 'esc' })
+  list.push({ label: `No, and tell ${agentName} what to do differently`, input: true, hint: 'esc' })
   return list
 })
 

@@ -9,7 +9,8 @@
       <span class="tool-label">BashOutput</span>
       <span v-if="bashId" class="bash-id">Shell {{ bashId }}</span>
       <span v-if="status === 'running'" class="status-badge running">
-        <span class="codicon codicon-loading codicon-modifier-spin"></span>
+        <OmpSpinner v-if="isOmp" />
+        <span v-else class="codicon codicon-loading codicon-modifier-spin"></span>
         running
       </span>
       <span v-else-if="exitCode !== null && exitCode !== undefined" class="status-badge" :class="exitCode === 0 ? 'success' : 'error'">
@@ -41,6 +42,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import OmpSpinner from '../../../OmpSpinner.vue';
+import { isOmp } from '../../../../utils/backend';
 import ToolMessageWrapper from './common/ToolMessageWrapper.vue';
 import ToolError from './common/ToolError.vue';
 

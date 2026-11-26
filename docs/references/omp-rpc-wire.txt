@@ -1,0 +1,1257 @@
+// Extracted from the omp v18.16.0 binary (strings, packages/coding-agent/src/modes/rpc/wire/*).
+// Reference for the OMP UI backend (src/omp). Regenerate when omp's RPC protocol changes.
+
+// packages/coding-agent/src/modes/rpc/wire/dsl.ts
+function se(o, n) {
+  return [o, "@", n];
+function jo(o, n) {
+  const t = typeof n === "object" && n !== null ? () => structuredClone(n) : n;
+  return [o, "=", t];
+export { se, jo };
+// @bun @bytecode
+import {
+} from "/$bunfs/root/chunks/cli-wsz3bcez.js";
+// packages/coding-agent/src/modes/rpc/wire/frames.ts
+var t = "Record<string, unknown>";
+var e = "'extension_ui_request'";
+var K7e = {
+  ReadyEvent: se({
+    type: "'ready'",
+    "protocolVersion?": "number.integer",
+    "supportedProtocolVersions?": "number.integer[]",
+    "maxFrameBytes?": "number.integer",
+    "maxReassembledFrameBytes?": "number.integer"
+  }, "First frame after startup; transport fields are absent on servers without protocol v2."),
+  PromptStatus: "'completed' | 'aborted' | 'error'",
+  PromptError: se({
+    message: "string",
+    "provider?": "string",
+    "model?": "string",
+    "httpStatus?": "number.integer",
+    retryable: se("boolean", "Transient: resubmitting later may succeed (omp's own retries are exhausted)."),
+    "code?": se("'cost_cap'", "`cost_cap`: the session reached `session.maxCost` (`--max-cost`) and omp did not send the next request.")
+  }, 'Failure detail of a `prompt_result` with `status: "error"`.'),
+  PromptResultEvent: se({
+    type: "'prompt_result'",
+    "id?": "string",
+    agentInvoked: "boolean",
+    status: "PromptStatus",
+    "error?": "PromptError",
+    sessionSettled: se("boolean", "Nothing will wake the session again; when false a `session_settled` follows once background work drains.")
+  }, "Terminal outcome of one accepted `prompt` / `abort_and_prompt`, keyed by request `id`."),
+  SessionSettledEvent: se({ type: "'session_settled'" }, "The session went quiet: the last run yielded and no background work can wake it."),
+  ExtensionError: { type: "'extension_error'", extensionPath: "string", event: "string", error: "string" },
+  AvailableCommandsUpdateEvent: se({ type: "'available_commands_update'", commands: "AvailableSlashCommand[]" }, "Slash-command catalog, pushed at startup and whenever command metadata changes."),
+  SubagentLifecycleStatus: "'started' | 'completed' | 'failed' | 'aborted'",
+  SubagentLifecyclePayload: {
+    id: "string",
+    agent: "string",
+    agentSource: "AgentSource",
+    "description?": "string",
+    status: "SubagentLifecycleStatus",
+    "sessionFile?": "string",
+    "parentToolCallId?": "string",
+    index: "number.integer",
+    "detached?": se("boolean", "The subagent runs as a detached background job.")
+  SubagentProgressPayload: {
+    index: "number.integer",
+    agent: "string",
+    agentSource: "AgentSource",
+    task: "string",
+    "parentToolCallId?": "string",
+    "assignment?": "string",
+    progress: se(t, "Raw `AgentProgress` record."),
+    "sessionFile?": "string",
+    "detached?": "boolean"
+  SubagentEventPayload: { id: "string", event: "RpcAgentEvent" },
+  SubagentLifecycleEvent: se({ type: "'subagent_lifecycle'", payload: "SubagentLifecyclePayload" }, 'A subagent started or ended; sent at subscription level "progress" or "events".'),
+  SubagentProgressEvent: se({ type: "'subagent_progress'", payload: "SubagentProgressPayload" }, 'Aggregated subagent progress; sent at subscription level "progress" or "events".'),
+  SubagentEvent: se({ type: "'subagent_event'", payload: "SubagentEventPayload" }, `A subagent's own session event; sent only at subscription level "events".`),
+  LivePhase: "'connecting' | 'listening' | 'working' | 'speaking' | 'muted' | 'error'",
+  LiveRole: "'user' | 'assistant'",
+  LivePhaseEvent: { type: "'live_phase'", phase: "LivePhase" },
+  LiveLevelsEvent: se({ type: "'live_levels'", input: "number", output: "number" }, "Microphone (`input`) and speaker (`output`) RMS in [0, 1], at most every 100 ms."),
+  LiveTranscriptEvent: se({ type: "'live_transcript'", role: "LiveRole", turn: "number.integer", text: "string", final: "boolean" }, "Accumulated text of one realtime turn; replaces earlier frames with the same `role` and `turn`."),
+  LiveEndEvent: se({ type: "'live_end'", "error?": "string" }, "Sent exactly once when a live session ends; `error` carries the failure cause."),
+  DictationStateEvent: se({ type: "'dictation_state'", captureId: "string", state: "'starting' | 'recording' | 'transcribing'" }, "State of one draft-only microphone capture."),
+  DictationTranscriptEvent: se({ type: "'dictation_transcript'", captureId: "string", text: "string" }, "Full accumulated draft preview; replaces the previous preview for this capture."),
+  DictationEndEvent: se({ type: "'dictation_end'", captureId: "string", text: "string", "error?": "string" }, "Exactly one terminal frame per capture; text is the accumulated result."),
+  BtwDeltaEvent: se({ type: "'btw_delta'", recordId: "string", delta: "string" }, "Text appended to the running side question's latest answer."),
+  BtwRecordEvent: se({ type: "'btw_record'", record: "BtwHistoryRecord" }, "Full side-question record on every lifecycle change (started, complete, cancelled, error); the last one per id wins."),
+  CommandOutputEvent: se({ type: "'command_output'", text: "string" }, "Output of a builtin slash command."),
+  SessionInfoUpdateEvent: se({ type: "'session_info_update'", "title?": "string", sessionId: "string" }, "A builtin slash command changed the session title."),
+  ConfigUpdateEvent: se({ type: "'config_update'", "model?": "ModelInfo", "thinkingLevel?": "ThinkingLevel" }, "A builtin slash command changed the model configuration."),
+  RpcFrameErrorEvent: se({ type: "'rpc_frame_error'", "originalType?": "string", error: "string" }, "An event could not fit within the transport limits and was dropped."),
+  WidgetPlacement: "'aboveEditor' | 'belowEditor'",
+  SelectOptionDetail: se({ "description?": "string" }, "Presentation metadata aligned positionally with `options`."),
+  AskOption: { label: "string", "description?": "string", "preview?": "string" },
+  AskQuestion: se({
+    id: "string",
+    question: "string",
+    "header?": "string",
+    options: "AskOption[]",
+    multi: jo("boolean", false),
+    "recommended?": se("number.integer", "Index into `options` of the recommended choice.")
+  }, "One question of an `ask` request; hosts always offer free text besides `options`."),
+  SelectUiRequest: {
+    type: e,
+    id: "string",
+    method: "'select'",
+    title: "string",
+    options: "string[]",
+    "optionDetails?": "SelectOptionDetail[]",
+    "timeout?": "number.integer"
+  ConfirmUiRequest: {
+    type: e,
+    id: "string",
+    method: "'confirm'",
+    title: "string",
+    message: "string",
+    "timeout?": "number.integer"
+  InputUiRequest: {
+    type: e,
+    id: "string",
+    method: "'input'",
+    title: "string",
+    "placeholder?": "string",
+    "timeout?": "number.integer",
+    "secret?": "boolean"
+  EditorUiRequest: {
+    type: e,
+    id: "string",
+    method: "'editor'",
+    title: "string",
+    "prefill?": "string",
+    "promptStyle?": "boolean"
+  AskUiRequest: se({ type: e, id: "string", method: "'ask'", questions: "AskQuestion[]", "timeout?": "number.integer" }, "Every question of one `ask` tool call; sent only after `set_ask_dialog` enables it."),
+  CancelUiRequest: se({ type: e, id: "string", method: "'cancel'", targetId: "string" }, "Close the dialog opened by request `targetId`; a later answer to it is ignored."),
+  NotifyUiRequest: {
+    type: e,
+    id: "string",
+    method: "'notify'",
+    message: "string",
+    "notifyType?": "NotifyType"
+  SetStatusUiRequest: {
+    type: e,
+    id: "string",
+    method: "'setStatus'",
+    statusKey: "string",
+    "statusText?": "string"
+  SetWidgetUiRequest: {
+    type: e,
+    id: "string",
+    method: "'setWidget'",
+    widgetKey: "string",
+    "widgetLines?": "string[]",
+    "widgetPlacement?": "WidgetPlacement"
+  SetTitleUiRequest: { type: e, id: "string", method: "'setTitle'", title: "string" },
+  SetEditorTextUiRequest: { type: e, id: "string", method: "'set_editor_text'", text: "string" },
+  OpenUrlUiRequest: {
+    type: e,
+    id: "string",
+    method: "'open_url'",
+    url: "string",
+    "launchUrl?": se("string", "Short loopback redirect to `url`; the truncation-safe copy target."),
+    "instructions?": "string"
+  ExtensionUiRequest: se("SelectUiRequest | ConfirmUiRequest | InputUiRequest | EditorUiRequest | AskUiRequest | CancelUiRequest | NotifyUiRequest | SetStatusUiRequest | SetWidgetUiRequest | SetTitleUiRequest | SetEditorTextUiRequest | OpenUrlUiRequest", "Extension UI request, discriminated by `method`."),
+  AskAnswer: se({ id: "string", selectedOptions: "string[]", "customInput?": "string" }, "Answer to one `ask` question: exact option labels, plus optional free text."),
+  ValueUiResponse: se({ type: "'extension_ui_response'", id: "string", value: "string" }, "Answers a `select`, `input`, or `editor` request."),
+  ConfirmUiResponse: se({ type: "'extension_ui_response'", id: "string", confirmed: "boolean" }, "Answers a `confirm` request."),
+  CancelUiResponse: se({ type: "'extension_ui_response'", id: "string", cancelled: "true", "timedOut?": "boolean" }, "Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` then takes its recommended answers)."),
+  AnswersUiResponse: se({ type: "'extension_ui_response'", id: "string", answers: "AskAnswer[]" }, "Answers an `ask` request: one `AskAnswer` per question, in question order."),
+  ExtensionUiResponse: se("ValueUiResponse | ConfirmUiResponse | CancelUiResponse | AnswersUiResponse", "Host reply to an extension UI request; variants share `type` and differ by their payload key."),
+  HostToolCallRequest: {
+    type: "'host_tool_call'",
+    id: "string",
+    toolCallId: "string",
+    toolName: "string",
+    arguments: t
+  HostToolCancelRequest: { type: "'host_tool_cancel'", id: "string", targetId: "string" },
+  HostToolResultPayload: se({
+    content: "UserContent[]",
+    "details?": "unknown",
+    "isError?": "boolean",
+    "useless?": "boolean",
+    "providerMetadata?": t
+  }, "Tool output: content blocks plus optional details."),
+  HostToolUpdate: se({ type: "'host_tool_update'", id: "string", partialResult: "HostToolResultPayload" }, "Streams partial output of a pending host tool call."),
+  HostToolResult: se({ type: "'host_tool_result'", id: "string", result: "HostToolResultPayload", "isError?": "boolean" }, "Completes a pending host tool call; `isError` surfaces the content as a tool error."),
+  HostUriOperation: "'read' | 'write'",
+  HostUriRequest: {
+    type: "'host_uri_request'",
+    id: "string",
+    operation: "HostUriOperation",
+    url: "string",
+    "content?": se("string", "Present for write operations.")
+  HostUriCancelRequest: { type: "'host_uri_cancel'", id: "string", targetId: "string" },
+  HostUriResult: se({
+    type: "'host_uri_result'",
+    id: "string",
+    "content?": se("string", "Required for a successful read."),
+    "contentType?": "'text/markdown' | 'application/json' | 'text/plain'",
+    "notes?": "string[]",
+    "immutable?": "boolean",
+    "isError?": "boolean",
+    "error?": "string"
+  }, "Completes a pending host URI request."),
+  RpcHostRequest: se("HostToolCallRequest | HostToolCancelRequest | HostUriRequest | HostUriCancelRequest", "Server request for host-owned tools and URI schemes, discriminated by `type`."),
+  RpcInbound: se("ExtensionUiResponse | HostToolUpdate | HostToolResult | HostUriResult", "Non-command frame the host sends, discriminated by `type`."),
+  RpcResponse: se({
+    type: "'response'",
+    "id?": se("string", "The command's `id`; absent for failures the server could not correlate."),
+    command: "string",
+    success: "boolean",
+    "data?": se("unknown", "Command result on success; its shape is the command's `result`."),
+    "error?": se("string", "Failure message when `success` is false."),
+    "code?": se("string", "Machine-readable failure reason, when one applies.")
+  }, "Response to a command, correlated by `id`."),
+  ToolLoadMode: "'essential' | 'discoverable'",
+  HostToolDefinition: {
+    name: "string",
+    "label?": "string",
+    description: "string",
+    parameters: t,
+    "hidden?": "boolean",
+    "loadMode?": "ToolLoadMode",
+    "readsSkillUris?": "boolean"
+  HostUriSchemeDefinition: {
+    scheme: "string",
+    "description?": "string",
+    "writable?": "boolean",
+    "immutable?": "boolean"
+export { K7e };
+// @bun @bytecode
+import {
+} from "/$bunfs/root/chunks/cli-20mtymts.js";
+import"/$bunfs/root/chunks/cli-wsz3bcez.js";
+export {
+  K7e as frameDefs
+// @bun @bytecode
+import {
+} from "/$bunfs/root/chunks/cli-wsz3bcez.js";
+// packages/coding-agent/src/modes/rpc/wire/commands.ts
+var e = se("ImageContent[]", "Images attached to the message.");
+var Q7e = [
+    name: "negotiate_protocol",
+    doc: "Switch the connection to a protocol version advertised by `ready`.",
+    params: { protocolVersion: "number.integer" },
+    result: { protocolVersion: "number.integer" }
+    name: "prompt",
+    doc: "Submit a prompt; acknowledged once admitted, completed by its `prompt_result`.",
+    params: { message: "string", "images?": e, "streamingBehavior?": "StreamingBehavior" },
+    result: "PromptAck",
+    completion: "prompt_result"
+  { name: "steer", doc: "Queue a steering message.", params: { message: "string", "images?": e } },
+  { name: "follow_up", doc: "Queue a follow-up message.", params: { message: "string", "images?": e } },
+    name: "remove_queued_message",
+    doc: "Remove one pending queued message by its queue-chip text.",
+    params: { message: "string", queue: "QueuedMessageQueue" },
+    result: "RemoveQueuedMessageResult"
+    name: "promote_queued_message",
+    doc: "Move one queued follow-up to the end of the steering queue.",
+    params: { message: "string" },
+    result: "PromoteQueuedMessageResult"
+  { name: "abort", doc: "Abort the current run." },
+    name: "abort_and_prompt",
+    doc: "Abort the current run and submit a prompt; completed by its `prompt_result`.",
+    params: { message: "string", "images?": e },
+    completion: "prompt_result"
+    name: "abort_and_restore_queue",
+    doc: "Withdraw queued user input, then abort the current run; returns the withdrawn input.",
+    result: "AbortAndRestoreQueueResult"
+    name: "new_session",
+    doc: "Start a new session.",
+    params: { "parentSession?": "string" },
+    result: "CancellationResult"
+    name: "open_session",
+    doc: "Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request.",
+    params: { sessionDir: "string", "provider?": "string", "modelId?": "string" },
+    result: "OpenSessionResult"
+  { name: "get_state", doc: "Snapshot the session state.", result: "SessionState" },
+    name: "set_fast_mode",
+    doc: "Enable or disable fast mode for the session.",
+    params: { enabled: "boolean" },
+    result: "FastModeResult"
+    name: "set_slow_mode",
+    doc: "Turn `/slow` on or off for the active model; returns whether it is now on.",
+    params: { enabled: "boolean" },
+    result: { enabled: "boolean" },
+    unwrap: "enabled"
+    name: "goal",
+    doc: "Read or change goal mode with the lifecycle of the interactive `/goal` command.",
+    params: { op: "GoalOp", "objective?": "string", "token_budget?": "number.integer" },
+    result: "GoalResult"
+    name: "set_ask_dialog",
+    doc: "Opt in to `ask` UI requests; returns the applied setting.",
+    params: { enabled: "boolean" },
+    result: { enabled: "boolean" },
+    unwrap: "enabled"
+    name: "get_available_commands",
+    doc: "List the slash-command catalog.",
+    result: { commands: "AvailableSlashCommand[]" },
+    unwrap: "commands"
+    name: "get_entries",
+    doc: "Read the append-history; with `since`, only entries strictly after that durable entry id.",
+    params: { "since?": "string" },
+    result: "SessionEntries"
+  { name: "get_tree", doc: "Read the raw session tree.", result: "SessionTree" },
+    name: "set_todos",
+    doc: "Replace the session's todo phases.",
+    params: { phases: "TodoPhase[]" },
+    result: { todoPhases: "TodoPhase[]" },
+    unwrap: "todoPhases"
+    name: "set_host_tools",
+    doc: "Replace the host-owned tools the server may call back into.",
+    params: { tools: "HostToolDefinition[]" },
+    result: { toolNames: "string[]" },
+    unwrap: "toolNames"
+    name: "set_host_uri_schemes",
+    doc: "Replace the host-owned URI schemes.",
+    params: { schemes: "HostUriSchemeDefinition[]" },
+    result: { schemes: "string[]" },
+    unwrap: "schemes"
+    name: "set_subagent_subscription",
+    doc: "Select which subagent frames are forwarded.",
+    params: { level: "SubagentSubscriptionLevel" },
+    result: { level: "SubagentSubscriptionLevel" },
+    unwrap: "level"
+    name: "set_event_filter",
+    doc: "Forward only the listed session event types; null forwards all.",
+    params: { events: "string[] | null", "messageUpdates?": "MessageUpdates" },
+    result: { events: "string[] | null", "messageUpdates?": "MessageUpdates" },
+    unwrap: "events",
+    clientOmit: ["messageUpdates"]
+    name: "get_subagents",
+    doc: "List running subagents.",
+    result: { subagents: "SubagentSnapshot[]" },
+    unwrap: "subagents"
+    name: "get_subagent_messages",
+    doc: "Read a subagent transcript by id or registered session file (`subagentId` wins).",
+    params: { "subagentId?": "string", "sessionFile?": "string", "fromByte?": "number.integer" },
+    result: "SubagentMessages"
+    name: "cancel_subagent",
+    doc: "Hard-kill one running subagent; false when it is not running.",
+    params: { subagentId: "string" },
+    result: { cancelled: "boolean" },
+    unwrap: "cancelled"
+    name: "steer_subagent",
+    doc: "Send a message to a running subagent as its user.",
+    params: { subagentId: "string", message: "string" }
+    name: "live_start",
+    doc: "Start a live voice session bound to this session; returns the voice in use.",
+    params: { "voice?": "string", "instructions?": "string" },
+    result: { voice: "string" },
+    unwrap: "voice"
+    name: "live_connect",
+    doc: "Start a live voice session whose audio runs on a caller-owned WebRTC peer: send its SDP offer, apply the returned answer.",
+    params: { sdpOffer: "string", "voice?": "string", "instructions?": "string" },
+    result: { voice: "string", sdpAnswer: "string" }
+  { name: "live_stop", doc: "Stop the live voice session, if any." },
+    name: "live_mute",
+    doc: "Set microphone mute, or toggle it when `muted` is omitted; returns the new state.",
+    params: { "muted?": "boolean" },
+    result: { muted: "boolean" },
+    unwrap: "muted"
+    name: "dictation_start",
+    doc: "Start draft-only speech-to-text; resolves once the microphone is recording.",
+    params: { captureId: "string" },
+    timeoutMs: 600000
+    name: "dictation_stop",
+    doc: "Stop and flush draft-only dictation, returning the accumulated text.",
+    result: { text: "string" },
+    unwrap: "text",
+    timeoutMs: 600000
+    name: "set_model",
+    doc: "Select a model by provider and id.",
+    params: { provider: "string", modelId: "string" },
+    result: "ModelInfo"
+  { name: "cycle_model", doc: "Cycle to the next model.", result: "ModelCycleResult", nullable: true },
+    name: "get_available_models",
+    doc: "List available models.",
+    result: { models: "ModelInfo[]" },
+    unwrap: "models"
+  { name: "set_thinking_level", doc: "Set the thinking level.", params: { level: "ThinkingLevel" } },
+    name: "cycle_thinking_level",
+    doc: "Cycle to the next thinking level.",
+    result: "ThinkingLevelCycleResult",
+    nullable: true
+    name: "get_available_thinking_levels",
+    doc: 'Selectable thinking levels for the live model, `"off"` first.',
+    result: { levels: "ThinkingLevel[]" },
+    unwrap: "levels"
+  { name: "set_steering_mode", doc: "Set how queued steering is delivered.", params: { mode: "QueueMode" } },
+  { name: "set_follow_up_mode", doc: "Set how queued follow-ups are delivered.", params: { mode: "QueueMode" } },
+  { name: "set_interrupt_mode", doc: "Set how steering interrupts tools.", params: { mode: "InterruptMode" } },
+    name: "compact",
+    doc: "Compact the conversation.",
+    params: { "customInstructions?": "string" },
+    result: "CompactionResult"
+  { name: "set_auto_compaction", doc: "Enable or disable auto-compaction.", params: { enabled: "boolean" } },
+    name: "set_cache_warming",
+    doc: "Override cache warming for this session only; returns the effective mode.",
+    params: { mode: "CacheWarmingMode" },
+    result: { mode: "CacheWarmingMode" },
+    unwrap: "mode"
+  { name: "set_auto_retry", doc: "Enable or disable auto-retry.", params: { enabled: "boolean" } },
+  { name: "abort_retry", doc: "Abort a pending auto-retry." },
+  { name: "bash", doc: "Run a shell command.", params: { command: "string" }, result: "BashResult" },
+  { name: "abort_bash", doc: "Abort the running shell command." },
+  { name: "get_session_stats", doc: "Session statistics.", result: "SessionStats" },
+    name: "get_session_lease",
+    doc: "Which of these sessions a running process (this one included) owns, probed without taking ownership. Ids in neither list are free; `unknown` could not be probed.",
+    params: { sessionIds: "string[]" },
+    result: { held: "string[]", unknown: "string[]" }
+    name: "export_html",
+    doc: "Export the session as HTML; returns the written path.",
+    params: { "outputPath?": "string" },
+    result: { path: "string" },
+    unwrap: "path"
+    name: "switch_session",
+    doc: "Switch to another session file. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request and keeps the current session.",
+    params: { sessionPath: "string", "provider?": "string", "modelId?": "string" },
+    result: "CancellationResult"
+    name: "branch",
+    doc: "Branch the session at an entry.",
+    params: { entryId: "string" },
+    result: "BranchResult"
+    name: "fork",
+    doc: "Fork into a new session file: history through `entryId`, or the whole session.",
+    params: { "entryId?": "string" },
+    result: "CancellationResult"
+    name: "navigate_tree",
+    doc: "Move the session's leaf to an entry in the same file, optionally summarizing the branch it leaves; refused while busy.",
+    params: {
+      entryId: "string",
+      "summarize?": se("boolean", "Summarize the abandoned branch at the target."),
+      "customInstructions?": se("string", "Instructions for the summarizer.")
+    result: "NavigateTreeResult",
+    timeoutMs: 600000
+  { name: "abort_branch_summary", doc: "Stop a running `navigate_tree` branch summary; the navigation is cancelled." },
+    name: "set_label",
+    doc: "Set or clear (omit `label`) an entry's label.",
+    params: { entryId: "string", "label?": "string" }
+    name: "get_branch_messages",
+    doc: "List user messages that can be branched from.",
+    result: { messages: "BranchMessage[]" },
+    unwrap: "messages"
+    name: "get_last_assistant_text",
+    doc: "Text of the last assistant message, if any.",
+    result: { text: "string | null" },
+    unwrap: "text"
+  { name: "set_session_name", doc: "Rename the session.", params: { name: "string" } },
+    name: "handoff",
+    doc: "Hand the conversation off to a fresh session; null when no handoff was produced.",
+    params: { "customInstructions?": "string" },
+    result: "HandoffResult",
+    nullable: true
+    name: "get_messages",
+    doc: "Every message of the session in one response.",
+    result: { messages: "AgentMessage[]" },
+    unwrap: "messages"
+    name: "get_messages_page",
+    doc: "One stable page of messages.",
+    params: { "cursor?": "string", "limit?": "number.integer" },
+    result: "MessagesPage"
+    name: "get_login_providers",
+    doc: "List OAuth providers and their authentication status.",
+    result: { providers: "LoginProvider[]" },
+    unwrap: "providers"
+    name: "login",
+    doc: "Run OAuth login; the flow arrives as `open_url` and `input` UI requests.",
+    params: { providerId: "string" },
+    result: { providerId: "string" },
+    unwrap: "providerId",
+    timeoutMs: 600000
+    name: "get_logout_accounts",
+    doc: "List the stored credentials `logout` can remove for a provider, active first.",
+    params: { providerId: "string" },
+    result: { accounts: "LogoutAccount[]" },
+    unwrap: "accounts"
+    name: "logout",
+    doc: "Remove one stored credential; fails when it is no longer stored. `remainingSource` names auth that still applies.",
+    params: { providerId: "string", credentialId: "number.integer" },
+    result: { "remainingSource?": "string" }
+    name: "predict_word",
+    doc: "Ghost-text suffix for the prose word ending at `cursor` (a UTF-16 offset); null when none applies.",
+    params: { text: "string", cursor: "number.integer" },
+    result: { suffix: "string | null" },
+    unwrap: "suffix",
+    timeoutMs: 155000
+    name: "predict_word_feedback",
+    doc: "Report a shown suggestion as accepted or typed past.",
+    params: { text: "string", cursor: "number.integer", suggestion: "string", accepted: "boolean" }
+    name: "btw",
+    doc: "Ask a side question, or a follow-up in topic `recordId`; returns the record once it is running.",
+    params: { question: "string", "recordId?": "string" },
+    result: { record: "BtwHistoryRecord" },
+    unwrap: "record"
+    name: "btw_cancel",
+    doc: "Cancel the running side question (only topic `recordId` when given); false when none matches.",
+    params: { "recordId?": "string" },
+    result: { cancelled: "boolean" },
+    unwrap: "cancelled"
+    name: "get_btw_history",
+    doc: "List the session's side-question records, newest first.",
+    result: { records: "BtwHistoryRecord[]" },
+    unwrap: "records"
+export { Q7e };
+// @bun @bytecode
+import {
+} from "/$bunfs/root/chunks/cli-wsz3bcez.js";
+// packages/coding-agent/src/modes/rpc/wire/content.ts
+var e = "Record<string, unknown>";
+var _Ee = {
+  Attribution: se("'user' | 'agent'", "Who initiated a message, for billing and attribution."),
+  StopReason: "'stop' | 'length' | 'toolUse' | 'error' | 'aborted'",
+  TextContent: { type: "'text'", text: "string", "textSignature?": "string" },
+  ThinkingContent: {
+    type: "'thinking'",
+    thinking: "string",
+    "thinkingSignature?": "string",
+    "itemId?": "string",
+    "narration?": se("boolean", "Prose the model addressed to the user, returned by the provider as thinking; present it as answer text.")
+  RedactedThinkingContent: { type: "'redactedThinking'", data: "string" },
+  ImageContent: se({
+    type: "'image'",
+    data: se("string", "Base64-encoded image bytes."),
+    mimeType: "string",
+    "detail?": "'auto' | 'low' | 'high' | 'original'",
+    "url?": "string",
+    "providerFile?": e
+  }, "Inline image; also the shape hosts send with prompts."),
+  ToolCall: {
+    type: "'toolCall'",
+    id: "string",
+    name: "string",
+    arguments: e,
+    "thoughtSignature?": "string",
+    "intent?": "string",
+    "rawBlock?": "string",
+    "customWireName?": "string",
+    "providerMetadata?": e
+  FallbackContent: se({ type: "'fallback'", from: e, to: e }, "Anthropic server-side fallback boundary marker; consumers other than Anthropic ignore it."),
+  AnthropicServerToolContent: { type: "'anthropicServerTool'", block: e },
+  UserContent: "TextContent | ImageContent",
+  MessageContent: se("string | UserContent[]", "Message content: plain text or content blocks."),
+  AssistantContent: "TextContent | ThinkingContent | RedactedThinkingContent | FallbackContent | AnthropicServerToolContent | ImageContent | ToolCall",
+  UsageCost: {
+    input: "number",
+    output: "number",
+    cacheRead: "number",
+    cacheWrite: "number",
+    total: "number"
+  Usage: {
+    input: "number.integer",
+    output: "number.integer",
+    cacheRead: "number.integer",
+    cacheWrite: "number.integer",
+    totalTokens: "number.integer",
+    "contextTokens?": "number.integer",
+    "premiumRequests?": "number",
+    "reasoningTokens?": "number.integer",
+    "orchestration?": e,
+    "cttl?": e,
+    "server?": e,
+    "credits?": e,
+    cost: "UsageCost"
+  UserMessage: {
+    role: "'user'",
+    content: "MessageContent",
+    "synthetic?": "boolean",
+    "steering?": "boolean",
+    "liveSteered?": "boolean",
+    "historyRewriteAt?": "number",
+    "attribution?": "Attribution",
+    "providerPayload?": e,
+    timestamp: "number"
+  DeveloperMessage: {
+    role: "'developer'",
+    content: "MessageContent",
+    "attribution?": "Attribution",
+    "synthetic?": "boolean",
+    "userInitiated?": "boolean",
+    "providerPayload?": e,
+    timestamp: "number"
+  AssistantMessage: {
+    role: "'assistant'",
+    content: "AssistantContent[]",
+    api: "string",
+    provider: "string",
+    model: "string",
+    "responseId?": "string",
+    "upstreamProvider?": "string",
+    "upstreamModel?": "string",
+    usage: "Usage",
+    stopReason: "StopReason",
+    "errorMessage?": "string",
+    "errorStatus?": "number.integer",
+    "errorId?": "number",
+    "providerPayload?": e,
+    timestamp: "number",
+    "duration?": "number",
+    "ttft?": "number",
+    "completedAt?": "number"
+  ToolResultMessage: {
+    role: "'toolResult'",
+    toolCallId: "string",
+    toolName: "string",
+    content: "UserContent[]",
+    "details?": "unknown",
+    isError: "boolean",
+    "attribution?": "Attribution",
+    "prunedAt?": "number",
+    "useless?": "boolean",
+    timestamp: "number"
+  BashExecutionMessage: {
+    role: "'bashExecution'",
+    command: "string",
+    output: "string",
+    "exitCode?": "number.integer",
+    cancelled: "boolean",
+    truncated: "boolean",
+    "images?": "ImageContent[]",
+    "meta?": e,
+    timestamp: "number",
+    "excludeFromContext?": "boolean"
+  PythonExecutionMessage: {
+    role: "'pythonExecution'",
+    code: "string",
+    output: "string",
+    "exitCode?": "number.integer",
+    cancelled: "boolean",
+    truncated: "boolean",
+    "meta?": e,
+    timestamp: "number",
+    "excludeFromContext?": "boolean"
+  CustomMessage: {
+    role: "'custom'",
+    customType: "string",
+    content: "MessageContent",
+    display: "boolean",
+    "details?": "unknown",
+    "attribution?": "Attribution",
+    timestamp: "number"
+  HookMessage: {
+    role: "'hookMessage'",
+    customType: "string",
+    content: "MessageContent",
+    display: "boolean",
+    "details?": "unknown",
+    "attribution?": "Attribution",
+    timestamp: "number"
+  BranchSummaryMessage: { role: "'branchSummary'", summary: "string", fromId: "string", timestamp: "number" },
+  CompactionSummaryMessage: {
+    role: "'compactionSummary'",
+    summary: "string",
+    "shortSummary?": "string",
+    tokensBefore: "number.integer",
+    "tokensAfter?": "number.integer",
+    "method?": "string",
+    "providerPayload?": e,
+    timestamp: "number"
+  FileMentionItem: {
+    path: "string",
+    content: "string",
+    "lineCount?": "number.integer",
+    "byteSize?": "number.integer",
+    "skippedReason?": "'tooLarge' | 'binary'",
+    "image?": "ImageContent"
+  FileMentionMessage: { role: "'fileMention'", files: "FileMentionItem[]", timestamp: "number" },
+  AgentMessage: se("UserMessage | DeveloperMessage | AssistantMessage | ToolResultMessage | BashExecutionMessage | PythonExecutionMessage | CustomMessage | HookMessage | BranchSummaryMessage | CompactionSummaryMessage | FileMentionMessage", "A transcript message, discriminated by `role`."),
+  AssistantStartEvent: { type: "'start'", partial: "AssistantMessage" },
+  AssistantTextStartEvent: { type: "'text_start'", contentIndex: "number.integer", partial: "AssistantMessage" },
+  AssistantTextDeltaEvent: {
+    type: "'text_delta'",
+    contentIndex: "number.integer",
+    delta: "string",
+    partial: "AssistantMessage"
+  AssistantTextEndEvent: {
+    type: "'text_end'",
+    contentIndex: "number.integer",
+    content: "string",
+    partial: "AssistantMessage"
+  AssistantThinkingStartEvent: {
+    type: "'thinking_start'",
+    contentIndex: "number.integer",
+    partial: "AssistantMessage"
+  AssistantThinkingDeltaEvent: {
+    type: "'thinking_delta'",
+    contentIndex: "number.integer",
+    delta: "string",
+    partial: "AssistantMessage"
+  AssistantThinkingEndEvent: {
+    type: "'thinking_end'",
+    contentIndex: "number.integer",
+    content: "string",
+    partial: "AssistantMessage"
+  AssistantImageEndEvent: {
+    type: "'image_end'",
+    contentIndex: "number.integer",
+    content: "ImageContent",
+    partial: "AssistantMessage"
+  AssistantToolCallStartEvent: {
+    type: "'toolcall_start'",
+    contentIndex: "number.integer",
+    partial: "AssistantMessage"
+  AssistantToolCallDeltaEvent: {
+    type: "'toolcall_delta'",
+    contentIndex: "number.integer",
+    delta: "string",
+    partial: "AssistantMessage"
+  AssistantToolCallEndEvent: {
+    type: "'toolcall_end'",
+    contentIndex: "number.integer",
+    toolCall: "ToolCall",
+    partial: "AssistantMessage"
+  AssistantDoneEvent: { type: "'done'", reason: "'stop' | 'length' | 'toolUse'", message: "AssistantMessage" },
+  AssistantErrorEvent: { type: "'error'", reason: "'aborted' | 'error'", error: "AssistantMessage" },
+  AssistantMessageEvent: se("AssistantStartEvent | AssistantTextStartEvent | AssistantTextDeltaEvent | AssistantTextEndEvent | AssistantThinkingStartEvent | AssistantThinkingDeltaEvent | AssistantThinkingEndEvent | AssistantImageEndEvent | AssistantToolCallStartEvent | AssistantToolCallDeltaEvent | AssistantToolCallEndEvent | AssistantDoneEvent | AssistantErrorEvent", "Streaming update for one assistant message, discriminated by `type`.")
+var Z7e = {
+  Effort: "'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'",
+  ThinkingLevel: se("'inherit' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'", "Thinking selector; `inherit` defers to a higher-level selector."),
+  ConfiguredThinkingLevel: se("'auto' | 'inherit' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'", "User-configured thinking selector, including automatic selection."),
+  ModelCost: se({ input: "number", output: "number", cacheRead: "number", cacheWrite: "number" }, "Per-million-token USD rates."),
+  ThinkingConfig: {
+    mode: "string",
+    efforts: "Effort[]",
+    "defaultLevel?": "Effort",
+    "effortMap?": "Record<string, string>",
+    "supportsDisplay?": "boolean",
+    "prefixBinding?": "boolean",
+    "effortRouting?": "Record<string, string>",
+    "effortBudgets?": "Record<string, number>",
+    "suppressWhenOff?": "boolean",
+    "requiresEffort?": "boolean"
+  ModelInfo: se({
+    id: "string",
+    name: "string",
+    api: "string",
+    provider: "string",
+    baseUrl: "string",
+    reasoning: "boolean",
+    input: se("string[]", "Accepted input modalities, e.g. `text`, `image`."),
+    cost: "ModelCost",
+    contextWindow: se("number.integer | null", "Null when the provider does not report a limit."),
+    maxTokens: se("number.integer | null", "Null when the provider does not report a limit."),
+    "headers?": "Record<string, string>",
+    "premiumMultiplier?": "number",
+    "preferWebsockets?": "boolean",
+    "contextPromotionTarget?": "string",
+    "priority?": "number.integer",
+    "thinking?": "ThinkingConfig",
+    "compat?": e
+  }, "Model descriptor: the client-relevant subset of the server's model record.")
+export { _Ee, Z7e };
+// @bun @bytecode
+import {
+} from "/$bunfs/root/chunks/cli-wsz3bcez.js";
+// packages/coding-agent/src/modes/rpc/wire/events.ts
+var e = "Record<string, unknown>";
+var t = se("string", "Shared by the start, updates, and end of one message; unique per process.");
+var eXe = {
+  AutoCompactionReason: "'threshold' | 'overflow' | 'idle' | 'incomplete'",
+  AutoCompactionAction: "'context-full' | 'remote' | 'handoff' | 'shake' | 'snapcompact'",
+  CacheWarmingPhase: "'streaming' | 'idle'",
+  CacheWarmingOutcome: "'hit' | 'miss' | 'error' | 'aborted'",
+  NotifyType: "'info' | 'warning' | 'error'",
+  AgentStartEvent: {
+    type: "'agent_start'",
+    "resumedToolCallIds?": se("string[]", "Calls of an unpaired assistant tail a continued run executes before its first model request.")
+  AgentEndEvent: {
+    type: "'agent_end'",
+    messages: se("AgentMessage[]", "Messages of the run; an oversized frame drops a prefix already delivered by `message_end` (see `messageCount`)."),
+    "messageCount?": se("number.integer", "Original message count when the frame was compacted."),
+    "isTerminal?": se("boolean", "False when a continuation or async delivery remains."),
+    "yielded?": se("boolean", "The agent finished its turn and resumes only for queued input or background-job results."),
+    "awaitingAsyncWork?": se("boolean", "Non-terminal end whose only possible resume is a background-job result."),
+    "telemetry?": e,
+    "coverage?": e
+  TurnStartEvent: { type: "'turn_start'" },
+  TurnEndEvent: { type: "'turn_end'", message: "AgentMessage", toolResults: "ToolResultMessage[]" },
+  MessageStartEvent: { type: "'message_start'", message: "AgentMessage", "messageId?": t },
+  MessageUpdateEvent: {
+    type: "'message_update'",
+    message: "AgentMessage",
+    assistantMessageEvent: "AssistantMessageEvent",
+    "messageId?": t
+  MessageEndEvent: { type: "'message_end'", message: "AgentMessage", "messageId?": t },
+  ToolExecutionStartEvent: {
+    type: "'tool_execution_start'",
+    toolCallId: "string",
+    toolName: "string",
+    "args?": "unknown",
+    "intent?": "string"
+  ToolExecutionUpdateEvent: {
+    type: "'tool_execution_update'",
+    toolCallId: "string",
+    toolName: "string",
+    "args?": "unknown",
+    "partialResult?": "unknown"
+  ToolStreamUpdateEvent: {
+    type: "'tool_stream_update'",
+    toolCallId: "string",
+    toolName: "string",
+    "update?": "unknown"
+  ToolExecutionEndEvent: {
+    type: "'tool_execution_end'",
+    toolCallId: "string",
+    toolName: "string",
+    "result?": "unknown",
+    "isError?": "boolean"
+  AutoCompactionStartEvent: {
+    type: "'auto_compaction_start'",
+    reason: "AutoCompactionReason",
+    action: "AutoCompactionAction"
+  AutoCompactionEndEvent: {
+    type: "'auto_compaction_end'",
+    action: "AutoCompactionAction",
+    "result?": "CompactionResult",
+    aborted: "boolean",
+    willRetry: "boolean",
+    "errorMessage?": "string",
+    "skipped?": se("boolean", "Compaction was skipped for a benign reason.")
+  ManualCompactionStartEvent: se({
+    type: "'manual_compaction_start'",
+    "mode?": se("string", "The `/compact <mode>` subcommand, when one was given.")
+  }, "A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted."),
+  ManualCompactionEndEvent: se({
+    type: "'manual_compaction_end'",
+    "result?": se("CompactionResult", "Present when the compaction committed."),
+    aborted: se("boolean", "The compaction was cancelled (abort, or a `session_before_compact` hook)."),
+    "skipped?": se("boolean", "There was nothing to compact; `errorMessage` says why."),
+    "errorMessage?": "string"
+  }, "Outcome of the compaction announced by the matching `manual_compaction_start`."),
+  AutoRetryStartEvent: {
+    type: "'auto_retry_start'",
+    attempt: "number.integer",
+    maxAttempts: "number.integer",
+    delayMs: "number.integer",
+    errorMessage: "string",
+    "errorId?": "number.integer"
+  AutoRetryEndEvent: {
+    type: "'auto_retry_end'",
+    success: "boolean",
+    attempt: "number.integer",
+    "finalError?": "string",
+    retryErrors: jo(se(`${e}[]`, "Persisted retry errors whose presentation changed when the retry settled."), [])
+  CacheWarmingStartEvent: se({ type: "'cache_warming_start'", phase: "CacheWarmingPhase", provider: "string", model: "string" }, "A prompt-cache refresh was handed to the provider."),
+  CacheWarmingEndEvent: se({
+    type: "'cache_warming_end'",
+    phase: "CacheWarmingPhase",
+    provider: "string",
+    model: "string",
+    outcome: "CacheWarmingOutcome",
+    "usage?": se("Usage", "Present only when the refresh was billed."),
+    "warmingStopReason?": se("string", "Why warming stopped; absent while it continues.")
+  }, "Outcome of the refresh announced by the matching `cache_warming_start`."),
+  RetryFallbackAppliedEvent: {
+    type: "'retry_fallback_applied'",
+    from: "string",
+    to: "string",
+    role: "string",
+    "reason?": "string"
+  RetryFallbackSucceededEvent: { type: "'retry_fallback_succeeded'", model: "string", role: "string" },
+  ModelChangedEvent: { type: "'model_changed'" },
+  ConfigWarningsChangedEvent: { type: "'config_warnings_changed'" },
+  AdvisorCostChangedEvent: { type: "'advisor_cost_changed'" },
+  AdvisorYieldedEvent: { type: "'advisor_yielded'" },
+  TtsrTriggeredEvent: se({ type: "'ttsr_triggered'", rules: `${e}[]` }, "Rule injection: a TTSR rule matched the stream and its text was injected. Each rule carries at least `name`, `path`, and `content`."),
+  TodoReminderEvent: {
+    type: "'todo_reminder'",
+    todos: "TodoItem[]",
+    attempt: "number.integer",
+    maxAttempts: "number.integer"
+  TodoAutoClearEvent: { type: "'todo_auto_clear'" },
+  IrcMessageEvent: { type: "'irc_message'", message: "CustomMessage" },
+  NoticeEvent: { type: "'notice'", level: "NotifyType", message: "string", "source?": "string" },
+  ThinkingLevelChangedEvent: se({
+    type: "'thinking_level_changed'",
+    "thinkingLevel?": "ThinkingLevel",
+    "configured?": se("ConfiguredThinkingLevel", "The user's selector when it differs from the effective level."),
+    "resolved?": se("Effort", "The level `auto` resolved to this turn, once classified.")
+  }, "The effective thinking level changed."),
+  GoalUpdatedEvent: se({ type: "'goal_updated'", goal: "Goal | null", "state?": "GoalModeState" }, "Goal mode changed, by a host `goal` command or the agent's `goal` tool."),
+  QueueUpdateEvent: se({
+    type: "'queue_update'",
+    steering: "string[]",
+    followUp: "string[]",
+    liveSteered: jo(se("number.integer", "Leading `steering` entries are live steering already sent into the streaming response; `remove_queued_message` cannot reach them."), 0)
+  }, "Coalesced snapshot of the displayable steering/follow-up queue, sent whenever it changes."),
+  RpcAgentEvent: se([
+    "AgentStartEvent",
+    "AgentEndEvent",
+    "TurnStartEvent",
+    "TurnEndEvent",
+    "MessageStartEvent",
+    "MessageUpdateEvent",
+    "MessageEndEvent",
+    "ToolExecutionStartEvent",
+    "ToolExecutionUpdateEvent",
+    "ToolStreamUpdateEvent",
+    "ToolExecutionEndEvent",
+    "AutoCompactionStartEvent",
+    "AutoCompactionEndEvent",
+    "ManualCompactionStartEvent",
+    "ManualCompactionEndEvent",
+    "AutoRetryStartEvent",
+    "AutoRetryEndEvent",
+    "CacheWarmingStartEvent",
+    "CacheWarmingEndEvent",
+    "RetryFallbackAppliedEvent",
+    "RetryFallbackSucceededEvent",
+    "ModelChangedEvent",
+    "ConfigWarningsChangedEvent",
+    "AdvisorCostChangedEvent",
+    "AdvisorYieldedEvent",
+    "TtsrTriggeredEvent",
+    "TodoReminderEvent",
+    "TodoAutoClearEvent",
+    "IrcMessageEvent",
+    "NoticeEvent",
+    "ThinkingLevelChangedEvent",
+    "GoalUpdatedEvent",
+    "QueueUpdateEvent"
+  ].join(" | "), "A session event, discriminated by `type`; `set_event_filter` selects which are sent.")
+export { eXe };
+// @bun @bytecode
+import {
+} from "/$bunfs/root/chunks/cli-wsz3bcez.js";
+// packages/coding-agent/src/modes/rpc/wire/state.ts
+var e = "Record<string, unknown>";
+var J7e = {
+  QueueMode: "'all' | 'one-at-a-time'",
+  InterruptMode: "'immediate' | 'wait'",
+  StreamingBehavior: "'steer' | 'followUp'",
+  QueuedMessageQueue: "'steering' | 'followUp'",
+  CacheWarmingMode: "'off' | 'streaming' | 'idle'",
+  MessageUpdates: se("'full' | 'delta'", "`set_event_filter` projection: `delta` replaces the accumulated snapshots with the block a start/end event touches."),
+  TodoStatus: "'pending' | 'in_progress' | 'completed' | 'abandoned' | 'blocked'",
+  GoalOp: "'get' | 'create' | 'resume' | 'pause' | 'drop'",
+  GoalStatus: "'active' | 'paused' | 'budget-limited' | 'complete' | 'dropped'",
+  SlashCommandSource: "'builtin' | 'skill' | 'extension' | 'custom' | 'mcp_prompt' | 'file'",
+  SubagentSubscriptionLevel: se("'off' | 'progress' | 'events'", "Forwarded subagent frames: none, lifecycle and progress, or also raw session events."),
+  AgentSource: "'bundled' | 'user' | 'project'",
+  SubagentStatus: "'pending' | 'running' | 'completed' | 'failed' | 'aborted'",
+  TodoItem: {
+    content: "string",
+    status: "TodoStatus",
+    "blocker?": se("string", "What a `blocked` task is waiting on."),
+    "details?": "string",
+    "notes?": "string[]"
+  TodoPhase: { name: "string", tasks: "TodoItem[]" },
+  ContextUsage: { tokens: "number.integer", contextWindow: "number.integer", percent: "number" },
+  QueuedMessagesState: se({
+    steering: "string[]",
+    followUp: "string[]",
+    liveSteered: jo(se("number.integer", "Leading `steering` entries are live steering already sent into the streaming response; `remove_queued_message` cannot reach them."), 0)
+  }, "Displayable queue-chip text for pending user-authored messages; accepted verbatim by `remove_queued_message`."),
+  ToolDescriptor: { name: "string", description: "string", "parameters?": "unknown", "examples?": "unknown[]" },
+  Goal: se({
+    id: "string",
+    objective: "string",
+    status: "GoalStatus",
+    "tokenBudget?": "number.integer",
+    tokensUsed: "number.integer",
+    timeUsedSeconds: "number",
+    createdAt: "number.integer",
+    updatedAt: "number.integer"
+  }, "A tracked goal: its objective, lifecycle status, and resource accounting."),
+  GoalModeState: se({ enabled: "boolean", mode: "'active' | 'exiting'", "reason?": "'completed'", goal: "Goal" }, 'Session goal mode; `mode` is `"exiting"` while a completed goal unwinds.'),
+  GoalResult: se({ goal: "Goal | null", state: "GoalModeState | null" }, "Outcome of every `goal` op; both fields are null when the session has no goal."),
+  SlowModeScope: se("'session' | 'global'", "Where `/slow` lives: persisted config shared by every session, or this session's flex tier."),
+  UsageLimitLowPriority: se({
+    stage: "'low_priority'",
+    resetsAtSec: se("number", "Epoch seconds when the limit that was hit resets."),
+    "allowanceLeftPercent?": se("number.integer", "Percent of the low-priority allowance still available, when reported.")
+  }, "Requests are served on the provider's low-priority (slow) lane."),
+  UsageLimitWrapUp: se({
+    stage: "'wrap_up'",
+    "resetsAtSec?": se("number", "Epoch seconds when the limit that was hit resets, if reported."),
+    extraUsage: se("boolean", "Whether paid extra usage serves requests once the allowance is spent.")
+  }, "Requests run on a short wrap-up allowance past the limit."),
+  UsageLimitState: se("UsageLimitLowPriority | UsageLimitWrapUp", "Provider-neutral state of an account past its usage limit, discriminated by `stage`."),
+  SessionState: {
+    "model?": "ModelInfo",
+    "thinkingLevel?": "ThinkingLevel",
+    isStreaming: jo("boolean", false),
+    isCompacting: jo("boolean", false),
+    steeringMode: jo("QueueMode", "one-at-a-time"),
+    followUpMode: jo("QueueMode", "one-at-a-time"),
+    interruptMode: jo("InterruptMode", "immediate"),
+    "sessionFile?": "string",
+    sessionId: "string",
+    "sessionName?": "string",
+    autoCompactionEnabled: jo("boolean", false),
+    fastModeEnabled: jo("boolean", false),
+    fastModeActive: jo("boolean", false),
+    slowModeSupported: jo(se("boolean", "`/slow` applies to the active model."), false),
+    slowModeEnabled: jo(se("boolean", "`/slow` is on for the active model; always `false` when `slowModeSupported` is `false`."), false),
+    "slowModeScope?": se("SlowModeScope", "Where the active model's `/slow` lives; absent when unsupported."),
+    "usageLimit?": se("UsageLimitState", "Usage-limit stage of the active model's account; absent outside wrap-up and low priority."),
+    tokensPerSecond: jo("number | null", null),
+    messageCount: jo("number.integer", 0),
+    queuedMessageCount: jo("number.integer", 0),
+    hasPendingAsyncWork: jo(se("boolean", "Background jobs or deliveries can still inject a follow-up and wake the session."), false),
+    isSettled: jo(se("boolean", "Idle with nothing queued or pending; same predicate as `session_settled`."), false),
+    queuedMessages: jo("QueuedMessagesState", { steering: [], followUp: [], liveSteered: 0 }),
+    todoPhases: jo("TodoPhase[]", []),
+    systemPrompt: jo(se("string[]", "System prompt sections, for session dumps."), []),
+    dumpTools: jo("ToolDescriptor[]", []),
+    "contextUsage?": "ContextUsage",
+    goal: jo(se("GoalModeState | null", "Current goal mode; null when the session has no goal."), null)
+  BashResult: {
+    output: "string",
+    "exitCode?": "number.integer",
+    cancelled: "boolean",
+    "timedOut?": "boolean",
+    truncated: "boolean",
+    totalLines: "number.integer",
+    totalBytes: "number.integer",
+    outputLines: "number.integer",
+    outputBytes: "number.integer",
+    "artifactId?": "string",
+    "artifactElidedBytes?": "number.integer",
+    "artifactError?": e,
+    "minimized?": e,
+    "workingDir?": "string",
+    "images?": "ImageContent[]"
+  FastModeResult: { enabled: "boolean", active: "boolean" },
+  CompactionResult: {
+    summary: "string",
+    "shortSummary?": "string",
+    firstKeptEntryId: "string",
+    tokensBefore: "number.integer",
+    "details?": "unknown",
+    "preserveData?": e,
+    "providerReplayThroughEntryId?": "string"
+  ModelCycleResult: { model: "ModelInfo", "thinkingLevel?": "ThinkingLevel", isScoped: "boolean" },
+  ThinkingLevelCycleResult: { level: "Effort" },
+  CancellationResult: { cancelled: "boolean" },
+  OpenSessionResult: se({ cancelled: "boolean", resumed: "boolean", sessionId: "string", "sessionFile?": "string" }, "`open_session` outcome; `resumed` is false when a fresh session was started."),
+  RemoveQueuedMessageResult: {
+    removed: "boolean",
+    "images?": se("ImageContent[]", "The removed message's images, so the client can restore them with its text."),
+    "imagesDropped?": se("boolean", "Only ever `true`: the images exceeded the transport limit and were omitted; the removal still happened.")
+  PromoteQueuedMessageResult: { promoted: "boolean" },
+  RestoredQueuedMessage: se({ text: "string", "images?": "ImageContent[]" }, "Queued user content withdrawn from the queue, as the editor would restore it."),
+  AbortAndRestoreQueueResult: se({
+    steering: "RestoredQueuedMessage[]",
+    followUp: "RestoredQueuedMessage[]",
+    "imagesDropped?": se("boolean", "Only ever `true`: the full result exceeded the transport limit and every `images` was omitted."),
+    "truncated?": se("boolean", "Only ever `true`: even the text-only result exceeded the limit, so only an oldest-first prefix is listed.")
+  }, "User-authored queued input withdrawn before the abort, oldest first."),
+  BranchMessage: { entryId: "string", text: "string" },
+  BranchResult: { text: "string", cancelled: "boolean" },
+  NavigateTreeResult: {
+    cancelled: "boolean",
+    "aborted?": se("boolean", "Only ever `true`: `abort_branch_summary` stopped the summary; nothing moved."),
+    "editorText?": se("string", "The target was a user message: its text, for the editor; the leaf moved to its parent.")
+  TokenUsage: {
+    input: "number.integer",
+    output: "number.integer",
+    reasoning: jo("number.integer", 0),
+    cacheRead: "number.integer",
+    cacheWrite: "number.integer",
+    total: "number.integer"
+  SessionCredits: { cost: "number", committedCost: "number", acuCost: "number" },
+  SessionStats: {
+    "sessionFile?": "string",
+    sessionId: "string",
+    userMessages: "number.integer",
+    assistantMessages: "number.integer",
+    toolCalls: "number.integer",
+    toolResults: "number.integer",
+    totalMessages: "number.integer",
+    tokens: "TokenUsage",
+    premiumRequests: "number",
+    cost: "number",
+    "credits?": "SessionCredits",
+    "routedModels?": "Record<string, number>",
+    "editRejections?": se("Record<string, number>", "Failed edits by the engine's `errorKind`."),
+    "contextUsage?": "ContextUsage"
+  MessagesPage: {
+    messages: "AgentMessage[]",
+    totalMessages: "number.integer",
+    "nextCursor?": se("string", "Opaque cursor for the next page; absent on the last page.")
+  SlashCommandInput: { "hint?": "string" },
+  SlashSubcommand: { name: "string", "description?": "string", "usage?": "string" },
+  AvailableSlashCommand: {
+    name: "string",
+    "aliases?": "string[]",
+    "description?": "string",
+    "input?": "SlashCommandInput",
+    "subcommands?": "SlashSubcommand[]",
+    source: "SlashCommandSource"
+  SessionEntries: se({ entries: `${e}[]`, leafId: "string | null" }, "OMP-native session entries in append order."),
+  SessionTree: se({ tree: `${e}[]`, leafId: "string | null" }, "Raw session tree roots."),
+  SubagentSnapshot: {
+    id: "string",
+    index: "number.integer",
+    agent: "string",
+    agentSource: "AgentSource",
+    "description?": "string",
+    status: "SubagentStatus",
+    "task?": "string",
+    "assignment?": "string",
+    "sessionFile?": "string",
+    lastUpdate: "number.integer",
+    "progress?": se(e, "Raw `AgentProgress` record."),
+    "parentToolCallId?": "string"
+  SubagentMessages: se({
+    sessionFile: "string",
+    fromByte: "number.integer",
+    nextByte: se("number.integer", "Pass as the next `fromByte` to read incrementally."),
+    reset: se("boolean", "`fromByte` exceeded the file size and reading restarted at zero."),
+    entries: `${e}[]`,
+    messages: "AgentMessage[]"
+  }, "Incremental subagent transcript read."),
+  BtwStatus: se("'running' | 'complete' | 'cancelled' | 'error' | 'interrupted'", "Side-question turn lifecycle; `interrupted` marks a turn whose process died while it ran."),
+  BtwHistoryTurn: se({
+    question: "string",
+    "images?": se("ImageContent[]", "Images attached to the question."),
+    answer: "string",
+    status: "BtwStatus",
+    createdAt: "number.integer",
+    updatedAt: "number.integer",
+    "error?": "string"
+  }, "One question and its answer within a side-question topic."),
+  BtwHistoryRecord: se({
+    question: "string",
+    "images?": se("ImageContent[]", "Images attached to the question."),
+    answer: "string",
+    status: "BtwStatus",
+    createdAt: "number.integer",
+    updatedAt: "number.integer",
+    "error?": "string",
+    id: "string",
+    leafId: "string | null",
+    "followUps?": "BtwHistoryTurn[]"
+  }, "A side-question topic: its first turn's fields plus follow-ups; the latest turn is the last follow-up, else the record."),
+  LoginProvider: { id: "string", name: "string", available: "boolean", authenticated: "boolean" },
+  LogoutAccount: se({
+    credentialId: "number.integer",
+    provider: "string",
+    label: "string",
+    detail: "string",
+    type: "'api_key' | 'oauth'",
+    active: "boolean"
+  }, "A stored credential `logout` can remove; `active` marks credentials the session may be using."),
+  HandoffResult: { "savedPath?": "string" },
+  PromptAck: se({ "agentInvoked?": "boolean" }, "`agentInvoked: false` means the prompt completed locally and no `prompt_result` follows.")
+export { J7e };
+// @bun @bytecode
+import {
+} from "/$bunfs/root/chunks/cli-wrmby7sv.js";
+import {
+} from "/$bunfs/root/chunks/cli-wsz3bcez.js";
+import {
+} from "/$bunfs/root/chunks/cli-3mgtveg6.js";
+import {
+} from "/$bunfs/root/chunks/cli-w50fv7b0.js";
+import {
+} from "/$bunfs/root/chunks/cli-29rqmpa4.js";
+import {
+} from "/$bunfs/root/chunks/cli-20mtymts.js";
+import {
+} from "/$bunfs/root/chunks/cli-2fmem2zc.js";
+// packages/coding-agent/src/modes/rpc/wire/index.ts
+var f = {
+  RpcNotification: se([
+    "ReadyEvent",
+    "PromptResultEvent",
+    "SessionSettledEvent",
+    "ExtensionError",
+    "ExtensionUiRequest",
+    "AvailableCommandsUpdateEvent",
+    "SubagentLifecycleEvent",
+    "SubagentProgressEvent",
+    "SubagentEvent",
+    "LivePhaseEvent",
+    "LiveLevelsEvent",
+    "LiveTranscriptEvent",
+    "LiveEndEvent",
+    "DictationStateEvent",
+    "DictationTranscriptEvent",
+    "DictationEndEvent",
+    "BtwDeltaEvent",
+    "BtwRecordEvent",
+    "CommandOutputEvent",
+    "SessionInfoUpdateEvent",
+    "ConfigUpdateEvent",
+    "RpcFrameErrorEvent",
+    "RpcAgentEvent"
+  ].join(" | "), "Unsolicited outbound frame (everything except responses and host tool/URI requests), discriminated by `type`."),
+  RpcServerFrame: se("RpcResponse | RpcHostRequest | RpcNotification", "Any frame the server writes to stdout (after reassembling `rpc_chunk` sequences), discriminated by `type`.")
+var u = {
+  "x-unknown-fallback": { SubagentEventPayload: ["event"] },
+  "x-scalar-or-array": { SessionState: ["systemPrompt"] }
+function g(t, s) {
+  const e = s.properties;
+  if (!e)
+    return s;
+  let n;
+  for (const c in u) {
+    for (const a of u[c][t] ?? []) {
+      if (!(a in e))
+        throw new Error(`${c} names unknown property ${t}.${a}`);
+      n ??= { ...e };
+      n[a] = { ...n[a], [c]: true };
+  return n ? { ...s, properties: n } : s;
+function R(t) {
+  return t.replace(/(^|_)([a-z])/g, (s, e, n) => n.toUpperCase());
+function v(t) {
+  const s = (e, n) => {
+    if (e === undefined)
+      return null;
+    if (typeof e === "string")
+      return e;
+    if (n in t)
+      throw new Error(`Inline command definition ${n} collides with a shared definition`);
+    t[n] = e;
+    return n;
+  return Q7e.map((e) => {
+    const n = R(e.name);
+    return {
+      name: e.name,
+      doc: e.doc,
+      params: s(e.params, `${n}Params`),
+      result: s(e.result, `${n}Result`),
+      nullable: e.nullable ?? false,
+      unwrap: e.unwrap ?? null,
+      timeoutMs: e.timeoutMs ?? null,
+      completion: e.completion ?? null,
+      clientOmit: e.clientOmit ?? []
+function C() {
+  const t = {
+    ..._Ee,
+    ...Z7e,
+    ...J7e,
+    ...eXe,
+    ...K7e,
+    ...f
+  const s = new Set([...Object.keys(_Ee), "SelectOptionDetail"]);
+  const e = v(t);
+  const n = o.scope(t).export();
+  const c = {};
+  const a = (r, i) => {
+    const d = c[r];
+    if (d && JSON.stringify(d) !== JSON.stringify(i)) {
+      throw new Error(`Conflicting JSON Schema emitted for ${r}`);
+    c[r] = i;
+  for (const r in t) {
+    const { $defs: i, ...d } = n[r].toJsonSchema();
+    a(r, d);
+    const m = i ?? {};
+    for (const p in m)
+      a(p, m[p]);
+  const l = Object.fromEntries(Object.keys(t).map((r) => {
+    const i = g(r, c[r]);
+    return [r, s.has(r) && i.type === "object" ? { ...i, "x-open": true } : i];
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $id: "https://omp.sh/schemas/rpc-wire.json",
+    title: "omp RPC wire protocol",
+    description: "Generated by `bun run gen:rpc` from packages/coding-agent/src/modes/rpc/wire. Commands are JSON lines on stdin; responses and frames are JSON lines on stdout.",
+    "x-rpc": {
+      notification: "RpcNotification",
+      sessionEvent: "RpcAgentEvent",

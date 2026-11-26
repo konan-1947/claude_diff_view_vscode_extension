@@ -20,7 +20,8 @@
     >
       <!-- Empty chat: the space above the centered input, holding the logo at its bottom -->
       <div v-if="messages.length === 0" class="empty-top">
-        <ClaudeCodeLogo :version="cliVersion" />
+        <OmpLogo v-if="isOmp" :version="cliVersion" />
+        <ClaudeCodeLogo v-else :version="cliVersion" />
       </div>
       <!-- Steps folded (Ctrl+O, not the default); over the transcript so nothing moves -->
       <div v-if="!transcriptDetail" class="detail-badge">Steps folded&nbsp;&nbsp;Ctrl+O to show</div>
@@ -158,6 +159,8 @@
             :subagent-messages="activity.subagentMessages.value"
             :find-shell="findBackgroundShell"
             :read-task-output="readTaskOutput"
+            :permission-mode="permissionMode"
+            :busy="isBusy"
             @exit="chatInputRef?.focus()"
             @open-change="(v: boolean) => (tasksDialogOpen = v)"
           />
@@ -207,6 +210,7 @@
   import SessionConflictPrompt from '../components/SessionConflictPrompt.vue';
   import ColdResumePrompt from '../components/ColdResumePrompt.vue';
 import ClaudeCodeLogo from '../components/ClaudeCodeLogo.vue';
+import OmpLogo from '../components/OmpLogo.vue';
   import type { ColdResumeInfo } from '../core/Session';
   import type { Message } from '../models/Message';
   import { RestoreCheckpointKey } from '../composables/runtimeContext';
@@ -222,6 +226,7 @@ import ClaudeCodeLogo from '../components/ClaudeCodeLogo.vue';
   import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
   import { useModelCatalog } from '../composables/useModelCatalog';
   import { availableModes, nextMode } from '../utils/permissionModes';
+  import { isOmp } from '../utils/backend';
 
   const runtime = inject(RuntimeKey);
   if (!runtime) throw new Error('[ChatPage] runtime not provided');
@@ -740,7 +745,7 @@ import ClaudeCodeLogo from '../components/ClaudeCodeLogo.vue';
       return;
     }
     // Slash commands (/clear, /compact...) are the answer, not a message to price
-    if (!trimmed.startsWith('/')) {
+    if (!isOmp && !trimmed.startsWith('/')) {
       checkingCold = true;
       let cold: ColdResumeInfo | undefined;
       try {
@@ -923,6 +928,7 @@ import ClaudeCodeLogo from '../components/ClaudeCodeLogo.vue';
 
   // permissionMode.toggle: cycle through the modes on offer, in the CLI's order
   const togglePermissionMode = () => {
+    if (isOmp) return;
     const s = session.value;
     if (!s) return;
     const cur = (s.permissionMode.value as string) ?? 'default';
@@ -1130,7 +1136,8 @@ import ClaudeCodeLogo from '../components/ClaudeCodeLogo.vue';
   /** The background tasks dialog is open, in the input's place */
   const tasksDialogOpen = ref(false);
   const hasRunningTasks = computed(() =>
-    activity.backgroundTasks.value.some((t) => !isTaskFinished(activity.tasks.value[t.taskId]))
+    activity.backgroundTasks.value.some((t) => !isTaskFinished(activity.tasks.value[t.taskId])) ||
+    Object.values(activity.tasks.value).some((t) => t.backgrounded && !isTaskFinished(t))
   );
   /** Keys typed in the task list stay there (its Esc goes back to the input) */
   const inTaskList = () => !!document.activeElement?.closest('.bg-tasks');

@@ -600,6 +600,13 @@ body {
 .cs-step:hover .cs-step__action {
   color: var(--cs-fg-74);
 }
+/* Nothing to expand (a "Thought" block with no text) */
+.cs-step:disabled {
+  cursor: default;
+}
+.cs-step:disabled:hover .cs-step__action {
+  color: var(--cs-fg-60);
+}
 
 /* ---- Tool card header text (Cursor: action F60%, detail F36%, 13px, regular weight) ---- */
 .tool-message-wrapper.is-card .main-content {

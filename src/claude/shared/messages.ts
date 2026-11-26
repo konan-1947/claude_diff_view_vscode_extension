@@ -1335,6 +1335,17 @@ export interface ToolPermissionRequest {
     context?: ToolPermissionContext;
 }
 
+/**
+ * Close the prompt of an earlier tool_permission_request that can no longer be
+ * answered (OMP UI: omp's own timeout, or the channel went away). The prompt
+ * resolves as denied; the host ignores that answer.
+ */
+export interface CancelPermissionRequest {
+    type: "cancel_permission_request";
+    /** requestId of the tool_permission_request to close */
+    targetRequestId: string;
+}
+
 /** The display part of the SDK's `canUseTool` options (all optional: older CLIs send less) */
 export interface ToolPermissionContext {
     /** Full prompt sentence ("Claude wants to read foo.txt") */
@@ -1581,6 +1592,7 @@ export type WebViewRequestResponse =
  */
 export type ExtensionRequest =
     | ToolPermissionRequest
+    | CancelPermissionRequest
     | InsertAtMentionRequest
     | SelectionChangedRequest
     | UpdateStateRequest

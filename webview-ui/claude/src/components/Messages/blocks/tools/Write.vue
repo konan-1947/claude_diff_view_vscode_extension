@@ -11,7 +11,7 @@
     </template>
 
     <template #main>
-      <ToolFilePath v-if="filePath" :file-path="filePath" :context="context" />
+      <ToolFilePath v-if="filePath" :file-path="filePath" :context="context" :opens-file="false" />
       <span v-if="contentStats" class="content-stats">
         <span class="stat-lines">{{ contentStats.lines }} Lines </span>
         <span class="stat-chars">{{ contentStats.chars }} Chars </span>

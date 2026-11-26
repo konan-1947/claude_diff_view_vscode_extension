@@ -173,6 +173,14 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
     .panel-header .btn-label { display: none; }
   }
   body > .pending-tree { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; padding-bottom: 5px; }
+  /* Thin rounded scrollbar instead of VS Code's 10px square default; the thumb brightens while the list is hovered. */
+  body > .pending-tree::-webkit-scrollbar { width: 6px; height: 6px; }
+  body > .pending-tree::-webkit-scrollbar-track { background: transparent; }
+  body > .pending-tree::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+  body > .pending-tree:hover::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(121,121,121,0.4)); }
+  body > .pending-tree::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100,100,100,0.7)); }
+  body > .pending-tree::-webkit-scrollbar-thumb:active { background: var(--vscode-scrollbarSlider-activeBackground, rgba(191,191,191,0.4)); }
+  body > .pending-tree::-webkit-scrollbar-corner { background: transparent; }
   /* Fixed-height footer: the cat and Accept All stay put whether or not files are pending. */
   .pending-foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25)); }
   .pending-cat { height: 84px; background: url('${catImg}') center / contain no-repeat; opacity: ${hasPending ? '0.65' : '1'}; pointer-events: none; }

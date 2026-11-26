@@ -3,8 +3,9 @@
     <div class="button-row">
       <!-- Left Section: Dropdowns -->
       <div class="controls-section">
-        <!-- Mode Select -->
+        <!-- Mode Select: Claude-only permission modes -->
         <ModeSelect
+          v-if="!isOmp"
           :permission-mode="permissionMode"
           :modes="modes"
           @mode-select="(mode) => emit('modeSelect', mode)"
@@ -95,6 +96,7 @@ import ModeSelect from './ModeSelect.vue'
 import ModelSelect from './ModelSelect.vue'
 import EffortSelect from './EffortSelect.vue'
 import type { ModeOption } from '../utils/permissionModes'
+import { isOmp } from '../utils/backend'
 
 interface Props {
   disabled?: boolean

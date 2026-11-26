@@ -145,9 +145,22 @@ export class DiffManager {
     }));
   }
 
-  async snapshotBefore(filePath: string): Promise<void> {
+  /**
+   * `knownContent`: nội dung trước khi ghi mà caller đã biết (baseline của
+   * WorkspaceWatcher). Khi có, snapshot được đặt NGAY, trước await đầu tiên — dùng
+   * cho các CLI không chờ hook (OMP UI): đọc đĩa có thể chạy sau lần ghi và lấy
+   * nhầm nội dung mới.
+   */
+  async snapshotBefore(filePath: string, knownContent?: string): Promise<void> {
     const absPath = normalizePath(filePath);
     if (this.snapshots.has(absPath)) {
+      return;
+    }
+    if (knownContent !== undefined) {
+      if (looksBinary(knownContent) || exceedsLineLimit(knownContent)) { return; }
+      this.setSnapshot(absPath, { content: knownContent, fileExistedBefore: true });
+      this.rememberDisplayPath(filePath);
+      this.scheduleSave();
       return;
     }
     const uri = vscode.Uri.file(absPath);

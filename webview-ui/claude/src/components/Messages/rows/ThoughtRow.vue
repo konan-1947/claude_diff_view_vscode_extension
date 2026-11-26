@@ -1,11 +1,18 @@
 <template>
   <div class="cs-step-row">
-    <button type="button" class="cs-step" :class="{ open }" :aria-expanded="open" @click="open = !open">
+    <button
+      type="button"
+      class="cs-step"
+      :class="{ open: open && hasText }"
+      :aria-expanded="hasText ? open : undefined"
+      :disabled="!hasText"
+      @click="open = !open"
+    >
       <span class="cs-step__action">Thought</span>
       <span v-if="detail" class="cs-step__details">{{ detail }}</span>
-      <span class="codicon codicon-chevron-down cs-step__chevron" />
+      <span v-if="hasText" class="codicon codicon-chevron-down cs-step__chevron" />
     </button>
-    <div v-if="open" class="thought-text">{{ text }}</div>
+    <div v-if="open && hasText" class="thought-text">{{ text }}</div>
   </div>
 </template>
 
@@ -16,8 +23,11 @@ const props = defineProps<{ text: string }>();
 // Starts closed, also with Ctrl+O's step list shown: a click opens it
 const open = ref(false);
 
+// Blocks from sessions whose thinking display was "omitted" (older history, or
+// a redacted block) carry no text: nothing to expand, and "briefly" would be a guess
+const hasText = computed(() => props.text.trim().length > 0);
 // The SDK does not report how long the model thought, so only flag trivial ones
-const detail = computed(() => (props.text.trim().length < 160 ? 'briefly' : ''));
+const detail = computed(() => (hasText.value && props.text.trim().length < 160 ? 'briefly' : ''));
 </script>
 
 <style scoped>

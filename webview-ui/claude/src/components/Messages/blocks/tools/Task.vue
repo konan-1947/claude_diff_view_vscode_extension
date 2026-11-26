@@ -7,14 +7,16 @@
   >
     <!-- Same icon as the terminal's "view diff" button -->
     <template #icon>
-      <img :src="agentIcon" class="agent-icon" alt="" aria-hidden="true" />
+      <OmpMark v-if="isOmp" class="agent-icon omp-agent-icon" />
+      <img v-else :src="agentIcon" class="agent-icon" alt="" aria-hidden="true" />
     </template>
 
     <template #main>
       <span class="tool-label">Agent</span>
       <span v-if="subagentType" class="agent-badge">{{ subagentType }}</span>
       <span v-if="description" class="description-text">{{ description }}</span>
-      <span v-if="running" class="codicon codicon-loading codicon-modifier-spin running-icon"></span>
+      <OmpSpinner v-if="running && isOmp" class="running-icon" />
+      <span v-else-if="running" class="codicon codicon-loading codicon-modifier-spin running-icon"></span>
     </template>
 
     <!-- One live line like the CLI: what it is doing and how much it did -->
@@ -46,6 +48,9 @@ import SubagentDetail from '../../SubagentDetail.vue';
 import SubagentStatusLine from '../../SubagentStatusLine.vue';
 import { subagentCalls, subagentStatus } from '../../../../utils/subagentCalls';
 import agentIcon from '../../../../../../../media/icons/view-diff.png';
+import OmpMark from '../../../OmpMark.vue';
+import OmpSpinner from '../../../OmpSpinner.vue';
+import { isOmp } from '../../../../utils/backend';
 import { useLiveActivity } from '../../../../composables/useLiveActivity';
 import { taskForToolUse } from '../../../../core/LiveActivity';
 
@@ -133,6 +138,10 @@ const shouldExpand = computed(() => {
   display: block;
   height: 14px;
   width: auto;
+}
+/* OMP tabs: omp's own mark (108×100) in place of the agent icon */
+.omp-agent-icon {
+  width: 15px;
 }
 
 .agent-badge {

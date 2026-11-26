@@ -377,6 +377,7 @@
         page: 'chat',
         id: id,
         resume: options.resume || undefined,
+        backend: options.backend || 'claude',
       });
       iframe.srcdoc = html;
       aliveTimer = setTimeout(function () {

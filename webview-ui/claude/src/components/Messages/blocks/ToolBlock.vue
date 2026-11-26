@@ -37,6 +37,9 @@ import DefaultTool from './tools/Default.vue';
 import AskUserQuestionTool from './tools/AskUserQuestion.vue';
 import ReplTool from './tools/REPL.vue';
 import PollTool from './tools/Poll.vue';
+import OmpEditTool from './tools/omp/OmpEdit.vue';
+import OmpTodoTool from './tools/omp/OmpTodo.vue';
+import OmpEvalTool from './tools/omp/OmpEval.vue';
 
 interface Props {
   block: ToolUseContentBlock;
@@ -115,6 +118,13 @@ const toolComponent = computed(() => {
       return ReplTool;
     case 'Poll':
       return PollTool;
+    // omp tools (lowercase names, see src/omp/ompTools.ts)
+    case 'edit':
+      return OmpEditTool;
+    case 'todo':
+      return OmpTodoTool;
+    case 'eval':
+      return OmpEvalTool;
     default:
       return DefaultTool;
   }

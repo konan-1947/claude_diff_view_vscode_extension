@@ -11,7 +11,7 @@
     </template>
 
     <template #main>
-      <ToolFilePath v-if="filePath" :file-path="filePath" :context="context" />
+      <ToolFilePath v-if="filePath" :file-path="filePath" :context="context" :opens-file="false" />
       <span v-if="diffStats" class="diff-stats">
         <span v-if="diffStats.added > 0" class="stat-add">+{{ diffStats.added }}</span>
         <span v-if="diffStats.removed > 0" class="stat-remove">-{{ diffStats.removed }}</span>

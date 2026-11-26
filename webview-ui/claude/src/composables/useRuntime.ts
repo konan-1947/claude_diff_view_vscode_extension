@@ -6,7 +6,7 @@ import { SessionStore } from '../core/SessionStore';
 import type { SelectionRange } from '../core/Session';
 import { EventEmitter } from '../utils/events';
 import { transport, atMentionEvents, selectionEvents } from '../core/runtimeTransport';
-import { UI_SLASH_COMMANDS, uiCommandId } from '../providers/slashCommandProvider';
+import { uiSlashCommands, uiCommandId } from '../providers/slashCommandProvider';
 
 export interface RuntimeInstance {
   connectionManager: ConnectionManager;
@@ -59,8 +59,8 @@ export function useRuntime(): RuntimeInstance {
 
   // Commands this UI answers with its own panel (ChatInputBox opens it on
   // submit / pick). Should a CLI start listing one of them, the UI one wins.
-  const UI_COMMAND_NAMES = new Set(UI_SLASH_COMMANDS.map((cmd) => cmd.name));
-  const uiCommandDisposers = UI_SLASH_COMMANDS.map((cmd) =>
+  const UI_COMMAND_NAMES = new Set(uiSlashCommands.map((cmd) => cmd.name));
+  const uiCommandDisposers = uiSlashCommands.map((cmd) =>
     appContext.commandRegistry.registerAction(
       {
         id: uiCommandId(cmd.name),

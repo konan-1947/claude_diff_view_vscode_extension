@@ -33,6 +33,8 @@ export interface SoundNotificationSettings {
 /** See `src/commands/altMenuFocus.ts`. */
 export interface FocusSettings {
   preventAltMenuFocus: boolean;
+  /** Agent mode: select the clicked pending file in Explorer (may switch the side bar to Explorer). */
+  revealInExplorer: boolean;
 }
 
 /** Giới hạn kích thước file được theo dõi. Xem `src/watcher/fileSizeLimit.ts`. */
@@ -109,6 +111,7 @@ export const DEFAULT_SOUND_NOTIFICATION_SETTINGS: SoundNotificationSettings = {
 
 export const DEFAULT_FOCUS_SETTINGS: FocusSettings = {
   preventAltMenuFocus: true,
+  revealInExplorer: false,
 };
 
 export const DEFAULT_FILE_LIMIT_SETTINGS: FileLimitSettings = {
@@ -127,6 +130,9 @@ export const MAX_AUTO_OPEN_DIFFS_CEILING = 1000;
 
 export type SessionKind = 'terminal' | 'claude';
 
+/** Agent behind a chat tab (kind 'claude'): the same uic chat app, different host backend. */
+export type ChatBackend = 'claude' | 'omp';
+
 /**
  * Pane layout of the terminal webview (res/webview/paneLayout.js): a split tree whose
  * leaves are tab groups. Kept by the host only so a rebuilt webview (Agent mode toggle)
@@ -142,7 +148,7 @@ export type IncomingMessage =
   | { type: 'pendingOverlay'; open: boolean }
   | { type: 'openPendingFile'; path: string }
   | { type: 'acceptAllChanges' }
-  | { type: 'createSession'; cols: number; rows: number; agent?: string; kind?: SessionKind }
+  | { type: 'createSession'; cols: number; rows: number; agent?: string; kind?: SessionKind; backend?: ChatBackend }
   | { type: 'turnDone'; id: string; kind: SessionKind }
   | { type: 'requestAgents' }
   | { type: 'closeSession'; id: string }
@@ -188,8 +194,10 @@ export interface SessionSnapshot {
   rows: number;
   exited: boolean;
   exitCode: number;
-  /** Claude UI tab: Claude session id to reopen in the rebuilt iframe. */
+  /** Chat tab: session id to reopen in the rebuilt iframe. */
   resume?: string;
+  /** Chat tab: which agent backend drives it. */
+  backend?: ChatBackend;
 }
 
 export const DEFAULT_SETTINGS: TerminalSettings = {

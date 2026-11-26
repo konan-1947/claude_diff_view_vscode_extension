@@ -1,6 +1,7 @@
 import type { CommandAction } from '../core/AppContext'
 import type { RuntimeInstance } from '../composables/useRuntime'
 import type { DropdownItemType } from '../types/dropdown'
+import { isOmp } from '../utils/backend'
 
 /**
  * Slash Command data provider
@@ -33,6 +34,14 @@ export const UI_SLASH_COMMANDS: {
   { name: 'login', description: 'Sign in with your Anthropic account' },
   { name: 'logout', description: 'Sign out from your Anthropic account' },
 ]
+
+/** UI commands that also work in an OMP tab (they need nothing from the Claude CLI) */
+const OMP_UI_COMMANDS = new Set(['resume', 'help', 'export', 'rewind'])
+
+/** The UI commands offered in this tab */
+export const uiSlashCommands = isOmp
+  ? UI_SLASH_COMMANDS.filter((cmd) => OMP_UI_COMMANDS.has(cmd.name))
+  : UI_SLASH_COMMANDS
 
 const UI_COMMAND_PREFIX = 'ui-command-'
 

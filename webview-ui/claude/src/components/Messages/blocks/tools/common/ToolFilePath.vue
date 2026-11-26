@@ -21,9 +21,15 @@ interface Props {
   context?: ToolContext;
   startLine?: number;
   endLine?: number;
+  /**
+   * false: the name does not open the file; the click falls through to the card's
+   * header, which folds the in-chat diff open/closed. Edit cards use this: the file's
+   * full diff is opened from the side bar (Pending Files) when wanted.
+   */
+  opensFile?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), { opensFile: true });
 
 const fileName = computed(() => {
   if (!props.filePath) return '';
@@ -36,6 +42,7 @@ const fullPath = computed(() => {
 });
 
 function handleClick(event: MouseEvent) {
+  if (!props.opensFile) return;
   event.stopPropagation();
   event.preventDefault();
 

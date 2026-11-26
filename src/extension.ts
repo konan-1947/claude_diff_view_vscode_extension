@@ -14,6 +14,7 @@ import { AgentChangesPanel } from './views/agentChangesPanel';
 import { TerminalPanelProvider } from './terminal/terminalPanel';
 import { TerminalSessionStore } from './terminal/terminalSessions';
 import { createClaudeUiBackend } from './claude/claudeUi';
+import { createOmpUiBackend } from './omp/ompUi';
 import { forgetOpenedBeside, hasOpenedBeside, isOpenedBeside, onDidChangeOpenedBeside } from './preview/openBeside';
 import { coalesce } from './util/coalesce';
 
@@ -113,7 +114,9 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     (filePath) => {
       if (agentModeActive) {
         const opened = !!agentModeTerminal?.openPendingFileInAgent(filePath);
-        if (opened) { void revealInExplorerKeepingFocus(filePath); }
+        if (opened && vscode.workspace.getConfiguration('ai-cli-diff-view').get<boolean>('revealInExplorer', false)) {
+          void revealInExplorerKeepingFocus(filePath);
+        }
         return opened;
       }
       void diffManager.openDiff(filePath);
@@ -244,8 +247,33 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   // "Already open in another tab" goes by the store: it keeps a tab's
   // conversation while the tab's iframe is gone.
   claudeUi.webViews.setSessionOwnerLookup((sessionId, exceptTabId) =>
-    terminalSessions.claudeTabForSession(sessionId, exceptTabId));
-  const terminalPanel = new TerminalPanelProvider(context, diffManager, terminalSessions, claudeUi);
+    terminalSessions.claudeTabForSession(sessionId, exceptTabId, 'claude'));
+  // OMP UI tabs: same chat app, `omp --mode rpc` behind it (src/omp).
+  const ompUi = createOmpUiBackend(
+    context,
+    // omp does not wait for this hook before writing: take the watcher's
+    // baseline (synchronous) rather than reading the disk, which may already
+    // hold the new content
+    (filePath) => diffManager.snapshotBefore(filePath, workspaceWatcher.baselineOf(filePath)),
+    (filePath) => diffManager.notifyPendingContentChanged(filePath),
+  );
+  context.subscriptions.push(
+    ompUi,
+    ompUi.webViews.onTabRequest((request) => {
+      if (request.kind === 'rename' && request.title !== undefined) {
+        terminalSessions.setClaudeTitle(request.tabId, request.title);
+      } else if (request.kind === 'new') {
+        terminalSessions.createClaude(80, 24, undefined, 'omp');
+      } else if (request.kind === 'focus') {
+        terminalSessions.activate(request.tabId);
+      }
+    }),
+    ompUi.webViews.onTabSession(({ tabId, sessionId }) => terminalSessions.setClaudeSession(tabId, sessionId)),
+    terminalSessions.onClosed((id) => ompUi.webViews.releaseTab(id)),
+  );
+  ompUi.webViews.setSessionOwnerLookup((sessionId, exceptTabId) =>
+    terminalSessions.claudeTabForSession(sessionId, exceptTabId, 'omp'));
+  const terminalPanel = new TerminalPanelProvider(context, diffManager, terminalSessions, claudeUi, ompUi);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       TerminalPanelProvider.viewType,
@@ -323,7 +351,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       return;
     }
 
-    const terminal = new TerminalPanelProvider(context, diffManager, terminalSessions, claudeUi);
+    const terminal = new TerminalPanelProvider(context, diffManager, terminalSessions, claudeUi, ompUi);
     const panel = terminal.openWebviewPanel();
     agentModeTerminal = terminal;
     agentModePanel = panel;

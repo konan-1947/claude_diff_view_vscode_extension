@@ -1,10 +1,39 @@
 <template>
   <div v-if="rows.length > 0" class="bg-tasks">
-    <!-- Closed: one line under the input, as the CLI's "1 shell running ↓ to view" -->
-    <div v-if="!open" class="bg-header" @click="openDialog()">
-      <span class="codicon codicon-loading codicon-modifier-spin bg-spin"></span>
-      <span>{{ rows.length }} background task{{ rows.length === 1 ? '' : 's' }}</span>
-      <span class="bg-keys">↓ to view</span>
+    <!-- Closed: the CLI's panel under the prompt — status line, then the tree
+         (main as the root, one row per background task) -->
+    <div v-if="!open" class="bg-panel">
+      <div class="bg-summary" @click="openDialog()">
+        <span class="bg-mark">▸▸</span>
+        <span v-if="permissionMode === 'auto'">auto mode on</span>
+        <span v-if="permissionMode === 'auto'" class="bg-sep">·</span>
+        <span>{{ rows.length }} background task{{ rows.length === 1 ? '' : 's' }}</span>
+        <template v-if="busy">
+          <span class="bg-sep">·</span>
+          <span>esc to interrupt</span>
+        </template>
+        <span class="bg-sep">·</span>
+        <span>↓ to manage</span>
+      </div>
+      <div class="bg-tree">
+        <div class="bg-tree-row bg-tree-main">
+          <span class="bg-dot bg-dot-main">●</span>
+          <span class="bg-main-label">main</span>
+        </div>
+        <div
+          v-for="task in rows"
+          :key="task.taskId"
+          class="bg-tree-row"
+          :title="task.description"
+          @click="openInDialog(task.taskId)"
+        >
+          <span class="bg-dot">○</span>
+          <span class="bg-type">{{ task.subagentType || (task.isAgent ? 'agent' : 'shell') }}</span>
+          <span class="bg-desc">{{ task.description || task.taskId }}</span>
+          <span v-if="task.stats" class="bg-stats">{{ task.stats }}</span>
+          <span v-if="errors[task.taskId]" class="bg-error" :title="errors[task.taskId]">{{ errors[task.taskId] }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- Open: takes the input's place, like the CLI's background tasks dialog.
@@ -34,7 +63,8 @@
             @click="selected = index; showTask(task.taskId)"
           >
             <span class="bg-pointer">{{ index === selected ? '›' : '' }}</span>
-            <img v-if="task.isAgent" :src="agentIcon" class="bg-kind bg-agent-icon" alt="" aria-hidden="true" />
+            <OmpMark v-if="task.isAgent && isOmp" class="bg-kind bg-agent-icon bg-omp-icon" />
+            <img v-else-if="task.isAgent" :src="agentIcon" class="bg-kind bg-agent-icon" alt="" aria-hidden="true" />
             <span v-else class="codicon codicon-terminal bg-kind"></span>
             <span class="bg-desc">{{ task.description || task.taskId }}</span>
             <span v-if="task.stats" class="bg-stats">{{ task.stats }}</span>
@@ -93,6 +123,8 @@ import SubagentDetail from './Messages/SubagentDetail.vue';
 import BackgroundShellDetail, { type BackgroundShell } from './BackgroundShellDetail.vue';
 import { subagentCalls, subagentStatus } from '../utils/subagentCalls';
 import agentIcon from '../../../../media/icons/view-diff.png';
+import OmpMark from './OmpMark.vue';
+import { isOmp } from '../utils/backend';
 import type { BackgroundTask, TaskInfo } from '../core/LiveActivity';
 import { formatDuration, formatTokenCount, isTaskFinished } from '../core/LiveActivity';
 
@@ -112,6 +144,10 @@ interface Props {
   /** Command and output file of a background Bash task */
   findShell: (taskId: string, toolUseId?: string) => BackgroundShell | undefined;
   readTaskOutput: (path: string) => Promise<{ output?: string; truncated?: boolean; error?: string }>;
+  /** The session's permission mode (`auto` shows the mode segment) */
+  permissionMode?: string;
+  /** The main turn is running (`esc to interrupt`) */
+  busy?: boolean;
 }
 
 const props = defineProps<Props>();
@@ -139,13 +175,33 @@ const openTask = ref<string | null>(null);
 const selected = ref(0);
 const dialogRef = ref<HTMLElement>();
 
-const rows = computed(() =>
-  props.tasks.filter((task) => !isTaskFinished(props.taskInfo[task.taskId])).map((task) => {
+// Both sources: `tasks` (background_tasks_changed) and the backgrounded tasks
+// of `taskInfo` (task_started/task_updated), so a subagent shows even before the
+// CLI lists it. De-duplicated by task id, `tasks` order first.
+const rows = computed(() => {
+  const listed = props.tasks;
+  const listedIds = new Set(listed.map((t) => t.taskId));
+  const extra = Object.values(props.taskInfo).filter(
+    (t) => t.backgrounded && !listedIds.has(t.taskId) && !isTaskFinished(t),
+  );
+  const all = [
+    ...listed,
+    ...extra.map((t) => ({
+      taskId: t.taskId,
+      taskType: t.taskType ?? '',
+      description: t.description ?? '',
+      subagentType: t.subagentType,
+    })),
+  ];
+  return all.filter((t) => !isTaskFinished(props.taskInfo[t.taskId])).map((task) => {
     const info = props.taskInfo[task.taskId];
     const runtime = info ? formatDuration(now.value - info.startedAt) : '';
-    const stats = [info?.totalTokens ? `${formatTokenCount(info.totalTokens)} tokens` : '', runtime]
-      .filter(Boolean).join('   ');
-    const isAgent = task.taskType !== 'local_bash';
+    const stats = [
+      runtime,
+      info?.totalTokens ? `↓ ${formatTokenCount(info.totalTokens)} tokens` : '',
+    ].filter(Boolean).join(' · ');
+    const taskType = task.taskType || info?.taskType || '';
+    const isAgent = taskType !== 'local_bash';
     const messages = (info?.toolUseId && props.subagentMessages[info.toolUseId]) || [];
     return {
       ...task,
@@ -158,8 +214,8 @@ const rows = computed(() =>
         ? subagentStatus(info, subagentCalls(messages), true, now.value)
         : null,
     };
-  })
-);
+  });
+});
 
 const current = computed(() => rows.value.find((r) => r.taskId === openTask.value));
 const currentShell = computed(() =>
@@ -211,6 +267,12 @@ function showTask(taskId: string) {
   openTask.value = taskId;
   view.value = 'task';
   focusDialog();
+}
+
+/** A row of the closed tree: the dialog opens on it */
+function openInDialog(taskId: string) {
+  open.value = true;
+  showTask(taskId);
 }
 
 function backToList() {
@@ -304,26 +366,62 @@ async function kill(taskId: string) {
   color: var(--vscode-input-placeholderForeground);
 }
 
-.bg-header {
+.bg-panel {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.bg-summary {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding-left: 4px;
+  gap: 4px;
+  padding: 2px 4px;
   cursor: pointer;
   user-select: none;
 }
 
-.bg-spin {
-  font-size: 11px !important;
-  opacity: 0.6;
+.bg-mark {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-focusBorder));
 }
 
-.bg-keys {
-  margin-left: auto;
-  padding-right: 8px;
-  font-size: 11px;
+.bg-sep {
+  opacity: 0.7;
+}
+
+.bg-tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.bg-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
   white-space: nowrap;
+}
+
+.bg-tree-row:not(.bg-tree-main) {
+  cursor: pointer;
+}
+
+.bg-dot {
+  flex-shrink: 0;
+}
+
+.bg-dot-main {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-focusBorder));
+}
+
+.bg-main-label {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.bg-type {
+  flex-shrink: 0;
   opacity: 0.7;
 }
 
@@ -469,6 +567,10 @@ async function kill(taskId: string) {
   height: 12px;
   width: auto;
   opacity: 1;
+}
+/* OMP tabs: omp's own mark (108×100) in place of the agent icon */
+.bg-omp-icon {
+  width: 13px;
 }
 
 .bg-desc {

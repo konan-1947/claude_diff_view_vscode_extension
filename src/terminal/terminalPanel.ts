@@ -85,10 +85,11 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly diffManager: DiffManager,
     private readonly sessions: TerminalSessionStore,
-    private readonly claudeUi?: ClaudeUiBackend
+    private readonly claudeUi?: ClaudeUiBackend,
+    private readonly ompUi?: ClaudeUiBackend
   ) {
     this.sessionSubs = [
-      sessions.onCreated(({ id, title, kind }) => this.postSession({ type: 'sessionCreated', id, title, kind })),
+      sessions.onCreated(({ id, title, kind, backend }) => this.postSession({ type: 'sessionCreated', id, title, kind, backend })),
       sessions.onClosed((id) => this.postSession({ type: 'sessionClosed', id })),
       sessions.onData(({ id, data }) => this.postSession({ type: 'data', id, data })),
       sessions.onExit(({ id, code }) => this.postSession({ type: 'exit', id, code })),
@@ -463,17 +464,20 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
     return {
       preventAltMenuFocus: config.get<boolean>('preventAltMenuFocus', DEFAULT_FOCUS_SETTINGS.preventAltMenuFocus),
+      revealInExplorer: config.get<boolean>('revealInExplorer', DEFAULT_FOCUS_SETTINGS.revealInExplorer),
     };
   }
 
   /** The window setting itself is applied by the config listener in extension.ts. */
   private async saveFocusSettings(incoming: Partial<FocusSettings>): Promise<void> {
-    if (typeof incoming.preventAltMenuFocus !== 'boolean' ||
-        incoming.preventAltMenuFocus === this.loadFocusSettings().preventAltMenuFocus) {
-      return;
-    }
+    const current = this.loadFocusSettings();
     const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
-    await config.update('preventAltMenuFocus', incoming.preventAltMenuFocus, vscode.ConfigurationTarget.Global);
+    for (const key of ['preventAltMenuFocus', 'revealInExplorer'] as const) {
+      const value = incoming[key];
+      if (typeof value === 'boolean' && value !== current[key]) {
+        await config.update(key, value, vscode.ConfigurationTarget.Global);
+      }
+    }
   }
 
   private loadBurstDetectionSettings(): BurstDetectionSettings {
@@ -657,7 +661,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         case 'createSession': {
           if (msg.kind === 'claude') {
-            this.sessions.createClaude(msg.cols, msg.rows);
+            this.sessions.createClaude(msg.cols, msg.rows, undefined, msg.backend === 'omp' ? 'omp' : 'claude');
             return;
           }
           const id = this.sessions.create(msg.cols, msg.rows);
@@ -668,7 +672,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
         }
         case 'claudeUi':
           if (typeof msg.id === 'string' && this.sessions.isClaude(msg.id)) {
-            this.claudeUi?.webViews.receive(msg.id, msg.message);
+            this.chatBackend(msg.id)?.webViews.receive(msg.id, msg.message);
           }
           return;
         case 'turnDone':
@@ -1000,12 +1004,24 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
   /** Lets the Claude UI backend reach the iframes of this webview. */
   private attachClaudeUi(webview: vscode.Webview): void {
     this.claudeUiSink?.dispose();
-    this.claudeUiSink = this.claudeUi?.webViews.registerSink({
-      webview,
-      post: (tabId, payload) => {
-        void webview.postMessage({ type: 'claudeUi', id: tabId, payload });
-      },
-    });
+    const sinks = ([['claude', this.claudeUi], ['omp', this.ompUi]] as const)
+      .filter(([, backend]) => !!backend)
+      .map(([name, backend]) => backend!.webViews.registerSink({
+        webview,
+        post: (tabId, payload) => {
+          // A broadcast (no tab) goes only to this backend's tabs, never across backends
+          const ids = tabId ? [tabId] : this.sessions.claudeIds(name);
+          for (const id of ids) {
+            void webview.postMessage({ type: 'claudeUi', id, payload });
+          }
+        },
+      }));
+    this.claudeUiSink = vscode.Disposable.from(...sinks);
+  }
+
+  /** Backend of chat tab `id` (Claude UI or OMP UI). */
+  private chatBackend(id: string): ClaudeUiBackend | undefined {
+    return this.sessions.backendOf(id) === 'omp' ? this.ompUi : this.claudeUi;
   }
 
   /**
@@ -1016,7 +1032,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     this.claudeUiSink?.dispose();
     this.claudeUiSink = undefined;
     for (const id of this.sessions.claudeIds()) {
-      this.claudeUi?.webViews.releaseTab(id);
+      this.chatBackend(id)?.webViews.releaseTab(id);
     }
   }
 

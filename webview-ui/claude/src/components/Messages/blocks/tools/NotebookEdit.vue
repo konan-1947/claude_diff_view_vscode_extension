@@ -6,7 +6,7 @@
   >
     <template #main>
       <span class="tool-label">NotebookEdit</span>
-      <ToolFilePath v-if="notebookPath" :file-path="notebookPath" :context="context" />
+      <ToolFilePath v-if="notebookPath" :file-path="notebookPath" :context="context" :opens-file="false" />
       <span v-if="editMode" class="mode-badge" :class="`mode-${editMode}`">{{ editMode }}</span>
     </template>
 

@@ -77,6 +77,8 @@ export abstract class BaseTransport {
   protected readonly fromHost = new AsyncQueue<ExtensionToWebViewMessage>();
   protected readonly streams = new Map<string, AsyncQueue<any>>();
   protected readonly outstandingRequests = new Map<string, RequestHandler>();
+  /** Open tool_permission_request prompts by the host's requestId (cancel_permission_request) */
+  private readonly openPermissionRequests = new Map<string, PermissionRequest>();
 
   constructor(
     protected readonly atMentionEvents: EventEmitter<string>,
@@ -622,11 +624,20 @@ export abstract class BaseTransport {
     const req: any = (message as any).request;
     switch (req.type) {
       case "tool_permission_request": {
-        const response = await this.handleToolPermissionRequest(
+        // Not awaited: the message loop must keep running while the prompt is
+        // open (responses to other requests, a cancel_permission_request for it)
+        void this.handleToolPermissionRequest(
           (message.channelId ?? "") as string,
-          req as ToolPermissionRequest
-        );
-        this.send({ type: "response", requestId: message.requestId, response });
+          req as ToolPermissionRequest,
+          message.requestId
+        ).then((response) => {
+          this.send({ type: "response", requestId: message.requestId, response });
+        });
+        break;
+      }
+      case "cancel_permission_request": {
+        // The host gave up on that prompt: close it (the answer is ignored there)
+        this.openPermissionRequests.get(req.targetRequestId)?.reject("Cancelled", false);
         break;
       }
       case "insert_at_mention": {
@@ -663,7 +674,8 @@ export abstract class BaseTransport {
 
   private async handleToolPermissionRequest(
     channelId: string,
-    request: ToolPermissionRequest
+    request: ToolPermissionRequest,
+    requestId: string
   ): Promise<ExtensionRequestResponse> {
     let trackedRequest: PermissionRequest | undefined;
     return new Promise<ExtensionRequestResponse>((resolve) => {
@@ -675,6 +687,7 @@ export abstract class BaseTransport {
         request.context ?? {}
       );
       trackedRequest = permissionRequest;
+      this.openPermissionRequests.set(requestId, permissionRequest);
 
       permissionRequest.onResolved((resolution: PermissionResult) => {
         resolve({ type: "tool_permission_response", result: resolution });
@@ -689,6 +702,7 @@ export abstract class BaseTransport {
       ]);
       this.permissionRequested.emit(permissionRequest);
     }).finally(() => {
+      this.openPermissionRequests.delete(requestId);
       if (trackedRequest) {
         this.permissionRequests(
           this.permissionRequests().filter((i) => i !== trackedRequest)

@@ -40,6 +40,7 @@ import { computed, inject, nextTick, ref, watch } from 'vue'
 import CommandPanel from './CommandPanel.vue'
 import { RuntimeKey } from '../../composables/runtimeContext'
 import { isUiCommand } from '../../providers/slashCommandProvider'
+import { agentName, isOmp } from '../../utils/backend'
 import type { CommandAction } from '../../core/AppContext'
 
 const emit = defineEmits<{
@@ -50,10 +51,10 @@ const emit = defineEmits<{
 const runtime = inject(RuntimeKey)
 
 const SHORTCUTS = [
-  { keys: 'Enter', text: 'send (queued while Claude is working)' },
+  { keys: 'Enter', text: `send (queued while ${agentName} is working)` },
   { keys: 'Shift+Enter', text: 'new line' },
   { keys: 'Esc', text: 'stop the running turn, or close a menu' },
-  { keys: 'Shift+Tab', text: 'switch permission mode' },
+  ...(isOmp ? [] : [{ keys: 'Shift+Tab', text: 'switch permission mode' }]),
   { keys: '/', text: 'commands' },
   { keys: '@', text: 'mention a file' },
   { keys: 'Shift+drop', text: 'mention dropped files' },

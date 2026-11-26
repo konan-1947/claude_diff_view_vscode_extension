@@ -18,6 +18,7 @@ import { computed } from 'vue'
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import type { PermissionRequest } from '../../core/PermissionRequest'
 import type { ToolContext } from '../../types/tool'
+import { agentName } from '../../utils/backend'
 import PromptFrame from './PromptFrame.vue'
 import PromptOptions, { type PromptOption } from './PromptOptions.vue'
 
@@ -49,7 +50,7 @@ const choices = computed<Choice[]>(() => {
   }
   list.push({ label: 'Yes, and auto-accept edits', mode: 'acceptEdits' })
   list.push({ label: 'Yes, and manually approve edits', mode: 'default' })
-  list.push({ label: 'No, keep planning (tell Claude what to change)', input: true, hint: 'esc' })
+  list.push({ label: `No, keep planning (tell ${agentName} what to change)`, input: true, hint: 'esc' })
   return list
 })
 const options = computed<PromptOption[]>(() => choices.value)

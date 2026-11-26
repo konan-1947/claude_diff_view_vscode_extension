@@ -4,10 +4,11 @@ import * as vscode from 'vscode';
 import { Terminal as HeadlessTerminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { PtySession } from './ptySession';
-import { LayoutNode, SessionKind, SessionSnapshot } from './terminalTypes';
+import { ChatBackend, LayoutNode, SessionKind, SessionSnapshot } from './terminalTypes';
 
 const SCROLLBACK_LINES = 3000;
 const CLAUDE_TITLE_FALLBACK = 'Claude Code';
+const CHAT_TITLE_FALLBACK: Record<ChatBackend, string> = { claude: CLAUDE_TITLE_FALLBACK, omp: 'OMP' };
 
 interface BaseRecord {
   id: string;
@@ -37,6 +38,7 @@ interface TerminalRecord extends BaseRecord {
  */
 interface ClaudeRecord extends BaseRecord {
   kind: 'claude';
+  backend: ChatBackend;
   sessionId?: string;
 }
 
@@ -58,7 +60,7 @@ export class TerminalSessionStore implements vscode.Disposable {
   /** Split layout of the tab groups, as last reported by a terminal webview. */
   layout: LayoutNode | undefined;
 
-  private readonly _onCreated = new vscode.EventEmitter<{ id: string; title: string; kind: SessionKind }>();
+  private readonly _onCreated = new vscode.EventEmitter<{ id: string; title: string; kind: SessionKind; backend?: ChatBackend }>();
   readonly onCreated = this._onCreated.event;
   private readonly _onClosed = new vscode.EventEmitter<string>();
   readonly onClosed = this._onClosed.event;
@@ -115,13 +117,14 @@ export class TerminalSessionStore implements vscode.Disposable {
     return id;
   }
 
-  /** Opens a Claude UI tab; `sessionId` reopens that conversation. */
-  createClaude(cols: number, rows: number, sessionId?: string): string {
+  /** Opens a chat tab (Claude UI or OMP UI); `sessionId` reopens that conversation. */
+  createClaude(cols: number, rows: number, sessionId?: string, backend: ChatBackend = 'claude'): string {
     const id = this.nextId();
     const rec: ClaudeRecord = {
       id,
       kind: 'claude',
-      title: CLAUDE_TITLE_FALLBACK,
+      backend,
+      title: CHAT_TITLE_FALLBACK[backend],
       rawTitle: '',
       exited: false,
       exitCode: 0,
@@ -131,7 +134,7 @@ export class TerminalSessionStore implements vscode.Disposable {
     };
     this.sessions.set(id, rec);
     this.activeId = id;
-    this._onCreated.fire({ id, title: rec.title, kind: rec.kind });
+    this._onCreated.fire({ id, title: rec.title, kind: rec.kind, backend });
     return id;
   }
 
@@ -191,8 +194,16 @@ export class TerminalSessionStore implements vscode.Disposable {
 
   // ---- Claude UI tabs --------------------------------------------------
 
-  claudeIds(): string[] {
-    return [...this.sessions.values()].filter((rec) => rec.kind === 'claude').map((rec) => rec.id);
+  /** Chat tab ids, optionally only those of one backend. */
+  claudeIds(backend?: ChatBackend): string[] {
+    return [...this.sessions.values()]
+      .filter((rec) => rec.kind === 'claude' && (!backend || rec.backend === backend))
+      .map((rec) => rec.id);
+  }
+
+  /** Backend of a chat tab; undefined for terminals and unknown ids. */
+  backendOf(id: string): ChatBackend | undefined {
+    return this.claudeRecord(id)?.backend;
   }
 
   isClaude(id: string): boolean {
@@ -201,7 +212,7 @@ export class TerminalSessionStore implements vscode.Disposable {
 
   setClaudeTitle(id: string, title: string): void {
     const rec = this.claudeRecord(id);
-    const next = title.trim() || CLAUDE_TITLE_FALLBACK;
+    const next = title.trim() || (rec ? CHAT_TITLE_FALLBACK[rec.backend] : CLAUDE_TITLE_FALLBACK);
     if (!rec || rec.title === next) {
       return;
     }
@@ -210,9 +221,9 @@ export class TerminalSessionStore implements vscode.Disposable {
   }
 
   /** Another Claude UI tab (not `exceptId`) on this conversation, with its title */
-  claudeTabForSession(sessionId: string, exceptId?: string): { tabId: string; title: string } | undefined {
+  claudeTabForSession(sessionId: string, exceptId?: string, backend?: ChatBackend): { tabId: string; title: string } | undefined {
     for (const rec of this.sessions.values()) {
-      if (rec.kind === 'claude' && rec.id !== exceptId && rec.sessionId === sessionId) {
+      if (rec.kind === 'claude' && rec.id !== exceptId && rec.sessionId === sessionId && (!backend || rec.backend === backend)) {
         return { tabId: rec.id, title: rec.title };
       }
     }
@@ -258,6 +269,7 @@ export class TerminalSessionStore implements vscode.Disposable {
         exited: rec.exited,
         exitCode: rec.exitCode,
         resume: rec.kind === 'claude' ? rec.sessionId : undefined,
+        backend: rec.kind === 'claude' ? rec.backend : undefined,
       }));
   }
 

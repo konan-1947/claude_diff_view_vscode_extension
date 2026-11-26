@@ -5,6 +5,7 @@ import type { ColdResumeQuota, GetConfigOptionsResponse, McpServerInfo, ModelOpt
 import type { SessionSummary } from './types';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { processAndAttachMessage /*, mergeConsecutiveReadMessages */ } from '../utils/messageUtils';
+import { isOmp } from '../utils/backend';
 import { LiveActivity } from './LiveActivity';
 import { Message as MessageModel } from '../models/Message';
 import { ContentBlockWrapper } from '../models/ContentBlockWrapper';
@@ -951,6 +952,17 @@ export class Session {
       return;
     }
 
+    // omp names the model it really runs with: on launch (its config default,
+    // or a resumed session's model) and when a builtin slash command switches
+    // it. Show that instead of the UI's `default` sentinel, and send it on the
+    // next launch. Not a transcript row.
+    if (event?.type === 'session_model') {
+      if (typeof event.model === 'string' && event.model) {
+        this.adoptModel(event.model);
+      }
+      return;
+    }
+
     // /clear (also /reset, /new, and leaving plan mode with "clear context"):
     // the CLI dropped the conversation and continues under a new session id
     // (it arrives on the next events). Show an empty chat, like the CLI does,
@@ -1021,7 +1033,7 @@ export class Session {
         }
         void this.refreshContextUsage();
         void this.refreshAppliedEffort();
-        if (event.uic_code_mode === true) {
+        if (event.uic_code_mode === true && !isOmp) {
           this.showCodeModeNotice();
         }
       } else if (event.subtype === 'compact_boundary') {

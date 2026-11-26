@@ -628,6 +628,16 @@ export class WorkspaceWatcher {
     this.snapshots.set(this.normalizePath(filePath), content);
   }
 
+
+  /**
+   * Nội dung baseline hiện tại của file (trạng thái trên đĩa trước lần ghi
+   * kế tiếp), hoặc undefined nếu file không được theo dõi. OMP UI dùng nó làm
+   * before-image vì omp không chờ hook trước khi ghi.
+   */
+  baselineOf(filePath: string): string | undefined {
+    return this.snapshots.get(filePath);
+  }
+
   dispose(): void {
     for (const d of this.disposables) { d.dispose(); }
     this.disposables = [];
