@@ -430,13 +430,15 @@ async function kill(taskId: string) {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  height: 300px;
+  /* Most of the panel's height (still fixed for a given window, so going
+     between the list and a task never moves anything) */
+  height: max(300px, 65vh);
   padding: 10px 12px 8px;
   border-top: 1px solid var(--vscode-focusBorder);
   outline: none;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 12px;
-  line-height: 18px;
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+  line-height: 20px;
   color: var(--vscode-editor-foreground);
 }
 

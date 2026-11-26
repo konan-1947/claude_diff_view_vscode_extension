@@ -105,8 +105,6 @@ function toggleTodo(index: number) {
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background: transparent;
-  border-radius: 4px;
-  border: none;
   transition: background-color 0.2s ease;
 }
 
@@ -124,15 +122,5 @@ function toggleTodo(index: number) {
 
 .custom-scrollbar::-webkit-scrollbar-button {
   display: none;
-}
-
-/* Firefox scrollbar style */
-.custom-scrollbar {
-  scrollbar-width: none;
-}
-
-.custom-scrollbar:hover {
-  scrollbar-width: thin;
-  scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
 }
 </style>

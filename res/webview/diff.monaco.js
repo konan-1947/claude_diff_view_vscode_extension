@@ -138,6 +138,7 @@
       scrollBeyondLastLine: false,
       renderOverviewRuler: true,
       minimap: { enabled: true },
+      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
     });
     tlog('createEditor done');
 

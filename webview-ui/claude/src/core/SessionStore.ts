@@ -4,6 +4,7 @@ import type { ConnectionManager } from './ConnectionManager';
 import { Session, type SessionContext, type SessionOptions } from './Session';
 import type { PermissionRequest } from './PermissionRequest';
 import type { SessionSummary } from './types';
+import { isOmp } from '../utils/backend';
 
 const LIST_SESSIONS_TIMEOUT_MS = 15_000;
 
@@ -57,7 +58,8 @@ export class SessionStore {
     this.effectCleanups.push(
       effect(() => {
         const session = this.activeSession();
-        const defaultTitle = 'Claude Code';
+        // Same fallback as the host's CHAT_TITLE_FALLBACK (terminalSessions.ts)
+        const defaultTitle = isOmp ? 'OMP' : 'Claude Code';
 
         if (!session) {
           this.context.renameTab?.(defaultTitle);

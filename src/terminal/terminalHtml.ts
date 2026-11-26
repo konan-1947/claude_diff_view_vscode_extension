@@ -3,6 +3,7 @@ import { findInstallableForPrimary } from './fontInstaller';
 import { PENDING_TREE_CSS } from '../views/pendingTree';
 import { CLAUDE_UI_LIMITS, DEFAULT_CLAUDE_UI_APPEARANCE, DEFAULT_BURST_DETECTION_SETTINGS, DEFAULT_EXCLUSION_SETTINGS, DEFAULT_FILE_LIMIT_SETTINGS, DEFAULT_FOCUS_SETTINGS, DEFAULT_SETTINGS, DEFAULT_SOUND_NOTIFICATION_SETTINGS } from './terminalTypes';
 import { TERMINAL_THEMES } from './terminalThemes';
+import { SCROLLBAR_CSS } from '../util/scrollbarCss';
 
 interface FontOption {
   label: string;
@@ -62,6 +63,9 @@ const TAB_ICON_LIST = `<svg ${TAB_ICON_ATTRS}><path d="M4 6.5h16M4 12h16M4 17.5h
 const TAB_ICON_INFO = `<svg ${TAB_ICON_ATTRS}><circle cx="12" cy="12" r="8.75"/><path d="M12 11v5.5"/><path d="M12 7.5h.01"/></svg>`;
 const TAB_ICON_SETTINGS = `<svg ${TAB_ICON_ATTRS}><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2.5"/><circle cx="15" cy="16" r="2.5"/></svg>`;
 const TAB_ICON_TABS = `<svg ${TAB_ICON_ATTRS}><rect x="3" y="7.5" width="14" height="12.5" rx="3"/><path d="M7.5 4h10.5a3 3 0 0 1 3 3v9"/></svg>`;
+// Brand marks for chat tabs (copied from the uic app's ClawdIcon.vue / OmpMark.vue), square viewBox so they sit centered in 16px
+const ICON_CLAWD_SVG = '<svg width="16" height="16" viewBox="0 -4.5 47 47" aria-hidden="true"><path fill="#d97757" d="M5.08191 10.0769V0.938461H9.37422V10.0769H5.08191ZM9.23305 10.0769V0.938461H13.5254V10.0769H9.23305ZM13.3842 10.0769V0.938461H17.6765V10.0769H13.3842ZM17.5353 10.0769V0.938461H21.8276V10.0769H17.5353ZM21.6865 10.0769V0.938461H25.9788V10.0769H21.6865ZM25.8376 10.0769V0.938461H30.1299V10.0769H25.8376ZM29.9888 10.0769V0.938461H34.2811V10.0769H29.9888ZM34.1399 10.0769V0.938461H38.4322V10.0769H34.1399ZM38.291 10.0769V0.938461H42.5834V10.0769H38.291ZM0.930769 19.0769V9.93846H5.22308V19.0769H0.930769ZM5.08191 19.0769V9.93846H9.37422V19.0769H5.08191ZM9.23305 19.0769V14.5077H13.5254V19.0769H9.23305ZM13.3842 19.0769V9.93846H17.6765V19.0769H13.3842ZM17.5353 19.0769V9.93846H21.8276V19.0769H17.5353ZM21.6865 19.0769V9.93846H25.9788V19.0769H21.6865ZM25.8376 19.0769V9.93846H30.1299V19.0769H25.8376ZM29.9888 19.0769V9.93846H34.2811V19.0769H29.9888ZM34.1399 19.0769V14.5077H38.4322V19.0769H34.1399ZM38.291 19.0769V9.93846H42.5834V19.0769H38.291ZM42.4422 19.0769V9.93846H46.7345V19.0769H42.4422ZM5.08191 28.0769V18.9385H9.37422V28.0769H5.08191ZM9.23305 28.0769V18.9385H13.5254V28.0769H9.23305ZM13.3842 28.0769V18.9385H17.6765V28.0769H13.3842ZM17.5353 28.0769V18.9385H21.8276V28.0769H17.5353ZM21.6865 28.0769V18.9385H25.9788V28.0769H21.6865ZM25.8376 28.0769V18.9385H30.1299V28.0769H25.8376ZM29.9888 28.0769V18.9385H34.2811V28.0769H29.9888ZM34.1399 28.0769V18.9385H38.4322V28.0769H34.1399ZM38.291 28.0769V18.9385H42.5834V28.0769H38.291ZM5.08191 37.0769V27.9385H9.37422V37.0769H5.08191ZM13.3842 37.0769V27.9385H17.6765V37.0769H13.3842ZM29.9888 37.0769V27.9385H34.2811V37.0769H29.9888ZM38.291 37.0769V27.9385H42.5834V37.0769H38.291Z"/></svg>';
+const ICON_OMP_SVG = '<svg width="16" height="16" viewBox="0 -4 108 108" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="9" height="20" fill="#f84fcc"/><rect x="9" y="0" width="9" height="20" fill="#ef51d0"/><rect x="18" y="0" width="9" height="20" fill="#e652d3"/><rect x="27" y="0" width="9" height="20" fill="#dc54d7"/><rect x="36" y="0" width="9" height="20" fill="#d356db"/><rect x="45" y="0" width="9" height="20" fill="#ca58de"/><rect x="54" y="0" width="9" height="20" fill="#c159e2"/><rect x="63" y="0" width="9" height="20" fill="#b85be5"/><rect x="72" y="0" width="9" height="20" fill="#af5de9"/><rect x="81" y="0" width="9" height="20" fill="#a55fed"/><rect x="90" y="0" width="9" height="20" fill="#9c60f0"/><rect x="99" y="0" width="9" height="20" fill="#9362f4"/><rect x="27" y="20" width="9" height="20" fill="#c359e1"/><rect x="36" y="20" width="9" height="20" fill="#ba5be5"/><rect x="63" y="20" width="9" height="20" fill="#9e60ef"/><rect x="72" y="20" width="9" height="20" fill="#9562f3"/><rect x="27" y="40" width="9" height="20" fill="#aa5eeb"/><rect x="36" y="40" width="9" height="20" fill="#a15fef"/><rect x="63" y="40" width="9" height="20" fill="#7f72f2"/><rect x="72" y="40" width="9" height="20" fill="#727ef0"/><rect x="27" y="60" width="9" height="20" fill="#aa5eeb" opacity="0.4"/><rect x="36" y="60" width="9" height="20" fill="#a15fef" opacity="0.4"/><rect x="63" y="60" width="9" height="20" fill="#5a91ee"/><rect x="72" y="60" width="9" height="20" fill="#4d9cec"/><rect x="63" y="80" width="9" height="20" fill="#35afea"/><rect x="72" y="80" width="9" height="20" fill="#28bae8"/></svg>';
 const TAB_ICON_BACK = `<svg class="btn-icon icon-back" ${TAB_ICON_ATTRS}><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M7 9l3 3-3 3"/><rect x="12.5" y="12.5" width="4" height="3.5" rx="1" fill="currentColor" stroke="none"/></svg>`;
 
 export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
@@ -129,6 +133,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
 <link rel="stylesheet" href="${xtermCss}">
 <link rel="stylesheet" href="${previewCss}">
 <style>
+${SCROLLBAR_CSS}
   /* html must clip too: body's overflow only clips its own box when html's overflow is not visible
      (otherwise it propagates to the viewport and the rounded corners get overdrawn). */
   html { height: 100%; margin: 0; padding: 4px; box-sizing: border-box; overflow: hidden; background: var(--vscode-sideBar-background, #1e1e1e); }
@@ -291,6 +296,8 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
     opacity: 1;
   }
+  .tab-icon { flex: 0 0 14px; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; }
+  .tab-icon svg { width: 14px; height: 14px; display: block; }
   .tab-title {
     flex: 1 1 auto;
     overflow: hidden;
@@ -2169,13 +2176,23 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return t;
       }
 
-      function buildTabDom(id, title) {
+      const ICON_CLAWD = ${JSON.stringify(ICON_CLAWD_SVG)};
+      const ICON_OMP = ${JSON.stringify(ICON_OMP_SVG)};
+
+      // iconHtml: a chat tab's brand mark before its title (terminal tabs have none)
+      function buildTabDom(id, title, iconHtml) {
         const tab = document.createElement('div');
         tab.className = 'tab';
         tab.dataset.id = id;
         const titleEl = document.createElement('span');
         titleEl.className = 'tab-title';
         titleEl.textContent = title;
+        if (iconHtml) {
+          const iconEl = document.createElement('span');
+          iconEl.className = 'tab-icon';
+          iconEl.innerHTML = iconHtml;
+          tab.appendChild(iconEl);
+        }
         const closeEl = document.createElement('span');
         closeEl.className = 'tab-close';
         closeEl.title = 'Close tab';
@@ -2241,7 +2258,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           });
           host.appendChild(claude.el);
           const label = title || (isOmp ? 'OMP' : 'Claude Code');
-          const tab = buildTabDom(id, label);
+          const tab = buildTabDom(id, label, isOmp ? ICON_OMP : ICON_CLAWD);
           sessions.set(id, {
             id, kind: 'claude', backend: isOmp ? 'omp' : 'claude', claude, host, tab, exited: false,
             defaultTitle: label, shownTitle: label, rawTitle: '',
@@ -2420,7 +2437,6 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const agentMenu = document.getElementById('agent-menu');
       let agentList = [];
 
-      const ICON_CLAUDE = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6h5M5.5 8.2h3"/></svg>';
       const ICON_TERMINAL = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5l3.5 3.5L3 11.5"/><path d="M8.5 12h4.5"/></svg>';
       const AGENT_COLORS = { claude: '#d97757', opencode: '#8b8b8b', copilot: '#6e56cf', codex: '#10a37f', pi: '#c9a227' };
       function agentIconHtml(id, label) {
@@ -2490,8 +2506,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       function renderAgentMenu() {
         agentMenu.textContent = '';
         addMenuItem(agentMenu, ICON_TERMINAL, 'Terminal', '', false, () => startSession());
-        addMenuItem(agentMenu, ICON_CLAUDE, 'Claude UI', '', false, () => startClaudeUI());
-        addMenuItem(agentMenu, ICON_CLAUDE, 'OMP UI', '', false, () => startOmpUI());
+        addMenuItem(agentMenu, ICON_CLAWD, 'Claude UI', '', false, () => startClaudeUI());
+        addMenuItem(agentMenu, ICON_OMP, 'OMP UI', '', false, () => startOmpUI());
         if (agentList.length === 0) return;
         const sep = document.createElement('div');
         sep.className = 'agent-menu-sep';
@@ -2615,7 +2631,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           item.classList.toggle('done', tab.classList.contains('done'));
           const icon = document.createElement('span');
           icon.className = 'agent-icon';
-          icon.innerHTML = sess && sess.kind === 'claude' ? ICON_CLAUDE : ICON_TERMINAL;
+          icon.innerHTML = sess && sess.kind === 'claude' ? (sess.backend === 'omp' ? ICON_OMP : ICON_CLAWD) : ICON_TERMINAL;
           const label = document.createElement('span');
           label.className = 'agent-name';
           label.textContent = (tab.querySelector('.tab-title') || tab).textContent;

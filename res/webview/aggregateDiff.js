@@ -407,6 +407,7 @@
           scrollBeyondLastLine: false,
           minimap: { enabled: false },
           wordWrap: 'off',
+          scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
         });
         state.editor.setModel(state.modifiedModel);
         // Monaco owns wheel events inside each file card. Hand off only the

@@ -42,6 +42,7 @@
           minimap: { enabled: false },
           fontSize: 13,
           scrollBeyondLastLine: false,
+          scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
         });
         editor.addAction({
           id: 'ai-cli-file-preview-save',

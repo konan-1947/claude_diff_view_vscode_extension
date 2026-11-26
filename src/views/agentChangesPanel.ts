@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { DiffManager, DiffPreviewMetadata } from '../diff/diffManager';
 import { coalesce } from '../util/coalesce';
+import { SCROLLBAR_CSS } from '../util/scrollbarCss';
 import { isSameFile, PENDING_TREE_CSS, renderPendingTree } from './pendingTree';
 
 export interface AgentChangesActions {
@@ -152,6 +153,7 @@ export class AgentChangesPanel implements vscode.WebviewViewProvider, vscode.Dis
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${this.view.webview.cspSource}; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
 <style>
+${SCROLLBAR_CSS}
 
   * { box-sizing: border-box; }
   html, body { height: 100%; }
