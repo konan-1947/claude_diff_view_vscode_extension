@@ -1333,6 +1333,10 @@ import OmpLogo from '../components/OmpLogo.vue';
     /* Bottom padding = the fade below, so the last row clears it when scrolled down */
     padding: 10px 0 var(--cs-transcript-fade);
     position: relative;
+    /* The 8px scrollbar (claude-theme.css) takes width from the transcript
+       only; reserve it always so the column never shifts when it appears,
+       and the input below adds the same width on its right (--cs-scrollbar). */
+    scrollbar-gutter: stable;
     /* Rows scrolling down under the input fade out (as in Cursor), instead of
        a hard edge. A mask, not a gradient overlay: it needs no background
        colour, which differs between the side bar and the Agent-mode panel. */
@@ -1415,6 +1419,12 @@ import OmpLogo from '../components/OmpLogo.vue';
   .inputContainer {
     padding: 0 var(--cs-edge) 10px;
     position: relative;
+  }
+  /* Line up with the transcript column, which loses --cs-scrollbar on the
+     right to its scrollbar gutter (centred the same way in a wide pane) */
+  .main:not(.is-empty) > .inputContainer {
+    --cs-scrollbar: 8px;
+    padding-right: calc(var(--cs-edge) + var(--cs-scrollbar));
   }
 
   .new-below {
