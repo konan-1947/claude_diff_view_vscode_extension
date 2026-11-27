@@ -8,7 +8,7 @@ import { ChatBackend, LayoutNode, SessionKind, SessionSnapshot } from './termina
 
 const SCROLLBACK_LINES = 3000;
 const CLAUDE_TITLE_FALLBACK = 'Claude Code';
-const CHAT_TITLE_FALLBACK: Record<ChatBackend, string> = { claude: CLAUDE_TITLE_FALLBACK, omp: 'OMP' };
+const CHAT_TITLE_FALLBACK: Record<ChatBackend, string> = { claude: CLAUDE_TITLE_FALLBACK, omp: 'OMP (experimental)' };
 
 interface BaseRecord {
   id: string;

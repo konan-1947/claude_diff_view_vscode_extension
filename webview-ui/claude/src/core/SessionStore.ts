@@ -59,7 +59,7 @@ export class SessionStore {
       effect(() => {
         const session = this.activeSession();
         // Same fallback as the host's CHAT_TITLE_FALLBACK (terminalSessions.ts)
-        const defaultTitle = isOmp ? 'OMP' : 'Claude Code';
+        const defaultTitle = isOmp ? 'OMP (experimental)' : 'Claude Code';
 
         if (!session) {
           this.context.renameTab?.(defaultTitle);

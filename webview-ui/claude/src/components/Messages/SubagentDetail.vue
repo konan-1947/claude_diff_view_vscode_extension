@@ -60,10 +60,6 @@ const result = computed(() => subagentReport(props.messages) ?? props.task?.summ
 </script>
 
 <style scoped>
-.subagent-detail {
-  font-family: var(--vscode-font-family);
-}
-
 .in-body {
   margin-bottom: 8px;
 }
@@ -96,7 +92,7 @@ const result = computed(() => subagentReport(props.messages) ?? props.task?.summ
   border-radius: 4px;
   padding: 8px;
   margin: 0;
-  font-family: var(--vscode-font-family);
+  font-family: inherit;
   color: var(--vscode-editor-foreground);
   overflow-x: auto;
   max-height: 400px;

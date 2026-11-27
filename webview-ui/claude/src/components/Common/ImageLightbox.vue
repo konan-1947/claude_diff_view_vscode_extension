@@ -3,51 +3,52 @@
     <div
       v-if="open"
       class="image-lightbox"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="title"
+      @pointerdown.self="backdropDown = true"
+      @click.self="onBackdropClick"
     >
-      <div class="lightbox-bar">
-        <strong class="lightbox-title" :title="title">{{ title }}</strong>
-        <span class="lightbox-hint">Scroll to zoom   Drag to pan   Double-click to fit / 100%</span>
-        <button class="lightbox-btn" title="Zoom out (-)" aria-label="Zoom out" @click="zoomCenter(1 / STEP)">
-          <span class="codicon codicon-zoom-out" />
-        </button>
-        <span class="lightbox-percent">{{ Math.round(scale * 100) }}%</span>
-        <button class="lightbox-btn" title="Zoom in (+)" aria-label="Zoom in" @click="zoomCenter(STEP)">
-          <span class="codicon codicon-zoom-in" />
-        </button>
-        <button class="lightbox-btn lightbox-text-btn" title="Fit to window (0)" @click="fit">Fit</button>
-        <button class="lightbox-btn lightbox-text-btn" title="Actual size (1)" @click="actual">100%</button>
-        <button class="lightbox-btn" title="Close (Esc)" aria-label="Close" @click="emit('close')">
-          <span class="codicon codicon-close" />
-        </button>
-      </div>
-      <div
-        ref="stageRef"
-        class="lightbox-stage"
-        :class="{ dragging: !!drag }"
-        @wheel.prevent="onWheel"
-        @pointerdown="onPointerDown"
-        @pointermove="onPointerMove"
-        @pointerup="endDrag"
-        @pointercancel="endDrag"
-        @dblclick="toggleFit"
-      >
-        <div class="lightbox-content" :style="{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }">
-          <div v-if="svg" ref="svgHostRef" class="lightbox-svg" v-html="svg"></div>
-          <img
-            v-else-if="src"
-            :src="src"
-            :alt="alt || 'Image'"
-            :width="natural?.width"
-            :height="natural?.height"
-            draggable="false"
-            class="lightbox-image"
-            @load="onImageLoad"
-            @error="failed = true"
-          />
-          <div v-if="failed" class="lightbox-error">Could not display this image</div>
+      <div class="lightbox-panel" role="dialog" aria-modal="true" :aria-label="title">
+        <div class="lightbox-bar">
+          <strong class="lightbox-title" :title="title">{{ title }}</strong>
+          <span class="lightbox-hint">Scroll to zoom   Drag to pan   Double-click to fit / 100%</span>
+          <button class="lightbox-btn" title="Zoom out (-)" aria-label="Zoom out" @click="zoomCenter(1 / STEP)">
+            <span class="codicon codicon-zoom-out" />
+          </button>
+          <span class="lightbox-percent">{{ Math.round(scale * 100) }}%</span>
+          <button class="lightbox-btn" title="Zoom in (+)" aria-label="Zoom in" @click="zoomCenter(STEP)">
+            <span class="codicon codicon-zoom-in" />
+          </button>
+          <button class="lightbox-btn lightbox-text-btn" title="Fit to window (0)" @click="fit">Fit</button>
+          <button class="lightbox-btn lightbox-text-btn" title="Actual size (1)" @click="actual">100%</button>
+          <button class="lightbox-btn" title="Close (Esc)" aria-label="Close" @click="emit('close')">
+            <span class="codicon codicon-close" />
+          </button>
+        </div>
+        <div
+          ref="stageRef"
+          class="lightbox-stage"
+          :class="{ dragging: !!drag }"
+          @wheel.prevent="onWheel"
+          @pointerdown="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="endDrag"
+          @pointercancel="endDrag"
+          @dblclick="toggleFit"
+        >
+          <div class="lightbox-content" :style="{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }">
+            <div v-if="svg" ref="svgHostRef" class="lightbox-svg" v-html="svg"></div>
+            <img
+              v-else-if="src"
+              :src="src"
+              :alt="alt || 'Image'"
+              :width="natural?.width"
+              :height="natural?.height"
+              draggable="false"
+              class="lightbox-image"
+              @load="onImageLoad"
+              @error="failed = true"
+            />
+            <div v-if="failed" class="lightbox-error">Could not display this image</div>
+          </div>
         </div>
       </div>
     </div>
@@ -82,6 +83,13 @@ const tx = ref(0);
 const ty = ref(0);
 const failed = ref(false);
 const drag = ref<{ x: number; y: number; tx: number; ty: number }>();
+// Only a click that also started on the dimmed backdrop closes: a pan released outside the panel must not
+const backdropDown = ref(false);
+
+function onBackdropClick() {
+  if (backdropDown.value) emit('close');
+  backdropDown.value = false;
+}
 
 function stageSize() {
   const rect = stageRef.value?.getBoundingClientRect();
@@ -202,6 +210,7 @@ watch(
     natural.value = undefined;
     failed.value = false;
     drag.value = undefined;
+    backdropDown.value = false;
     scale.value = 1;
     tx.value = 0;
     ty.value = 0;
@@ -223,10 +232,24 @@ onBeforeUnmount(detach);
   inset: 0;
   z-index: 10000;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.lightbox-panel {
+  display: flex;
   flex-direction: column;
+  width: 80vw;
+  height: 80vh;
+  overflow: hidden;
+  border: 1px solid var(--vscode-panel-border, var(--cs-fg-12));
+  border-radius: 8px;
   background: var(--vscode-editor-background);
   color: var(--vscode-foreground);
   font-size: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
 }
 
 .lightbox-bar {

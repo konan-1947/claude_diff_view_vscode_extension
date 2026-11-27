@@ -367,7 +367,6 @@ async function kill(taskId: string) {
 }
 
 .bg-panel {
-  font-family: var(--vscode-editor-font-family, monospace);
   font-size: 12px;
   line-height: 18px;
   color: var(--vscode-descriptionForeground);
@@ -436,7 +435,6 @@ async function kill(taskId: string) {
   padding: 10px 12px 8px;
   border-top: 1px solid var(--vscode-focusBorder);
   outline: none;
-  font-family: var(--vscode-font-family);
   font-size: 13px;
   line-height: 20px;
   color: var(--vscode-editor-foreground);
@@ -494,6 +492,7 @@ async function kill(taskId: string) {
 }
 
 .bg-command {
+  font-family: var(--vscode-editor-font-family, monospace);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -514,7 +513,6 @@ async function kill(taskId: string) {
 }
 
 .bg-agent-body {
-  font-family: var(--vscode-font-family);
   font-size: 13px;
 }
 

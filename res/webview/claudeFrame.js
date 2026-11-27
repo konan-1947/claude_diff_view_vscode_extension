@@ -114,7 +114,7 @@
   // ---- appearance -------------------------------------------------------
 
   /**
-   * { zoom, fontFamily, lineHeight, rowGap, columnMaxWidth,
+   * { zoom, fontFamily (chat text), codeFontFamily (commands, code), lineHeight, rowGap, columnMaxWidth,
    *   colors: null | { kind: 'dark'|'light', background, foreground, accent,
    *                    green, red, yellow, blue, purple, orange } }
    */
@@ -127,7 +127,8 @@
 
   function appearanceCss(a) {
     var vars = {};
-    if (a.fontFamily) vars['--vscode-editor-font-family'] = a.fontFamily;
+    if (a.fontFamily) vars['--vscode-font-family'] = a.fontFamily;
+    if (a.codeFontFamily) vars['--vscode-editor-font-family'] = a.codeFontFamily;
     vars['--cs-line-height'] = a.lineHeight + 'px';
     vars['--cs-row-gap'] = a.rowGap + 'px';
     vars['--cs-column-max'] = a.columnMaxWidth > 0 ? a.columnMaxWidth + 'px' : '100000px';

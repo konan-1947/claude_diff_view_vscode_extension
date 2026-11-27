@@ -323,9 +323,14 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       const { min, max } = CLAUDE_UI_LIMITS[key];
       return Math.round(Math.min(max, Math.max(min, x)));
     };
+    const str = (x: unknown, fallback: string): string => (typeof x === 'string' ? x.trim() : fallback);
+    // Before codeFontFamily existed, fontFamily set the editor font (code and
+    // commands): such a stored value moves there, and the chat font follows VS Code
+    const legacy = !('codeFontFamily' in src) && typeof src.fontFamily === 'string';
     return {
       fontSize: num(src.fontSize, 'fontSize', base.fontSize),
-      fontFamily: typeof src.fontFamily === 'string' ? src.fontFamily.trim() : base.fontFamily,
+      fontFamily: legacy ? base.fontFamily : str(src.fontFamily, base.fontFamily),
+      codeFontFamily: legacy ? str(src.fontFamily, base.codeFontFamily) : str(src.codeFontFamily, base.codeFontFamily),
       themePreset: src.themePreset === undefined ? base.themePreset : this.normalizePreset(src.themePreset),
       customColors: {
         background: this.normalizeColor(src.customColors?.background, base.customColors.background),

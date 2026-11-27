@@ -64,8 +64,10 @@ export interface ClaudeUiColors {
  */
 export interface ClaudeUiAppearance {
   fontSize: number;
-  /** '' = follow VS Code (`editor.fontFamily`) */
+  /** Font of the chat text; '' = follow VS Code (the workbench UI font) */
   fontFamily: string;
+  /** Font of commands to run and code; '' = follow VS Code (`editor.fontFamily`) */
+  codeFontFamily: string;
   themePreset: ThemePreset;
   customColors: ClaudeUiColors;
   lineHeight: number;
@@ -84,6 +86,7 @@ export const CLAUDE_UI_LIMITS = {
 export const DEFAULT_CLAUDE_UI_APPEARANCE: ClaudeUiAppearance = {
   fontSize: 14,
   fontFamily: '',
+  codeFontFamily: '',
   themePreset: 'vscode',
   customColors: { background: '#1e1e1e', foreground: '#cccccc', accent: '#3b8eea' },
   lineHeight: 22,

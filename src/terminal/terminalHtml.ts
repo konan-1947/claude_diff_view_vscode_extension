@@ -36,10 +36,26 @@ const FONT_OPTIONS: ReadonlyArray<FontOption> = [
   { label: 'Courier New',       value: '"Courier New", Courier, monospace',                      primary: 'Courier New' },
 ];
 
-/** Claude UI font: '' follows VS Code's editor font (what the chat uses by default). */
+/** Claude UI chat font: '' follows VS Code's workbench UI font (what the chat uses by default). */
 const CLAUDE_FONT_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
   { label: 'Follow VS Code', value: '' },
   { label: 'System UI (sans-serif)', value: 'system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif' },
+  // Sans-serif fonts that ship with the OS or are widely installed; each falls back to the system UI font
+  { label: 'Inter',             value: 'Inter, system-ui, sans-serif' },
+  { label: 'Segoe UI',          value: '"Segoe UI", system-ui, sans-serif' },
+  { label: 'SF Pro (macOS)',    value: '-apple-system, "SF Pro Text", system-ui, sans-serif' },
+  { label: 'Roboto',            value: 'Roboto, system-ui, sans-serif' },
+  { label: 'Noto Sans',         value: '"Noto Sans", system-ui, sans-serif' },
+  { label: 'Open Sans',         value: '"Open Sans", system-ui, sans-serif' },
+  { label: 'Ubuntu',            value: '"Ubuntu Sans", Ubuntu, system-ui, sans-serif' },
+  { label: 'Helvetica / Arial', value: '"Helvetica Neue", Helvetica, Arial, sans-serif' },
+  { label: 'Verdana',           value: 'Verdana, Geneva, sans-serif' },
+  ...FONT_OPTIONS.map((f) => ({ label: f.label, value: f.value })),
+];
+
+/** Claude UI command font (commands to run, code): '' follows VS Code's editor font. */
+const CLAUDE_CODE_FONT_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+  { label: 'Follow VS Code', value: '' },
   ...FONT_OPTIONS.map((f) => ({ label: f.label, value: f.value })),
 ];
 
@@ -1597,11 +1613,18 @@ ${FONT_OPTIONS.map((f) => {
         </div>
         <p class="setting-help">Font size scales the whole chat (14 = 100%). Line height, row spacing and max width are in px at 100%; max width 0 = full width.</p>
         <div class="field">
-          <label for="f-claude-font-family">Font family</label>
+          <label for="f-claude-font-family">Chat font</label>
           <select id="f-claude-font-family">
 ${CLAUDE_FONT_OPTIONS.map((f) => `            <option value="${escapeAttr(f.value)}">${escapeHtml(f.label)}</option>`).join('\n')}
           </select>
         </div>
+        <div class="field">
+          <label for="f-claude-code-font-family">Command font</label>
+          <select id="f-claude-code-font-family">
+${CLAUDE_CODE_FONT_OPTIONS.map((f) => `            <option value="${escapeAttr(f.value)}">${escapeHtml(f.label)}</option>`).join('\n')}
+          </select>
+        </div>
+        <p class="setting-help">Chat font is used for all chat text. Command font is only for commands to run and code (Bash commands, code blocks, file contents, tool output).</p>
         <div class="field">
           <label for="f-claude-preset">Theme</label>
           <select id="f-claude-preset">
@@ -2057,6 +2080,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         return {
           zoom: a.fontSize / 14,
           fontFamily: a.fontFamily,
+          codeFontFamily: a.codeFontFamily,
           lineHeight: a.lineHeight,
           rowGap: a.rowGap,
           columnMaxWidth: a.columnMaxWidth,
@@ -2282,7 +2306,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
             onMessage: (message) => vscode.postMessage({ type: 'claudeUi', id, message }),
           });
           host.appendChild(claude.el);
-          const label = title || (isOmp ? 'OMP' : 'Claude Code');
+          const label = title || (isOmp ? 'OMP (experimental)' : 'Claude Code');
           const tab = buildTabDom(id, label, isOmp ? ICON_OMP : ICON_CLAWD);
           sessions.set(id, {
             id, kind: 'claude', backend: isOmp ? 'omp' : 'claude', claude, host, tab, exited: false,
@@ -2538,7 +2562,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         agentMenu.textContent = '';
         addMenuItem(agentMenu, ICON_TERMINAL, 'Terminal', '', false, () => startSession());
         addMenuItem(agentMenu, ICON_CLAWD, 'Claude UI', '', false, () => startClaudeUI());
-        addMenuItem(agentMenu, ICON_OMP, 'OMP UI', '', false, () => startOmpUI());
+        addMenuItem(agentMenu, ICON_OMP, 'OMP UI (experimental)', '', false, () => startOmpUI());
         if (agentList.length === 0) return;
         const sep = document.createElement('div');
         sep.className = 'agent-menu-sep';
@@ -3077,6 +3101,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const fClaudeRowGap = document.getElementById('f-claude-row-gap');
       const fClaudeColumnMax = document.getElementById('f-claude-column-max');
       const fClaudeFontFamily = document.getElementById('f-claude-font-family');
+      const fClaudeCodeFontFamily = document.getElementById('f-claude-code-font-family');
       const fClaudePreset = document.getElementById('f-claude-preset');
       const fClaudeBg = document.getElementById('f-claude-bg');
       const fClaudeFg = document.getElementById('f-claude-fg');
@@ -3324,15 +3349,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fClaudeLineHeight.value = String(c.lineHeight);
         fClaudeRowGap.value = String(c.rowGap);
         fClaudeColumnMax.value = String(c.columnMaxWidth);
-        fClaudeFontFamily.value = c.fontFamily;
-        if (fClaudeFontFamily.value !== c.fontFamily) {
-          // Stored font not in the list (an older list, or edited by hand): keep it selectable
-          const extra = document.createElement('option');
-          extra.value = c.fontFamily;
-          extra.textContent = 'Custom: ' + (c.fontFamily.split(',')[0] || c.fontFamily).replace(/"/g, '').trim();
-          fClaudeFontFamily.appendChild(extra);
-          fClaudeFontFamily.value = c.fontFamily;
-        }
+        setFontSelect(fClaudeFontFamily, c.fontFamily);
+        setFontSelect(fClaudeCodeFontFamily, c.codeFontFamily || '');
         fClaudePreset.value = c.themePreset;
         fClaudeBg.value = c.customColors.background;
         fClaudeFg.value = c.customColors.foreground;
@@ -3341,6 +3359,18 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         fClaudeFgHex.textContent = c.customColors.foreground;
         fClaudeAccentHex.textContent = c.customColors.accent;
         toggleCustomRows();
+      }
+
+      function setFontSelect(select, value) {
+        select.value = value;
+        if (select.value !== value) {
+          // Stored font not in the list (an older list, or edited by hand): keep it selectable
+          const extra = document.createElement('option');
+          extra.value = value;
+          extra.textContent = 'Custom: ' + (value.split(',')[0] || value).replace(/"/g, '').trim();
+          select.appendChild(extra);
+          select.value = value;
+        }
       }
 
       function toggleCustomRows() {
@@ -3365,6 +3395,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           rowGap: clampInt(fClaudeRowGap, CLAUDE_LIMITS.rowGap, d.rowGap),
           columnMaxWidth: clampInt(fClaudeColumnMax, CLAUDE_LIMITS.columnMaxWidth, d.columnMaxWidth, true),
           fontFamily: fClaudeFontFamily.value,
+          codeFontFamily: fClaudeCodeFontFamily.value,
           themePreset: fClaudePreset.value,
           customColors: {
             background: fClaudeBg.value,

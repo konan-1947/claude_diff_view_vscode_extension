@@ -14,7 +14,6 @@ defineProps<{ status: SubagentStatus; failed?: boolean }>();
 
 <style scoped>
 .status-line {
-  font-family: var(--vscode-font-family);
   display: flex;
   align-items: baseline;
   gap: 12px;

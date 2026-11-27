@@ -39,7 +39,5 @@ const detail = computed(() => (hasText.value && props.text.trim().length < 160 ?
   white-space: pre-wrap;
   word-wrap: break-word;
   user-select: text;
-  max-height: 320px;
-  overflow-y: auto;
 }
 </style>

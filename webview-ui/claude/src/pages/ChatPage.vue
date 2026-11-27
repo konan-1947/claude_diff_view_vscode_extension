@@ -411,8 +411,10 @@ import OmpLogo from '../components/OmpLogo.vue';
   // user's own message and a permission prompt); new rows only light up the
   // "↓" button, which goes back to the bottom.
 
-  /** Distance from the bottom (px) still counted as "at the bottom" */
-  const FOLLOW_SLACK = 10;
+  /** Within this distance (px) of the bottom the view counts as "at the bottom" and follows */
+  const FOLLOW_SLACK = 80;
+  /** A scroll this long after the user's last wheel / key / touch counts as theirs */
+  const USER_SCROLL_MS = 600;
   /** The view is at the bottom and follows new output */
   let following = true;
   /** New rows arrived while scrolled up */
@@ -424,18 +426,37 @@ import OmpLogo from '../components/OmpLogo.vue';
 
   /** scrollTop at the previous scroll event: only a move up means the user left the bottom */
   let lastScrollTop = 0;
+  /** performance.now() of the user's last wheel / key / touch on the transcript */
+  let userInputAt = -Infinity;
+  /** A button is held on the transcript (dragging the scrollbar, selecting text) */
+  let pointerHeld = false;
+
+  function userScrolling(): boolean {
+    return pointerHeld || performance.now() - userInputAt < USER_SCROLL_MS;
+  }
+  function markUserInput(): void {
+    userInputAt = performance.now();
+  }
+  function onFollowPointerDown(): void {
+    pointerHeld = true;
+  }
+  function onFollowPointerUp(): void {
+    if (pointerHeld) markUserInput();
+    pointerHeld = false;
+  }
 
   function onFollowScroll(): void {
     const el = containerEl.value;
     if (!el) return;
     const top = el.scrollTop;
-    // A scroll event fires a frame after the scroll that caused it. If a row grew
-    // in between (streaming text, a new message), the view looks "not at the
-    // bottom" though nobody scrolled; judging by atBottom() alone used to drop
-    // following right then. Content growing never lowers scrollTop, so only a
-    // move up (wheel, keys, scrollbar, jumping to a prompt) stops following.
+    // scrollTop also drops with nobody scrolling: a row shrinking (the spinner
+    // going, a card or a turn's steps folding, markdown re-rendering) or the
+    // view growing (the input shrinking after Enter) makes the browser clamp it.
+    // Judging by the move alone used to drop following then. So only a move up
+    // right after the user's own wheel / key / touch / scrollbar drag stops
+    // following, and anywhere within FOLLOW_SLACK of the bottom resumes it.
     if (atBottom(el)) following = true;
-    else if (top < lastScrollTop - 1) following = false;
+    else if (top < lastScrollTop - 1 && userScrolling()) following = false;
     lastScrollTop = top;
     if (following) newBelow.value = false;
   }
@@ -455,14 +476,24 @@ import OmpLogo from '../components/OmpLogo.vue';
 
   // Rows grow without a scroll event (streaming text, a tool result, a block
   // opening): watch every row's size, plus the container's (the input growing).
+  window.addEventListener('pointerup', onFollowPointerUp, true);
+  window.addEventListener('pointercancel', onFollowPointerUp, true);
   let followResize: ResizeObserver | undefined;
   let followRows: MutationObserver | undefined;
   watch(containerEl, (el, old) => {
     old?.removeEventListener('scroll', onFollowScroll);
+    old?.removeEventListener('wheel', markUserInput);
+    old?.removeEventListener('touchmove', markUserInput);
+    old?.removeEventListener('keydown', markUserInput);
+    old?.removeEventListener('pointerdown', onFollowPointerDown);
     followResize?.disconnect();
     followRows?.disconnect();
     if (!el) return;
     el.addEventListener('scroll', onFollowScroll, { passive: true });
+    el.addEventListener('wheel', markUserInput, { passive: true });
+    el.addEventListener('touchmove', markUserInput, { passive: true });
+    el.addEventListener('keydown', markUserInput);
+    el.addEventListener('pointerdown', onFollowPointerDown);
     const resize = (followResize = new ResizeObserver(stickToBottom));
     resize.observe(el);
     for (const child of el.children) resize.observe(child);
@@ -606,6 +637,8 @@ import OmpLogo from '../components/OmpLogo.vue';
   function jumpToStickyPrompt(): void {
     const key = stickyKey.value;
     if (key === null) return;
+    // Reading an earlier prompt: stop following (the jump is not a user scroll)
+    following = false;
     containerEl.value
       ?.querySelector<HTMLElement>(`[data-turn-key="${key}"] .user-message`)
       ?.scrollIntoView({ block: 'start' });
@@ -628,6 +661,8 @@ import OmpLogo from '../components/OmpLogo.vue';
     clearTimeout(stickyIdle);
     stickyResize?.disconnect();
     containerEl.value?.removeEventListener('scroll', onFollowScroll);
+    window.removeEventListener('pointerup', onFollowPointerUp, true);
+    window.removeEventListener('pointercancel', onFollowPointerUp, true);
     followResize?.disconnect();
     followRows?.disconnect();
     if (stickyFrame) cancelAnimationFrame(stickyFrame);

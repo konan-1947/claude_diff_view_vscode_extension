@@ -7,7 +7,7 @@ export interface SubagentCall {
   name: string;
   /** The argument that says what the call does (command, file, pattern...) */
   detail: string;
-  /** detail is code (a command, path, pattern): shown in the editor font */
+  /** detail is a command to run: shown in the command font (paths, patterns... use the chat font) */
   isCode: boolean;
   /** codicon class: running / failed / done */
   icon: string;
@@ -19,9 +19,6 @@ export interface SubagentCall {
  * summary then only says "delivered as a message").
  */
 const HANDBACK_TOOL = 'SubagentHandback';
-
-/** Tools whose main argument is prose (a description or question), not code */
-const PROSE_KEYS = ['description', 'prompt', 'query'];
 
 export function subagentCalls(messages: any[]): SubagentCall[] {
   const calls: SubagentCall[] = [];
@@ -36,7 +33,7 @@ export function subagentCalls(messages: any[]): SubagentCall[] {
         id: block.id,
         name: block.name,
         detail: shorten(block.name, text),
-        isCode: !!text && !PROSE_KEYS.includes(key),
+        isCode: !!text && key === 'command',
         icon: !result
           ? 'codicon-loading codicon-modifier-spin'
           : result.is_error ? 'codicon-error' : 'codicon-check',
