@@ -557,6 +557,7 @@ export async function handleNewConversationTab(
         kind: 'new',
         tabId: webviewId ?? '',
         initialPrompt: request.initialPrompt,
+        forkOf: request.forkSessionId,
     });
     return {
         type: "new_conversation_tab_response"

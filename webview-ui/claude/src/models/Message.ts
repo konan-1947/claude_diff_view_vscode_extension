@@ -134,7 +134,10 @@ export class Message {
           : [];
 
       // Parse the raw content
-      const contentBlocks = parseMessageContent(rawContent);
+      const contentBlocks = parseMessageContent(
+        rawContent,
+        raw.type === 'assistant' ? raw.narration_block_indexes : undefined
+      );
 
       // Wrap as ContentBlockWrapper
       const wrappedContent = contentBlocks.map((block) => new ContentBlockWrapper(block));

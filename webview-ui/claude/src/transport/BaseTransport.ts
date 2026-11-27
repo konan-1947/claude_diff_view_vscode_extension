@@ -37,6 +37,8 @@ import type {
   RunShellCommandResponse,
   RewindFilesResponse,
   StopTaskResponse,
+  BackgroundTasksResponse,
+  SideQuestionResponse,
   CancelQueuedPromptResponse,
   ColdResumeQuota,
 } from "@shared/messages";
@@ -398,10 +400,12 @@ export abstract class BaseTransport {
   statPaths(paths: string[]): Promise<any> {
     return this.sendRequest({ type: "stat_path_request", paths });
   }
-  startNewConversationTab(initialPrompt?: string): Promise<any> {
+  /** `forkSessionId` (`/fork`): the new tab opens a copy of that conversation */
+  startNewConversationTab(initialPrompt?: string, forkSessionId?: string): Promise<any> {
     return this.sendRequest({
       type: "new_conversation_tab",
       initialPrompt,
+      forkSessionId,
     } as any);
   }
   renameTab(title: string): Promise<any> {
@@ -444,6 +448,18 @@ export abstract class BaseTransport {
   async stopTask(channelId: string, taskId: string): Promise<{ error?: string }> {
     const response = (await this.sendRequest({ type: "stop_task", taskId }, channelId)) as StopTaskResponse;
     return { error: response?.error };
+  }
+  async backgroundTasks(channelId: string): Promise<{ backgrounded: boolean; error?: string }> {
+    const response = (await this.sendRequest({ type: "background_tasks" }, channelId)) as BackgroundTasksResponse;
+    return { backgrounded: response?.backgrounded === true, error: response?.error };
+  }
+  /** `/btw`; throws with the CLI's reason when there is no answer */
+  async sideQuestion(channelId: string, question: string): Promise<string> {
+    const response = (await this.sendRequest({ type: "side_question", question }, channelId)) as SideQuestionResponse;
+    if (!response?.response) {
+      throw new Error(response?.error || 'No response received');
+    }
+    return response.response;
   }
   async cancelQueuedPrompt(channelId: string, uuid: string): Promise<boolean> {
     const response = (await this.sendRequest({ type: "cancel_queued_prompt", uuid }, channelId)) as CancelQueuedPromptResponse;

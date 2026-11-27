@@ -144,10 +144,25 @@ export function useRuntime(): RuntimeInstance {
       } catch (e) {
         console.warn('[runtime] session list failed', e);
       }
-      const resumeId = window.UIC_BOOTSTRAP?.resume;
+      const bootstrap = window.UIC_BOOTSTRAP;
+      const resumeId = bootstrap?.resume;
       if (!disposed && resumeId && !sessionStore.activeSession()) {
         const previous = sessionStore.sessions().find((s) => s.sessionId() === resumeId);
-        if (previous) sessionStore.setActiveSession(previous);
+        if (bootstrap?.fork) {
+          // /fork: a copy of the conversation another tab keeps working in
+          const summary = previous?.summary();
+          const fork = sessionStore.forkConversation(resumeId, summary ? `${summary} (fork)` : undefined);
+          const prompt = bootstrap.prompt?.trim();
+          if (prompt) {
+            // After the copied history is in, or it would replace the prompt
+            await fork.whenLoaded();
+            if (!disposed) {
+              void fork.send(prompt).catch((e) => console.warn('[runtime] fork prompt failed', e));
+            }
+          }
+        } else if (previous) {
+          sessionStore.setActiveSession(previous);
+        }
       }
       if (!disposed && !sessionStore.activeSession()) {
         await sessionStore.createSession({ isExplicit: false });

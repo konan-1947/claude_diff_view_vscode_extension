@@ -10,7 +10,15 @@
       <span v-if="runInBackground" class="bg-badge">background</span>
     </template>
 
-    <template v-if="previewLine && !toolResult?.is_error" #preview>
+    <!-- While it runs in the foreground of the live turn: the CLI's hint after
+         the first output line (or "Running…") -->
+    <template v-if="canBackground" #preview>
+      <div class="output-preview hint-row">
+        <span :class="['hint-text', { 'bg-hint': !previewLine }]">{{ previewLine || 'Running…' }}</span>
+        <span class="bg-hint bg-hint-key">(ctrl+b to run in background)</span>
+      </div>
+    </template>
+    <template v-else-if="previewLine && !toolResult?.is_error" #preview>
       <div class="output-preview">{{ previewLine }}</div>
     </template>
 
@@ -36,6 +44,8 @@
 import { computed } from 'vue';
 import ToolMessageWrapper from './common/ToolMessageWrapper.vue';
 import ToolError from './common/ToolError.vue';
+import { isOmp } from '../../../../utils/backend';
+import { useLiveActivity } from '../../../../composables/useLiveActivity';
 
 interface Props {
   toolUse?: any;
@@ -58,6 +68,14 @@ const commandName = computed(() => command.value.trim().split(/\s+/)[0] || '');
 const runInBackground = computed(() => {
   return props.toolUse?.input?.run_in_background || false;
 });
+
+const activity = useLiveActivity();
+
+// Still running in the foreground of the live turn: Ctrl+B in the input can
+// background it, as the CLI's hint says (omp cannot)
+const canBackground = computed(
+  () => !isOmp && !runInBackground.value && !props.toolResult && activity.busy.value
+);
 
 const outputContent = computed(() => {
   // Get the output from toolResult.content
@@ -109,6 +127,27 @@ const shouldExpand = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.bg-hint {
+  color: var(--cs-fg-52);
+}
+
+/* The hint stays whole; a long output line gives way (ellipsis) */
+.hint-row {
+  display: flex;
+  min-width: 0;
+}
+
+.hint-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bg-hint-key {
+  flex-shrink: 0;
+  margin-left: 1.5em;
 }
 
 .bash-command {

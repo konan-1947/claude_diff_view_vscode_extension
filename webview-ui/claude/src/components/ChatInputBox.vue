@@ -134,6 +134,12 @@
       @notify="notify"
       @close="closePanel"
     />
+    <BtwPanel
+      v-else-if="activePanel === 'btw'"
+      :key="btwKey"
+      :question="btwQuestion"
+      @close="closePanel"
+    />
     <AuthPanel
       v-else-if="activePanel === 'login' || activePanel === 'logout'"
       :key="activePanel"
@@ -327,6 +333,7 @@ import PermissionsPanel from './CommandPanel/PermissionsPanel.vue'
 import PluginPanel from './CommandPanel/PluginPanel.vue'
 import AuthPanel from './CommandPanel/AuthPanel.vue'
 import RewindPanel from './CommandPanel/RewindPanel.vue'
+import BtwPanel from './CommandPanel/BtwPanel.vue'
 import type { ClaudeFileKind } from '@shared/messages'
 import type { Message } from '../models/Message'
 import { usePromptHistory } from '../utils/promptHistory'
@@ -373,6 +380,8 @@ interface Emits {
   (e: 'stop'): void
   (e: 'editQueued'): void
   (e: 'focusTasks'): void
+  /** Ctrl+B while a turn runs: its foreground Bash commands and subagents go to the background */
+  (e: 'background'): void
   (e: 'input', content: string): void
   (e: 'attach'): void
   (e: 'addAttachment', files: FileList): void
@@ -451,6 +460,7 @@ type PanelName =
   | 'logout'
   | 'history-search'
   | 'rewind'
+  | 'btw'
 
 const PANEL_COMMANDS: Record<string, PanelName> = {
   '/output-style': 'output-style',
@@ -482,9 +492,12 @@ const UI_PANEL_COMMANDS: Record<string, PanelName> = {
   '/logout': 'logout',
 }
 
-// UI commands that do their job at once, without a panel
-const UI_ACTION_COMMANDS: Record<string, () => void> = {
+// UI commands that do their job at once, without a panel (given the text after the command)
+const UI_ACTION_COMMANDS: Record<string, (arg: string) => void> = {
   '/release-notes': () => void openReleaseNotes(),
+  '/btw': (arg) => openSideQuestion(arg),
+  '/branch': (arg) => branchConversation(arg),
+  '/fork': (arg) => forkToNewTab(arg),
   // The CLI's checkpoint menu (also Esc Esc); /undo and /checkpoint are its aliases
   '/rewind': () => openRewind(),
   '/undo': () => openRewind(),
@@ -495,7 +508,7 @@ const UI_ACTION_COMMANDS: Record<string, () => void> = {
 const OMP_UI_PANELS = new Set<PanelName>(['resume', 'export', 'help'])
 
 // ... of the action commands, rewind needs only the conversation (no file restore)
-const OMP_UI_ACTION_COMMANDS: Record<string, () => void> = {
+const OMP_UI_ACTION_COMMANDS: Record<string, (arg: string) => void> = {
   '/rewind': () => openRewind(),
   '/undo': () => openRewind(),
   '/checkpoint': () => openRewind(),
@@ -507,15 +520,15 @@ const panelArg = ref('')
 function openUiPanel(command: string): boolean {
   const match = /^(\/\S+)(?:\s+([\s\S]*))?$/.exec(command.trim())
   const name = match?.[1].toLowerCase() ?? ''
+  const arg = (match?.[2] ?? '').trim()
   const action = isOmp ? OMP_UI_ACTION_COMMANDS[name] : UI_ACTION_COMMANDS[name]
   if (action) {
     clearInput()
-    action()
+    action(arg)
     return true
   }
   const panel = UI_PANEL_COMMANDS[name]
   if (!panel || (isOmp && !OMP_UI_PANELS.has(panel))) return false
-  const arg = (match?.[2] ?? '').trim()
   clearInput()
   panelArg.value = arg
   if (panel === 'add-dir') {
@@ -998,6 +1011,59 @@ function useHistoryEntry(value: string) {
   setTimeout(() => setInputText(entry.display), 0)
 }
 
+// ---- /btw, /branch, /fork ----
+
+/** /btw: the question shown in BtwPanel; the key remounts it for each new question */
+const btwQuestion = ref('')
+const btwKey = ref(0)
+
+function openSideQuestion(question: string) {
+  if (!question) {
+    notify('Usage: /btw <your question>', 'warning')
+    return
+  }
+  btwQuestion.value = question
+  btwKey.value++
+  activePanel.value = 'btw'
+}
+
+/**
+ * /branch, as in the CLI: continue in a copy of the conversation from this
+ * point; the original stays as it is, reachable through /resume.
+ */
+function branchConversation(name: string) {
+  const store = runtime?.sessionStore
+  const session = store?.activeSession()
+  const id = session?.sessionId()
+  if (!store || !session) return
+  if (session.busy()) {
+    notify('Wait for the current turn to finish', 'warning')
+    return
+  }
+  if (!id) {
+    notify('Nothing to branch yet', 'warning')
+    return
+  }
+  const summary = session.summary()
+  store.forkConversation(id, name || (summary ? `${summary} (branch)` : undefined))
+  notify('Branched the conversation. /resume opens the original', 'info')
+}
+
+/**
+ * /fork: the conversation is copied into a new tab. With a prompt the copy
+ * starts on it in the background and this tab keeps the focus, as the CLI's
+ * fork keeps working here; without one the new tab opens to continue there.
+ */
+function forkToNewTab(prompt: string) {
+  const id = runtime?.sessionStore.activeSession()?.sessionId()
+  if (!runtime || !id) {
+    notify('Nothing to fork yet', 'warning')
+    return
+  }
+  runtime.appContext.startNewConversationTab(prompt || undefined, id)
+  if (prompt) notify('Forked into a new tab, working on your prompt there', 'info')
+}
+
 // ---- Rewind (Esc Esc) ----
 
 let lastEscapeAt = 0
@@ -1350,6 +1416,14 @@ function handleKeydown(event: KeyboardEvent) {
   if (plainCtrl && event.key.toLowerCase() === 'r') {
     event.preventDefault()
     openHistorySearch()
+    return
+  }
+
+  // Ctrl+B while a turn runs, as in the CLI: the foreground tasks go to the
+  // background. Idle (and in OMP tabs, which cannot) VS Code keeps its sidebar toggle.
+  if (plainCtrl && event.key.toLowerCase() === 'b' && props.conversationWorking && !isOmp) {
+    event.preventDefault()
+    emit('background')
     return
   }
 

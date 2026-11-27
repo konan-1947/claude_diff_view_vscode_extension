@@ -31,7 +31,10 @@ export interface ClaudeUiTabRequest {
 	kind: 'new' | 'rename' | 'focus';
 	tabId: string;
 	title?: string;
+	/** `new`: sent by the new tab as its first message */
 	initialPrompt?: string;
+	/** `new` (`/fork`): the new tab opens a copy of this conversation */
+	forkOf?: string;
 }
 
 export interface IWebViewService {

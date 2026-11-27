@@ -2179,7 +2179,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       const ICON_CLAWD = ${JSON.stringify(ICON_CLAWD_SVG)};
       const ICON_OMP = ${JSON.stringify(ICON_OMP_SVG)};
 
-      // iconHtml: a chat tab's brand mark before its title (terminal tabs have none)
+      // iconHtml: the mark before the title (chat brand, Claude CLI or terminal)
       function buildTabDom(id, title, iconHtml) {
         const tab = document.createElement('div');
         tab.className = 'tab';
@@ -2222,7 +2222,30 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         vscode.postMessage({ type: 'sessionTitle', title: sess ? sess.shownTitle : '' });
       }
 
+      // A terminal tab shows the Claude mark while Claude Code runs in it (launched from
+      // "+" or typed by hand): the CLI titles the terminal "✳ Claude Code" / "<spinner> <topic>".
+      // The launcher choice covers the moment before the CLI sets its first title.
+      const CLAUDE_CLI_TITLE = /^[·✢✳✶✻✽]\\s|claude code/i;
+      function terminalRunsClaude(sess) {
+        return sess.rawTitle ? CLAUDE_CLI_TITLE.test(sess.rawTitle) : sess.agent === 'claude';
+      }
+      function sessionIconHtml(sess) {
+        if (!sess) return ICON_TERMINAL;
+        if (sess.kind === 'claude') return sess.backend === 'omp' ? ICON_OMP : ICON_CLAWD;
+        return terminalRunsClaude(sess) ? ICON_CLAWD : ICON_TERMINAL;
+      }
+      function updateTabIcon(sess) {
+        if (sess.kind !== 'terminal') return;
+        const html = sessionIconHtml(sess);
+        if (html === sess.iconHtml) return;
+        sess.iconHtml = html;
+        const iconEl = sess.tab.querySelector('.tab-icon');
+        if (iconEl) iconEl.innerHTML = html;
+        if (!tabsMenu.hidden) renderTabsMenu();
+      }
+
       function applySessionTitle(sess) {
+        updateTabIcon(sess);
         const title = shortTitle(sess.rawTitle) || sess.defaultTitle;
         if (title === sess.shownTitle) return;
         sess.shownTitle = title;
@@ -2241,7 +2264,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
 
       let focusOnSessionCreated = false;
 
-      function onSessionCreated(id, title, restoring, kind, resume, backend) {
+      function onSessionCreated(id, title, restoring, kind, resume, backend, fork, prompt) {
         if (kind === 'claude') {
           const isOmp = backend === 'omp';
           const host = document.createElement('div');
@@ -2253,6 +2276,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           const claude = window.ClaudeFrame.create({
             id,
             resume,
+            fork,
+            prompt,
             backend: isOmp ? 'omp' : 'claude',
             onMessage: (message) => vscode.postMessage({ type: 'claudeUi', id, message }),
           });
@@ -2301,10 +2326,13 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           });
         }
 
-        const tab = buildTabDom(id, title);
+        const agent = restoring ? undefined : pendingAgent;
+        if (!restoring) pendingAgent = undefined;
+        const tab = buildTabDom(id, title, agent === 'claude' ? ICON_CLAWD : ICON_TERMINAL);
 
         const sess = {
-          id, kind: 'terminal', term: t, fit: f, host, tab, dataDisp: null, exited: false,
+          id, kind: 'terminal', term: t, fit: f, host, tab, dataDisp: null, exited: false, agent,
+          iconHtml: agent === 'claude' ? ICON_CLAWD : ICON_TERMINAL,
           defaultTitle: title, shownTitle: title, rawTitle: '', titleTimer: 0, titleDisp: null,
         };
         sess.titleDisp = t.onTitleChange((next) => {
@@ -2395,7 +2423,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const written = [];
         for (const snap of list) {
           if (sessions.has(snap.id)) continue;
-          onSessionCreated(snap.id, snap.title, true, snap.kind, snap.resume, snap.backend);
+          onSessionCreated(snap.id, snap.title, true, snap.kind, snap.resume, snap.backend, snap.fork);
           const s = sessions.get(snap.id);
           if (s.claude) {
             // The rebuilt iframe reopens the conversation from ~/.claude (snap.resume).
@@ -2446,7 +2474,10 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           String(label || id).charAt(0).toUpperCase() + '</text></svg>';
       }
 
+      // The agent picked in "+", read by the terminal's sessionCreated that follows.
+      let pendingAgent;
       function startSession(agent) {
+        pendingAgent = agent;
         const sess = sessions.get(activeId);
         const cols = sess && sess.term ? sess.term.cols : 80;
         const rows = sess && sess.term ? sess.term.rows : 24;
@@ -2631,7 +2662,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           item.classList.toggle('done', tab.classList.contains('done'));
           const icon = document.createElement('span');
           icon.className = 'agent-icon';
-          icon.innerHTML = sess && sess.kind === 'claude' ? (sess.backend === 'omp' ? ICON_OMP : ICON_CLAWD) : ICON_TERMINAL;
+          icon.innerHTML = sessionIconHtml(sess);
           const label = document.createElement('span');
           label.className = 'agent-name';
           label.textContent = (tab.querySelector('.tab-title') || tab).textContent;
@@ -2795,7 +2826,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         const msg = e.data;
         if (!msg) return;
         if (msg.type === 'sessionCreated') {
-          onSessionCreated(msg.id, msg.title, false, msg.kind, undefined, msg.backend);
+          onSessionCreated(msg.id, msg.title, false, msg.kind, msg.resume, msg.backend, msg.fork, msg.prompt);
         } else if (msg.type === 'agentAvailability') {
           agentList = msg.agents || [];
           // The menu may already be open (it opens first, availability arrives async).

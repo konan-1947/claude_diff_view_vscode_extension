@@ -16,6 +16,7 @@ import type {
   ToolUseContentBlock,
   ToolUseBlock,
 } from './ContentBlock';
+import { isNarrationBlock } from '../utils/narration';
 
 const INTERRUPT_MESSAGES: Record<string, string> = {
   '[Request interrupted by user]': 'Interrupted',
@@ -28,13 +29,22 @@ const TOOL_REJECTION_MARKER =
 const TOOL_REJECTION_PREFIX =
   "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). The user provided the following reason for the rejection: ";
 
-export function parseMessageContent(rawContent: any[]): ContentBlockType[] {
+/**
+ * @param narrationIndexes the frame's `narration_block_indexes` (indexes into
+ *   `rawContent`): thinking blocks that are the server's summary of words to
+ *   the user, shown as answer text (see utils/narration)
+ */
+export function parseMessageContent(rawContent: any[], narrationIndexes?: readonly number[]): ContentBlockType[] {
   const blocks: ContentBlockType[] = [];
+  const listed = new Set(Array.isArray(narrationIndexes) ? narrationIndexes : []);
 
-  for (const raw of rawContent ?? []) {
-    const parsed = parseBlock(raw);
-    blocks.push(...parsed);
-  }
+  (rawContent ?? []).forEach((raw, i) => {
+    if (isNarrationBlock(raw, listed.has(i))) {
+      blocks.push({ type: 'text', text: String(raw.thinking), narration: true } satisfies TextBlock);
+      return;
+    }
+    blocks.push(...parseBlock(raw));
+  });
 
   return blocks;
 }

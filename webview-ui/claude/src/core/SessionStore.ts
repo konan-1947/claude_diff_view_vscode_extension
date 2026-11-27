@@ -248,9 +248,23 @@ export class SessionStore {
    * in the other tab, is not written to).
    */
   openFork(source: Session): Session {
+    const id = source.sessionId();
+    const fork = id
+      ? this.forkConversation(id, source.summary() ? `${source.summary()} (fork)` : undefined)
+      : undefined;
+    return fork ?? source;
+  }
+
+  /**
+   * Open a copy of conversation `sessionId` in this tab (`/branch`, `/fork`'s
+   * new tab, an open conflict): the history is loaded from its transcript and
+   * the first launch resumes it with `forkSession`, so the copy gets its own
+   * id and the original is never written to.
+   */
+  forkConversation(sessionId: string, summary: string | undefined): Session {
     const fork = new Session(() => this.getConnection(), this.context, { isExplicit: true });
-    fork.sessionId(source.sessionId());
-    fork.summary(source.summary() ? `${source.summary()} (fork)` : undefined);
+    fork.sessionId(sessionId);
+    fork.summary(summary);
     fork.lastModifiedTime(Date.now());
     fork.forkOnNextLaunch();
     this.attachPermissionListener(fork);

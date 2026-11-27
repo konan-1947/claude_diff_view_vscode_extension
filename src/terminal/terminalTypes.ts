@@ -196,6 +196,8 @@ export interface SessionSnapshot {
   exitCode: number;
   /** Chat tab: session id to reopen in the rebuilt iframe. */
   resume?: string;
+  /** Chat tab: `resume` is a conversation to open a copy of (`/fork`), not this tab's own. */
+  fork?: boolean;
   /** Chat tab: which agent backend drives it. */
   backend?: ChatBackend;
 }

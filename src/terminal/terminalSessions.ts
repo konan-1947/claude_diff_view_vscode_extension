@@ -40,6 +40,20 @@ interface ClaudeRecord extends BaseRecord {
   kind: 'claude';
   backend: ChatBackend;
   sessionId?: string;
+  /**
+   * `/fork`: the conversation this tab opened a copy of. Until the copy reports
+   * its own id (sessionId), a rebuilt tab forks it again rather than resuming
+   * the original, which another tab owns.
+   */
+  forkOf?: string;
+}
+
+/** What a new chat tab starts with */
+export interface ChatTabStart {
+  /** Open a copy of this conversation (resumed with `forkSession`) */
+  forkOf?: string;
+  /** Sent as the tab's first message (only when created, never on a rebuild) */
+  initialPrompt?: string;
 }
 
 type SessionRecord = TerminalRecord | ClaudeRecord;
@@ -60,7 +74,11 @@ export class TerminalSessionStore implements vscode.Disposable {
   /** Split layout of the tab groups, as last reported by a terminal webview. */
   layout: LayoutNode | undefined;
 
-  private readonly _onCreated = new vscode.EventEmitter<{ id: string; title: string; kind: SessionKind; backend?: ChatBackend }>();
+  private readonly _onCreated = new vscode.EventEmitter<{
+    id: string; title: string; kind: SessionKind; backend?: ChatBackend;
+    /** Chat tab: conversation to open, a copy of it when `fork` */
+    resume?: string; fork?: boolean; prompt?: string;
+  }>();
   readonly onCreated = this._onCreated.event;
   private readonly _onClosed = new vscode.EventEmitter<string>();
   readonly onClosed = this._onClosed.event;
@@ -118,7 +136,7 @@ export class TerminalSessionStore implements vscode.Disposable {
   }
 
   /** Opens a chat tab (Claude UI or OMP UI); `sessionId` reopens that conversation. */
-  createClaude(cols: number, rows: number, sessionId?: string, backend: ChatBackend = 'claude'): string {
+  createClaude(cols: number, rows: number, sessionId?: string, backend: ChatBackend = 'claude', start: ChatTabStart = {}): string {
     const id = this.nextId();
     const rec: ClaudeRecord = {
       id,
@@ -131,10 +149,16 @@ export class TerminalSessionStore implements vscode.Disposable {
       cols: Math.max(1, cols | 0),
       rows: Math.max(1, rows | 0),
       sessionId,
+      forkOf: sessionId ? undefined : start.forkOf,
     };
     this.sessions.set(id, rec);
     this.activeId = id;
-    this._onCreated.fire({ id, title: rec.title, kind: rec.kind, backend });
+    this._onCreated.fire({
+      id, title: rec.title, kind: rec.kind, backend,
+      resume: rec.sessionId ?? rec.forkOf,
+      fork: !rec.sessionId && !!rec.forkOf,
+      prompt: start.initialPrompt || undefined,
+    });
     return id;
   }
 
@@ -268,7 +292,8 @@ export class TerminalSessionStore implements vscode.Disposable {
         rows: rec.rows,
         exited: rec.exited,
         exitCode: rec.exitCode,
-        resume: rec.kind === 'claude' ? rec.sessionId : undefined,
+        resume: rec.kind === 'claude' ? rec.sessionId ?? rec.forkOf : undefined,
+        fork: rec.kind === 'claude' && !rec.sessionId && !!rec.forkOf,
         backend: rec.kind === 'claude' ? rec.backend : undefined,
       }));
   }

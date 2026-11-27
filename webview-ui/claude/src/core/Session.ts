@@ -306,7 +306,24 @@ export class Session {
     await this.launchClaude();
   }
 
-  async loadFromServer(): Promise<void> {
+  /** The history load in progress or done (loadFromServer), for whenLoaded */
+  private historyLoad?: Promise<void>;
+
+  loadFromServer(): Promise<void> {
+    // Already loading (the active-session effect and whenLoaded may both ask)
+    if (this.historyLoad && this.isLoading()) return this.historyLoad;
+    const load = this.loadHistory();
+    this.historyLoad = load;
+    return load;
+  }
+
+  /** Resolves once the transcript loaded by loadFromServer is in (failed loads too) */
+  async whenLoaded(): Promise<void> {
+    const load = this.historyLoad ?? (this.isOffline() ? this.loadFromServer() : undefined);
+    await load?.catch(() => undefined);
+  }
+
+  private async loadHistory(): Promise<void> {
     const sessionId = this.sessionId();
     if (!sessionId) return;
 
@@ -469,6 +486,16 @@ export class Session {
     const connection = await this.getConnection();
     const { error } = await connection.stopTask(channelId, taskId);
     if (error) throw new Error(error);
+  }
+
+  /** Ctrl+B: move the running Bash commands and subagents to the background */
+  async backgroundTasks(): Promise<boolean> {
+    const channelId = this.claudeChannelId();
+    if (!channelId) return false;
+    const connection = await this.getConnection();
+    const { backgrounded, error } = await connection.backgroundTasks(channelId);
+    if (error) throw new Error(error);
+    return backgrounded;
   }
 
   /**
@@ -658,6 +685,17 @@ export class Session {
       this.silentInputs = Math.max(0, this.silentInputs - 1);
       console.error('[Session] bash output not kept for Claude', error);
     }
+  }
+
+  /**
+   * `/btw`: ask the running session a side question. The CLI answers from the
+   * conversation's live context, also in the middle of a turn, and the
+   * question and answer stay out of the transcript. Launches the session if needed.
+   */
+  async askSideQuestion(question: string): Promise<string> {
+    const connection = await this.getConnection();
+    const channelId = await this.launchClaude();
+    return connection.sideQuestion(channelId, question);
   }
 
   /** Esc while a bash-mode command runs: stop it (the output so far is kept) */

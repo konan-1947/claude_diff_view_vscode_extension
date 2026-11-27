@@ -1,6 +1,7 @@
 <template>
   <div class="text-block">
     <div :class="markdownClasses" v-html="renderedMarkdown" @click="onClick"></div>
+    <ImageLightbox :src="zoomImage?.src" :svg="zoomImage?.svg" :alt="zoomImage?.alt" @close="zoomImage = null" />
   </div>
 </template>
 
@@ -10,6 +11,7 @@ import type { TextBlock as TextBlockType } from '../../../models/ContentBlock';
 import type { ToolContext } from '../../../types/tool';
 import { Marked, type Token, type Tokens } from 'marked';
 import { cachedMermaid, currentMermaidTheme, mermaidKey, renderMermaid } from '../../../utils/mermaid';
+import ImageLightbox from '../../Common/ImageLightbox.vue';
 // import DOMPurify from 'dompurify'; // TODO: enable once installed
 
 // Own instance: the renderer overrides below need this component's CSS, so
@@ -92,6 +94,19 @@ function mermaidHtml(index: number): string {
   return `<div class="code-block mermaid-block${showCode ? '' : ' is-diagram'}" data-mermaid="${index}">${tools}${body}${error}</div>`;
 }
 
+const NARRATION_HINT = '<em class="narration-hint">summary</em>';
+
+/**
+ * A narration block (the server's summary of what the model told the user)
+ * ends in an italic "summary", as the CLI marks it: on its last line when the
+ * text ends in a paragraph, else on a line of its own.
+ */
+function withNarrationHint(html: string): string {
+  const trimmed = html.replace(/\s+$/, '');
+  if (trimmed.endsWith('</p>')) return `${trimmed.slice(0, -4)} ${NARRATION_HINT}</p>`;
+  return `${html}<p>${NARRATION_HINT}</p>`;
+}
+
 // Render Markdown; every code block gets a wrapper holding its copy button
 const renderedMarkdown = computed(() => {
   void mermaidVersion.value;
@@ -116,7 +131,7 @@ const renderedMarkdown = computed(() => {
     .replace(/<\/pre>/g, '</pre></div>')
     .replace(/<!--mermaid:(\d+)-->/g, (_, i: string) => mermaidHtml(Number(i)));
   // TODO: sanitize with DOMPurify.sanitize(rawHtml)
-  return rawHtml;
+  return props.block.narration ? withNarrationHint(rawHtml) : rawHtml;
 });
 
 watch(
@@ -131,11 +146,25 @@ watch(
   { immediate: true }
 );
 
+/** What the zoom viewer shows: an image URL or a diagram's SVG markup */
+const zoomImage = ref<{ src?: string; svg?: string; alt?: string } | null>(null);
+
 // Delegated: the buttons live in v-html, and are rebuilt while text streams
 async function onClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null;
   const holder = target?.closest<HTMLElement>('.code-block');
   const diagram = holder?.dataset.mermaid != null ? mermaidBlocks[Number(holder.dataset.mermaid)] : undefined;
+  // Like the file preview: clicking a drawn diagram or an image opens the zoom viewer
+  if (diagram && target?.closest('.mermaid-diagram')) {
+    const svg = cachedMermaid(diagram.key)?.svg;
+    if (svg) zoomImage.value = { svg };
+    return;
+  }
+  const img = target?.closest('img');
+  if (img && img.src && !target?.closest('a[href]')) {
+    zoomImage.value = { src: img.currentSrc || img.src, alt: img.alt || undefined };
+    return;
+  }
   if (diagram && target?.closest('.mermaid-toggle')) {
     if (mermaidShowCode.has(diagram.key)) mermaidShowCode.delete(diagram.key);
     else mermaidShowCode.add(diagram.key);
@@ -177,6 +206,13 @@ async function onClick(event: MouseEvent) {
   color: var(--vscode-editor-foreground);
   word-wrap: break-word;
   user-select: text;
+}
+
+.markdown-content :deep(.narration-hint) {
+  margin-left: 4px;
+  color: var(--cs-fg-52);
+  font-style: italic;
+  user-select: none;
 }
 
 .slash-command-text {
@@ -320,6 +356,11 @@ async function onClick(event: MouseEvent) {
 .markdown-content :deep(.mermaid-diagram svg) {
   max-width: 100%;
   height: auto;
+  cursor: zoom-in;
+}
+
+.markdown-content :deep(img) {
+  cursor: zoom-in;
 }
 
 .markdown-content :deep(.mermaid-error) {

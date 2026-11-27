@@ -57,6 +57,9 @@ import type {
     RewindFilesResponse,
     StopTaskRequest,
     StopTaskResponse,
+    BackgroundTasksResponse,
+    SideQuestionRequest,
+    SideQuestionResponse,
     CancelQueuedPromptRequest,
     CancelQueuedPromptResponse,
 } from '../../shared/messages';
@@ -184,6 +187,14 @@ export interface Channel {
 /**
  * Request handler
  */
+/** `Query.askSideQuestion`: in the SDK runtime (0.3.327) but not in its typings */
+interface SideQuestionQuery {
+    askSideQuestion?: (
+        question: string,
+        options?: { signal?: AbortSignal }
+    ) => Promise<{ response: string; synthetic?: boolean } | null>;
+}
+
 interface RequestHandler {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
@@ -1046,6 +1057,11 @@ export class ClaudeAgentService implements IClaudeAgentService {
 
             case "stop_task":
                 return this.stopTask(channelId, request as StopTaskRequest);
+            case "background_tasks":
+                return this.backgroundTasks(channelId);
+
+            case "side_question":
+                return this.sideQuestion(channelId, request as SideQuestionRequest);
             case "cancel_queued_prompt":
                 return this.cancelQueuedPrompt(channelId, request as CancelQueuedPromptRequest);
 
@@ -1469,6 +1485,49 @@ export class ClaudeAgentService implements IClaudeAgentService {
             const message = error instanceof Error ? error.message : String(error);
             this.logService.warn(`[stopTask] ${message}`);
             return { type: "stop_task_response", error: message };
+        }
+    }
+
+    /** Ctrl+B, as in the CLI: the turn goes on while the foreground tasks keep running in the background */
+    async backgroundTasks(channelId: string | undefined): Promise<BackgroundTasksResponse> {
+        const query = channelId ? this.channels.get(channelId)?.query : undefined;
+        if (!query) {
+            return { type: "background_tasks_response", backgrounded: false, error: 'No running session' };
+        }
+        try {
+            return { type: "background_tasks_response", backgrounded: await query.backgroundTasks() };
+        } catch (error) {
+            // Background tasks turned off (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS)
+            const message = error instanceof Error ? error.message : String(error);
+            this.logService.warn(`[backgroundTasks] ${message}`);
+            return { type: "background_tasks_response", backgrounded: false, error: message };
+        }
+    }
+
+    /**
+     * `/btw`, as in the CLI: `Query.askSideQuestion` (not in the SDK's typings
+     * yet, present at runtime) sends the `side_question` control request; the
+     * CLI answers from the live context, also mid-turn, and keeps it out of
+     * the transcript.
+     */
+    async sideQuestion(channelId: string | undefined, request: SideQuestionRequest): Promise<SideQuestionResponse> {
+        const query = channelId ? this.channels.get(channelId)?.query as (Query & SideQuestionQuery) | undefined : undefined;
+        if (!query) {
+            return { type: "side_question_response", response: null, error: 'No running session' };
+        }
+        if (typeof query.askSideQuestion !== 'function') {
+            return { type: "side_question_response", response: null, error: 'This Claude Agent SDK has no side questions' };
+        }
+        try {
+            const result = await query.askSideQuestion(request.question);
+            if (!result?.response) {
+                return { type: "side_question_response", response: null, error: 'No response received' };
+            }
+            return { type: "side_question_response", response: result.response };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logService.warn(`[sideQuestion] ${message}`);
+            return { type: "side_question_response", response: null, error: message };
         }
     }
 

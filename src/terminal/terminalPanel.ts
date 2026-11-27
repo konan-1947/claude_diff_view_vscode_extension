@@ -89,7 +89,8 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
     private readonly ompUi?: ClaudeUiBackend
   ) {
     this.sessionSubs = [
-      sessions.onCreated(({ id, title, kind, backend }) => this.postSession({ type: 'sessionCreated', id, title, kind, backend })),
+      sessions.onCreated(({ id, title, kind, backend, resume, fork, prompt }) =>
+        this.postSession({ type: 'sessionCreated', id, title, kind, backend, resume, fork, prompt })),
       sessions.onClosed((id) => this.postSession({ type: 'sessionClosed', id })),
       sessions.onData(({ id, data }) => this.postSession({ type: 'data', id, data })),
       sessions.onExit(({ id, code }) => this.postSession({ type: 'exit', id, code })),

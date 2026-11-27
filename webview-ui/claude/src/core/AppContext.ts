@@ -136,8 +136,9 @@ export class AppContext {
   }
 
   /** Tabs live in the host's terminal tab strip: ask it to open one. */
-  startNewConversationTab(initialPrompt?: string): void {
-    void this.connectionManager.get().then((c) => c.startNewConversationTab(initialPrompt));
+  /** `forkSessionId` (`/fork`): the new tab opens a copy of that conversation */
+  startNewConversationTab(initialPrompt?: string, forkSessionId?: string): void {
+    void this.connectionManager.get().then((c) => c.startNewConversationTab(initialPrompt, forkSessionId));
   }
 
   /** Set the title of the host tab showing this conversation. */

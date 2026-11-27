@@ -8,6 +8,8 @@ export interface TextBlock {
   type: 'text';
   text: string;
   isSlashCommand?: boolean;
+  /** A server-tagged "narration" thinking block, shown as answer text (utils/narration) */
+  narration?: boolean;
 }
 
 export interface ThinkingBlock {

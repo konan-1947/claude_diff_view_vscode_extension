@@ -236,7 +236,15 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
       if (request.kind === 'rename' && request.title !== undefined) {
         terminalSessions.setClaudeTitle(request.tabId, request.title);
       } else if (request.kind === 'new') {
-        terminalSessions.createClaude(80, 24);
+        terminalSessions.createClaude(80, 24, undefined, 'claude', {
+          forkOf: request.forkOf,
+          initialPrompt: request.initialPrompt,
+        });
+        // `/fork <prompt>` runs the copy in the background, as the CLI does:
+        // the user keeps working in the tab that forked
+        if (request.forkOf && request.initialPrompt && request.tabId) {
+          terminalSessions.activate(request.tabId);
+        }
       } else if (request.kind === 'focus') {
         terminalSessions.activate(request.tabId);
       }

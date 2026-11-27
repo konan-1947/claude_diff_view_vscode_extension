@@ -142,6 +142,7 @@
             @stop="handleStop"
             @edit-queued="editQueued"
             @focus-tasks="tasksListRef?.focusList()"
+            @background="handleBackground"
             @add-attachment="handleAddAttachment"
             @remove-attachment="handleRemoveAttachment"
             @thinking-toggle="handleToggleThinking"
@@ -1103,6 +1104,24 @@ import OmpLogo from '../components/OmpLogo.vue';
   async function editQueued() {
     await pullQueueToInput();
     chatInputRef.value?.focus();
+  }
+
+  // Ctrl+B. The CLI's own Ctrl+B with nothing in the foreground arms a second
+  // press that moves the whole session to the background; a tab keeps running
+  // when another one is shown, so here it only says there was nothing to move.
+  async function handleBackground() {
+    const s = activeSessionRaw.value;
+    if (!s) return;
+    try {
+      const moved = await s.backgroundTasks();
+      if (!moved) {
+        void runtime?.appContext.showNotification('Nothing is running in the foreground to move to the background', 'info');
+      }
+    } catch (e) {
+      console.error('[ChatPage] Ctrl+B failed', e);
+      const message = e instanceof Error ? e.message : String(e);
+      void runtime?.appContext.showNotification(`Couldn't move this to the background: ${message}`, 'warning');
+    }
   }
 
   async function handleStop() {

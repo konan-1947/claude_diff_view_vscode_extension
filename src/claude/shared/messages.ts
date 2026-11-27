@@ -986,6 +986,36 @@ export interface StopTaskResponse {
     error?: string;
 }
 
+/** Ctrl+B: move the running foreground Bash commands and subagents to the background: `Query.backgroundTasks` */
+export interface BackgroundTasksRequest {
+    type: "background_tasks";
+}
+
+export interface BackgroundTasksResponse {
+    type: "background_tasks_response";
+    /** False when nothing was running in the foreground */
+    backgrounded: boolean;
+    error?: string;
+}
+
+/**
+ * `/btw`: a side question to the running session (`Query.askSideQuestion`, the
+ * CLI's `side_question` control request). The CLI answers from the
+ * conversation's live context in one response, without tools, while the turn
+ * goes on; nothing is added to the transcript.
+ */
+export interface SideQuestionRequest {
+    type: "side_question";
+    question: string;
+}
+
+export interface SideQuestionResponse {
+    type: "side_question_response";
+    /** null when the CLI had no answer (or on error) */
+    response: string | null;
+    error?: string;
+}
+
 /** Take back a prompt sent mid-turn that the CLI has not folded in yet (Esc): `Query.cancelAsyncMessage` */
 export interface CancelQueuedPromptRequest {
     type: "cancel_queued_prompt";
@@ -1142,7 +1172,10 @@ export interface ShowNotificationResponse {
  */
 export interface NewConversationTabRequest {
     type: "new_conversation_tab";
+    /** Sent by the new tab as its first message */
     initialPrompt?: string;
+    /** `/fork`: the new tab opens a copy of this conversation (resumed with `forkSession`) */
+    forkSessionId?: string;
 }
 
 export interface NewConversationTabResponse {
@@ -1504,6 +1537,8 @@ export type WebViewRequest =
     | RunShellCommandRequest
     | RewindFilesRequest
     | StopTaskRequest
+    | BackgroundTasksRequest
+    | SideQuestionRequest
     | CancelQueuedPromptRequest
     | GetRewindPointRequest
     | ReadTaskOutputRequest
@@ -1569,6 +1604,8 @@ export type WebViewRequestResponse =
     | RunShellCommandResponse
     | RewindFilesResponse
     | StopTaskResponse
+    | BackgroundTasksResponse
+    | SideQuestionResponse
     | CancelQueuedPromptResponse
     | GetRewindPointResponse
     | ReadTaskOutputResponse

@@ -2,6 +2,10 @@
 export const SCROLLBAR_CSS = `
 /* Thin rounded scrollbars in place of the 10px square default (webview) or the
    native one (iframe): the thumb is inset 2px in an 8px track and widens on hover. */
+/* VS Code's webview sets html { scrollbar-color } (inherited); Chromium ignores every
+   ::-webkit-scrollbar rule on an element whose scrollbar-color/-width is not auto, which
+   brings back the native scrollbar with arrows. Unlayered, so it beats @layer vscode-default. */
+html { scrollbar-color: auto; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-button { display: none; }

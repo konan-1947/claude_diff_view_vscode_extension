@@ -377,6 +377,9 @@
         page: 'chat',
         id: id,
         resume: options.resume || undefined,
+        // /fork: open a copy of `resume`, and send `prompt` as its first message
+        fork: options.fork || undefined,
+        prompt: options.prompt || undefined,
         backend: options.backend || 'claude',
       });
       iframe.srcdoc = html;

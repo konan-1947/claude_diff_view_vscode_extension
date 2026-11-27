@@ -54,6 +54,7 @@ const SHORTCUTS = [
   { keys: 'Enter', text: `send (queued while ${agentName} is working)` },
   { keys: 'Shift+Enter', text: 'new line' },
   { keys: 'Esc', text: 'stop the running turn, or close a menu' },
+  ...(isOmp ? [] : [{ keys: 'Ctrl+B', text: 'move running commands and agents to the background' }]),
   ...(isOmp ? [] : [{ keys: 'Shift+Tab', text: 'switch permission mode' }]),
   { keys: '/', text: 'commands' },
   { keys: '@', text: 'mention a file' },

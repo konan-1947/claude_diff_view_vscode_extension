@@ -319,6 +319,28 @@ tay thì CLI trả "isn't available in this environment". UI cần tự làm ho�
       thời gian / token và nút stop → `stop_task` → `Query.stopTask(id)` ở host. Task đã báo
       xong qua `task_*` bị ẩn ngay dù CLI chưa gửi danh sách mới (chưa xác nhận CLI có gửi
       lại danh sách khi task xong).
+- [~] Ctrl+B (đã làm, chờ test tay): khi lượt đang chạy, Ctrl+B trong ô nhập →
+      `background_tasks` → `Query.backgroundTasks()` ở host, đưa Bash/subagent đang chạy
+      foreground ra nền. Lúc rảnh và ở tab OMP, Ctrl+B vẫn về VS Code.
+      Hành vi của CLI 2.1.332 (đọc từ binary): action `task:background` (context `Task`,
+      `ctrl+b` và `ctrl+x ctrl+b`; trong tmux là `ctrl+b ctrl+b`). Có tác vụ foreground →
+      một lần bấm đưa hết Bash rồi agent ra nền (`z2e`). Không có → bấm lần hai trong 800ms
+      đưa cả session ra nền ("Your session moved to the background") — UI không làm (SDK
+      không có API, tab vẫn chạy khi chuyển tab). Session remote gửi `background_tasks`
+      (đường UI đang dùng) và báo lỗi bằng thông báo — UI báo bằng toast, kể cả khi không
+      có gì để chuyển. Gợi ý `(ctrl+b to run in background)` trên thẻ Bash và Agent chạy
+      foreground.
+- [~] `/btw <question>` (đã làm, chờ test tay): CLI có control request `side_question`;
+      SDK 0.3.327 có `Query.askSideQuestion()` lúc chạy nhưng chưa có trong `sdk.d.ts`. Đã
+      khảo sát với CLI 2.1.332: hỏi giữa lúc một Bash `sleep 20` đang chạy, trả lời sau ~3s
+      đúng ngữ cảnh, lượt chính chạy tiếp. Câu hỏi và trả lời không vào transcript; hiện
+      trong `BtwPanel.vue` thay ô nhập. Chưa hỗ trợ hỏi tiếp (option `history` của SDK).
+- [~] `/branch [name]` (đã làm, chờ test tay): CLI "Create a branch of the current
+      conversation at this point" → tab chuyển sang bản copy (`forkSession: true`), bản gốc
+      còn trong `/resume`. Không cho chạy khi lượt đang chạy.
+- [~] `/fork [prompt]` (đã làm, chờ test tay): CLI 2.1.332 "Copy this conversation into a
+      new background session and keep working here" → ở extension là một tab Claude UI mới
+      mở bản copy; có prompt thì tab mới tự gửi prompt, tab hiện tại giữ focus.
 - [~] Thinking: đã có `ThinkingBlock`; kiểm tra khi CLI trả thinking rỗng có chữ ký
       (thinking bị ẩn).
 - [~] Spinner kèm thời gian chạy + số token của lượt hiện tại (đã làm, chờ test tay):

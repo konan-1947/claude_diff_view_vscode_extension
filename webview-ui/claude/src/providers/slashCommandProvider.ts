@@ -31,6 +31,9 @@ export const UI_SLASH_COMMANDS: {
   { name: 'plugin', description: 'Enable or disable installed plugins', aliases: ['plugins'] },
   { name: 'release-notes', description: 'View release notes' },
   { name: 'rewind', description: 'Restore the code and/or conversation to a previous point', aliases: ['undo', 'checkpoint'] },
+  { name: 'btw', description: 'Ask a side question without interrupting Claude', argumentHint: '<question>' },
+  { name: 'branch', description: 'Create a branch of the current conversation at this point', argumentHint: '[name]' },
+  { name: 'fork', description: 'Copy this conversation into a new tab and keep working here', argumentHint: '[prompt]' },
   { name: 'login', description: 'Sign in with your Anthropic account' },
   { name: 'logout', description: 'Sign out from your Anthropic account' },
 ]

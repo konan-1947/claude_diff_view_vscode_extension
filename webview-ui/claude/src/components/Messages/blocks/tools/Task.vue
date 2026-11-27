@@ -20,8 +20,10 @@
     </template>
 
     <!-- One live line like the CLI: what it is doing and how much it did -->
-    <template v-if="status" #preview>
-      <SubagentStatusLine :status="status" :failed="failed" />
+    <template v-if="status || canBackground" #preview>
+      <SubagentStatusLine v-if="status" :status="status" :failed="failed" />
+      <!-- Foreground agent of the live turn: Ctrl+B in the input backgrounds it (the CLI's hint) -->
+      <div v-if="canBackground" class="bg-hint">(ctrl+b to run in background)</div>
     </template>
 
     <template #expandable>
@@ -89,6 +91,18 @@ const running = computed(() => {
 });
 const failed = computed(() => task.value?.status === 'failed' || !!props.toolResult?.is_error);
 
+// Running in the foreground of the live turn (a background agent's result
+// comes at once and its task says backgrounded); omp cannot background it
+const canBackground = computed(
+  () =>
+    !isOmp &&
+    activity.busy.value &&
+    running.value &&
+    !props.toolResult &&
+    props.toolUse?.input?.run_in_background !== true &&
+    task.value?.backgrounded !== true
+);
+
 // Ticks once a second while running, for the elapsed time
 const now = ref(Date.now());
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -155,6 +169,13 @@ const shouldExpand = computed(() => {
 .description-text {
   font-size: 0.85em;
   color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
+}
+
+.bg-hint {
+  color: var(--cs-fg-52);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .running-icon {
