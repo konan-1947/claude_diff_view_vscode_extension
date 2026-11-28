@@ -5,6 +5,14 @@ import { getFreshEnv } from './freshEnv';
 type IPtyModule = typeof import('node-pty');
 type IPty = ReturnType<IPtyModule['spawn']>;
 
+/** A program to run instead of the user's shell (OMP2 runs omp itself). */
+export interface PtyCommand {
+  file: string;
+  /** A string is passed to the process verbatim (Windows cmd.exe quoting). */
+  args: string[] | string;
+  env: { [key: string]: string | undefined };
+}
+
 export class PtySession {
   private proc: IPty | undefined;
 
@@ -21,7 +29,7 @@ export class PtySession {
     return this.proc !== undefined;
   }
 
-  start(cwd: string, cols: number, rows: number): void {
+  start(cwd: string, cols: number, rows: number, command?: PtyCommand): void {
     if (this.proc) {
       return;
     }
@@ -40,17 +48,18 @@ export class PtySession {
       process.env['ComSpec'] ||
       (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
 
+    const file = command?.file ?? shell;
     try {
-      this.proc = ptyMod.spawn(shell, [], {
+      this.proc = ptyMod.spawn(file, command?.args ?? [], {
         name: 'xterm-256color',
         cols: Math.max(1, cols),
         rows: Math.max(1, rows),
         cwd: cwd || os.homedir(),
-        env: getFreshEnv(),
+        env: command?.env ?? getFreshEnv(),
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this._onError.fire(`failed to spawn ${shell}: ${msg}`);
+      this._onError.fire(`failed to spawn ${file}: ${msg}`);
       return;
     }
 

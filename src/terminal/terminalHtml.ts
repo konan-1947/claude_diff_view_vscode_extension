@@ -99,6 +99,8 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
   const aggregateDiffJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'aggregateDiff.js'));
   const claudeFrameJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'claudeFrame.js'));
   const paneLayoutJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'paneLayout.js'));
+  const tspViewJs = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'omp2', 'tspView.js'));
+  const tspViewCss = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'res', 'webview', 'omp2', 'tspView.css'));
   const claudeUiDir = vscode.Uri.joinPath(extensionUri, 'dist', 'claude-ui');
   const claudeUi = {
     js: webview.asWebviewUri(vscode.Uri.joinPath(claudeUiDir, 'main.js')).toString(),
@@ -148,6 +150,7 @@ export function buildTerminalHtml(args: BuildTerminalHtmlArgs): string {
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <link rel="stylesheet" href="${xtermCss}">
 <link rel="stylesheet" href="${previewCss}">
+<link rel="stylesheet" href="${tspViewCss}">
 <style>
 ${SCROLLBAR_CSS}
   /* html must clip too: body's overflow only clips its own box when html's overflow is not visible
@@ -1924,6 +1927,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
   </script>
   <script nonce="${nonce}" src="${claudeFrameJs}"></script>
   <script nonce="${nonce}" src="${paneLayoutJs}"></script>
+  <script nonce="${nonce}" src="${tspViewJs}"></script>
   <script nonce="${nonce}">
     (function () {
       const vscode = window.__AI_CLI_VSCODE_API__ || (
@@ -2000,6 +2004,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       function onPanesLayout(ids, final) {
         ids.forEach((id) => {
           const s = sessions.get(id);
+          if (s && s.omp2) { reportOmp2Size(s); return; }
           if (!s || !s.term || replaying.has(id)) return;
           const cols = s.term.cols;
           const rows = s.term.rows;
@@ -2008,6 +2013,16 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         });
         if (final) flushResize();
         else if (pendingResize.size && !resizeTimer) resizeTimer = setTimeout(flushResize, 100);
+      }
+
+      // OMP2 tabs have no cell grid; omp still wants a size (wrapping of its ANSI output).
+      function reportOmp2Size(s) {
+        const cols = Math.max(20, Math.floor(s.host.clientWidth / 8));
+        const rows = Math.max(5, Math.floor(s.host.clientHeight / 17));
+        if (!s.host.clientWidth || (cols === s.cols && rows === s.rows)) return;
+        s.cols = cols;
+        s.rows = rows;
+        vscode.postMessage({ type: 'resize', id: s.id, cols, rows });
       }
 
       function focusActive() {
@@ -2289,6 +2304,33 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
       let focusOnSessionCreated = false;
 
       function onSessionCreated(id, title, restoring, kind, resume, backend, fork, prompt) {
+        if (kind === 'omp2') {
+          // OMP2 (experimental): omp's own TUI drawn from TSP (res/webview/omp2/tspView.js).
+          const host = document.createElement('div');
+          host.className = 'term-pane claude omp2';
+          host.dataset.id = id;
+          termHost.appendChild(host);
+          const view = window.TspView.create({
+            id,
+            onInput: (data) => vscode.postMessage({ type: 'input', id, data }),
+            onEvent: (event) => vscode.postMessage({ type: 'tspEvent', id, event }),
+          });
+          host.appendChild(view.el);
+          const label = title || 'OMP2';
+          const tab = buildTabDom(id, label, ICON_OMP);
+          // view stands in for a Claude UI frame (focus, dispose, post) in the shared tab code.
+          sessions.set(id, {
+            id, kind: 'omp2', omp2: view, claude: view, host, tab, exited: false, cols: 0, rows: 0,
+            defaultTitle: label, shownTitle: label, rawTitle: '',
+          });
+          if (restoring) return;
+          layout.addTab(id);
+          if (focusOnSessionCreated) {
+            focusOnSessionCreated = false;
+            requestAnimationFrame(() => view.focus());
+          }
+          return;
+        }
         if (kind === 'claude') {
           const isOmp = backend === 'omp';
           const host = document.createElement('div');
@@ -2449,6 +2491,11 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           if (sessions.has(snap.id)) continue;
           onSessionCreated(snap.id, snap.title, true, snap.kind, snap.resume, snap.backend, snap.fork);
           const s = sessions.get(snap.id);
+          if (s.omp2) {
+            s.omp2.reset(snap.tsp || null);
+            if (snap.exited) s.omp2.setExited(snap.exitCode, () => vscode.postMessage({ type: 'restart', id: snap.id }));
+            continue;
+          }
           if (s.claude) {
             // The rebuilt iframe reopens the conversation from ~/.claude (snap.resume).
             if (snap.title) {
@@ -2516,6 +2563,14 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         vscode.postMessage({ type: 'createSession', kind: 'claude', backend: 'omp', cols, rows });
       }
 
+      function startOmp2() {
+        const sess = sessions.get(activeId);
+        const cols = sess && sess.term ? sess.term.cols : 100;
+        const rows = sess && sess.term ? sess.term.rows : 30;
+        focusOnSessionCreated = true;
+        vscode.postMessage({ type: 'createSession', kind: 'omp2', cols, rows });
+      }
+
       function startClaudeUI() {
         const sess = sessions.get(activeId);
         const cols = sess && sess.term ? sess.term.cols : 80;
@@ -2563,6 +2618,7 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         addMenuItem(agentMenu, ICON_TERMINAL, 'Terminal', '', false, () => startSession());
         addMenuItem(agentMenu, ICON_CLAWD, 'Claude UI', '', false, () => startClaudeUI());
         addMenuItem(agentMenu, ICON_OMP, 'OMP UI (experimental)', '', false, () => startOmpUI());
+        addMenuItem(agentMenu, ICON_OMP, 'OMP2 (experimental)', '', false, () => startOmp2());
         if (agentList.length === 0) return;
         const sep = document.createElement('div');
         sep.className = 'agent-menu-sep';
@@ -2872,6 +2928,9 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
         } else if (msg.type === 'data') {
           const s = sessions.get(msg.id);
           if (s && s.term) s.term.write(msg.data);
+        } else if (msg.type === 'tsp') {
+          const s = sessions.get(msg.id);
+          if (s && s.omp2) s.omp2.apply(msg.msg);
         } else if (msg.type === 'claudeUi') {
           // Protocol message for one Claude UI tab, or for all of them when id is unset.
           sessions.forEach((s) => {
@@ -2887,7 +2946,8 @@ ${previewScripts.map((src) => `  <script nonce="${nonce}" src="${src}"></script>
           applySessionTitle(s);
         } else if (msg.type === 'exit') {
           const s = sessions.get(msg.id);
-          if (s) markExited(s, msg.id, msg.code);
+          if (s && s.omp2) s.omp2.setExited(msg.code, () => vscode.postMessage({ type: 'restart', id: msg.id }));
+          else if (s) markExited(s, msg.id, msg.code);
         } else if (msg.type === 'error') {
           showError('PTY error: ' + msg.message);
         } else if (msg.type === 'settings') {

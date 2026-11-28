@@ -4,11 +4,13 @@ import * as vscode from 'vscode';
 import { Terminal as HeadlessTerminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { PtySession } from './ptySession';
+import { TspEngine, TspMessage } from '../omp2/tspEngine';
 import { ChatBackend, LayoutNode, SessionKind, SessionSnapshot } from './terminalTypes';
 
 const SCROLLBACK_LINES = 3000;
 const CLAUDE_TITLE_FALLBACK = 'Claude Code';
 const CHAT_TITLE_FALLBACK: Record<ChatBackend, string> = { claude: CLAUDE_TITLE_FALLBACK, omp: 'OMP (experimental)' };
+const OMP2_TITLE = 'OMP2';
 
 interface BaseRecord {
   id: string;
@@ -56,7 +58,14 @@ export interface ChatTabStart {
   initialPrompt?: string;
 }
 
-type SessionRecord = TerminalRecord | ClaudeRecord;
+/** OMP2 (experimental): the omp TUI over the Tern Surface Protocol, drawn by tspView.js. */
+interface Omp2Record extends BaseRecord {
+  kind: 'omp2';
+  engine: TspEngine;
+  subs: vscode.Disposable[];
+}
+
+type SessionRecord = TerminalRecord | ClaudeRecord | Omp2Record;
 
 /**
  * Sessions shared by every terminal webview (Secondary Side Bar view and the
@@ -90,6 +99,9 @@ export class TerminalSessionStore implements vscode.Disposable {
   readonly onError = this._onError.event;
   private readonly _onTitle = new vscode.EventEmitter<{ id: string; title: string }>();
   readonly onTitle = this._onTitle.event;
+  /** OMP2 tab: a TSP message for its webview view (src/omp2/tspEngine.ts) */
+  private readonly _onTsp = new vscode.EventEmitter<{ id: string; msg: TspMessage }>();
+  readonly onTsp = this._onTsp.event;
   /** A tab should come to the front (a Claude UI tab asked for another one) */
   private readonly _onActivate = new vscode.EventEmitter<string>();
   readonly onActivate = this._onActivate.event;
@@ -162,6 +174,50 @@ export class TerminalSessionStore implements vscode.Disposable {
     return id;
   }
 
+  /** Opens an OMP2 tab: omp's TUI in a PTY that speaks TSP. */
+  createOmp2(cols: number, rows: number): string {
+    const id = this.nextId();
+    const engine = new TspEngine(sessionCwd(), cols, rows);
+    const rec: Omp2Record = {
+      id,
+      kind: 'omp2',
+      engine,
+      subs: [],
+      title: OMP2_TITLE,
+      rawTitle: '',
+      exited: false,
+      exitCode: 0,
+      cols: Math.max(1, cols | 0),
+      rows: Math.max(1, rows | 0),
+    };
+    rec.subs.push(
+      engine.onMessage((msg) => this._onTsp.fire({ id, msg })),
+      engine.onTitle((title) => {
+        rec.rawTitle = title;
+        // Kept on the record so a rebuilt webview shows it again (snapshot()).
+        rec.title = title.trim() ? `${OMP2_TITLE}: ${title.trim()}` : OMP2_TITLE;
+        this._onTitle.fire({ id, title: rec.title });
+      }),
+      engine.onExit((code) => {
+        rec.exited = true;
+        rec.exitCode = code;
+        this._onExit.fire({ id, code });
+      }),
+      engine.onError((message) => this._onError.fire({ id, message })),
+    );
+    this.sessions.set(id, rec);
+    this.activeId = id;
+    this._onCreated.fire({ id, title: rec.title, kind: rec.kind });
+    engine.start();
+    return id;
+  }
+
+  /** OMP2 tab: a pointer action (TSP event) from its webview */
+  sendTspEvent(id: string, event: Record<string, unknown>): void {
+    const rec = this.sessions.get(id);
+    if (rec?.kind === 'omp2') rec.engine.sendEvent(event);
+  }
+
   /** Closes a session; the last one closed is replaced so a terminal always exists. */
   close(id: string): void {
     const rec = this.sessions.get(id);
@@ -183,6 +239,8 @@ export class TerminalSessionStore implements vscode.Disposable {
     const rec = this.sessions.get(id);
     if (rec?.kind === 'terminal') {
       rec.pty.write(data);
+    } else if (rec?.kind === 'omp2') {
+      rec.engine.write(data);
     }
   }
 
@@ -193,6 +251,10 @@ export class TerminalSessionStore implements vscode.Disposable {
     }
     rec.cols = Math.max(1, cols | 0);
     rec.rows = Math.max(1, rows | 0);
+    if (rec.kind === 'omp2') {
+      rec.engine.resize(rec.cols, rec.rows);
+      return;
+    }
     if (rec.kind !== 'terminal') {
       return;
     }
@@ -203,6 +265,11 @@ export class TerminalSessionStore implements vscode.Disposable {
   /** Starts a fresh shell under the same id after the previous one exited. */
   restart(id: string): void {
     const rec = this.sessions.get(id);
+    if (rec?.kind === 'omp2') {
+      rec.exited = false;
+      rec.engine.start();
+      return;
+    }
     if (rec?.kind !== 'terminal') {
       return;
     }
@@ -295,6 +362,7 @@ export class TerminalSessionStore implements vscode.Disposable {
         resume: rec.kind === 'claude' ? rec.sessionId ?? rec.forkOf : undefined,
         fork: rec.kind === 'claude' && !rec.sessionId && !!rec.forkOf,
         backend: rec.kind === 'claude' ? rec.backend : undefined,
+        tsp: rec.kind === 'omp2' ? rec.engine.snapshot() : undefined,
       }));
   }
 
@@ -310,6 +378,7 @@ export class TerminalSessionStore implements vscode.Disposable {
     this._onError.dispose();
     this._onTitle.dispose();
     this._onActivate.dispose();
+    this._onTsp.dispose();
   }
 
   // ---- internals -------------------------------------------------------
@@ -345,6 +414,13 @@ export class TerminalSessionStore implements vscode.Disposable {
 
   private disposeRecord(rec: SessionRecord): void {
     if (rec.kind === 'claude') {
+      return;
+    }
+    if (rec.kind === 'omp2') {
+      for (const d of rec.subs) {
+        try { d.dispose(); } catch { /* ignore */ }
+      }
+      try { rec.engine.dispose(); } catch { /* ignore */ }
       return;
     }
     for (const d of rec.subs) {

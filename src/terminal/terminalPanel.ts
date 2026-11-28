@@ -97,6 +97,7 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
       sessions.onError(({ id, message }) => this.postSession({ type: 'error', id, message })),
       sessions.onTitle(({ id, title }) => this.postSession({ type: 'sessionTitleChanged', id, title })),
       sessions.onActivate((id) => this.postSession({ type: 'activateSession', id })),
+      sessions.onTsp(({ id, msg }) => this.postSession({ type: 'tsp', id, msg })),
     ];
     this.diffDisposable = this.diffManager.onDidChangeDiffs(() => {
       if (this.diffPreviewOpen) {
@@ -670,6 +671,10 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
             this.sessions.createClaude(msg.cols, msg.rows, undefined, msg.backend === 'omp' ? 'omp' : 'claude');
             return;
           }
+          if (msg.kind === 'omp2') {
+            this.sessions.createOmp2(msg.cols, msg.rows);
+            return;
+          }
           const id = this.sessions.create(msg.cols, msg.rows);
           const agent = findAgent(msg.agent);
           // The PTY buffers input until the shell is ready, so the command runs once it starts.
@@ -691,6 +696,11 @@ export class TerminalPanelProvider implements vscode.WebviewViewProvider {
           return;
         case 'closeSession':
           this.sessions.close(msg.id);
+          return;
+        case 'tspEvent':
+          if (typeof msg.id === 'string' && msg.event && typeof msg.event === 'object') {
+            this.sessions.sendTspEvent(msg.id, msg.event);
+          }
           return;
         case 'input':
           this.sessions.write(msg.id, msg.data);

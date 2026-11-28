@@ -1,4 +1,5 @@
 import type { TERMINAL_THEMES } from './terminalThemes';
+import type { TspSnapshot } from '../omp2/tspEngine';
 
 /** `vscode` / `custom` are resolved in the webview; every other id comes from `TERMINAL_THEMES`. */
 export type ThemePreset = 'vscode' | 'custom' | (typeof TERMINAL_THEMES)[number]['id'];
@@ -131,7 +132,8 @@ export const DEFAULT_EXCLUSION_SETTINGS: ExclusionSettings = {
 export const MAX_FILE_LINES_CEILING = 200000;
 export const MAX_AUTO_OPEN_DIFFS_CEILING = 1000;
 
-export type SessionKind = 'terminal' | 'claude';
+/** `omp2`: omp's own TUI over the Tern Surface Protocol (experimental, src/omp2/tspEngine.ts). */
+export type SessionKind = 'terminal' | 'claude' | 'omp2';
 
 /** Agent behind a chat tab (kind 'claude'): the same uic chat app, different host backend. */
 export type ChatBackend = 'claude' | 'omp';
@@ -160,6 +162,8 @@ export type IncomingMessage =
   | { type: 'restart'; id: string }
   /** A uic protocol message from the Claude UI iframe of tab `id`. */
   | { type: 'claudeUi'; id: string; message: unknown }
+  /** OMP2 tab `id`: a pointer action as a TSP event body ({ ev, id, ... }). */
+  | { type: 'tspEvent'; id: string; event: Record<string, unknown> }
   | { type: 'getSettings' }
   | { type: 'updateSettings'; settings: TerminalSettingsPayload }
   | { type: 'installFont'; primary: string }
@@ -203,6 +207,8 @@ export interface SessionSnapshot {
   fork?: boolean;
   /** Chat tab: which agent backend drives it. */
   backend?: ChatBackend;
+  /** OMP2 tab: its TSP document. */
+  tsp?: TspSnapshot;
 }
 
 export const DEFAULT_SETTINGS: TerminalSettings = {

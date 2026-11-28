@@ -1,6 +1,4 @@
-import * as fs from 'fs';
 import * as os from 'os';
-import * as path from 'path';
 import { execFile } from 'child_process';
 import * as vscode from 'vscode';
 import { createDecorator } from '../claude/di/instantiation';
@@ -33,6 +31,7 @@ import {
   handleExportConversation,
 } from '../claude/services/claude/handlers/handlers';
 import { OmpRpcProcess, commandLine } from './ompRpcProcess';
+import { findOmpCli } from './ompCli';
 import { notify } from '../util/notify';
 import { OmpSdkTranslator, modelKey } from './ompToSdk';
 import { OmpTaskCalls, OmpTaskTracker } from './ompTasks';
@@ -790,24 +789,6 @@ export class OmpAgentService implements IOmpAgentService {
 }
 
 // ---- free functions -----------------------------------------------------------
-
-/** `ai-cli-diff-view.ompCliPath`, else `omp` on PATH, else well-known install dirs. */
-export function findOmpCli(): string {
-  const configured = vscode.workspace.getConfiguration('ai-cli-diff-view').get<string>('ompCliPath')?.trim();
-  if (configured) return configured;
-  const exe = process.platform === 'win32' ? ['omp.exe', 'omp.cmd', 'omp'] : ['omp'];
-  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
-  dirs.push(path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.bun', 'bin'), '/usr/local/bin', '/opt/homebrew/bin');
-  for (const dir of dirs) {
-    for (const name of exe) {
-      const candidate = path.join(dir, name);
-      try {
-        if (fs.statSync(candidate).isFile()) return candidate;
-      } catch { /* not here */ }
-    }
-  }
-  return 'omp';
-}
 
 /** UI effort / thinking selection → omp ThinkingLevel (undefined = leave as is) */
 function toOmpThinking(effort: unknown, thinking: unknown): string | undefined {
